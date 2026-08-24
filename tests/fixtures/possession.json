@@ -1,0 +1,134 @@
+{
+  "$schema": "tests/fixtures/possession.ts — the typed loader for this file",
+  "$doc": [
+    "The fixture Phase 5's possession tolerance test asserts against.",
+    "PHASE-5 EXIT: 'possession totals recomputed from transitions match a fixture within 1s of tolerance'.",
+    "This is that fixture, and INV-5 names it by this exact path.",
+    "",
+    "Rule being encoded (DATA-MODEL, state_transitions): possession duration for a card is the sum",
+    "over transitions of next.occurred_at - this.occurred_at, grouped by the possession recorded on",
+    "each row. The final row is open: it accrues from its occurred_at to `now`. A row whose possession",
+    "is null — only signed_off — stops the clock and accrues to neither party.",
+    "",
+    "Every expected total below was computed by hand from whole hours so it can be re-checked by hand.",
+    "If computePossession() disagrees with these numbers, computePossession() is wrong."
+  ],
+  "toleranceMs": 1000,
+  "cases": [
+    {
+      "name": "full lifecycle through one revision round to sign-off",
+      "cardId": "0193a5f0-f601-7000-8000-f6f6f6f60101",
+      "now": "2026-01-10T00:00:00.000Z",
+      "transitions": [
+        { "from": "draft", "to": "assigned", "possession": "agency", "occurredAt": "2026-01-01T00:00:00.000Z" },
+        { "from": "assigned", "to": "in_progress", "possession": "agency", "occurredAt": "2026-01-01T02:00:00.000Z" },
+        { "from": "in_progress", "to": "internal_review", "possession": "agency", "occurredAt": "2026-01-02T02:00:00.000Z" },
+        { "from": "internal_review", "to": "awaiting_client", "possession": "client", "occurredAt": "2026-01-02T06:00:00.000Z" },
+        { "from": "awaiting_client", "to": "changes_requested", "possession": "agency", "occurredAt": "2026-01-04T06:00:00.000Z" },
+        { "from": "changes_requested", "to": "in_progress", "possession": "agency", "occurredAt": "2026-01-04T08:00:00.000Z" },
+        { "from": "in_progress", "to": "internal_review", "possession": "agency", "occurredAt": "2026-01-04T20:00:00.000Z" },
+        { "from": "internal_review", "to": "awaiting_client", "possession": "client", "occurredAt": "2026-01-05T00:00:00.000Z" },
+        { "from": "awaiting_client", "to": "approved", "possession": "agency", "occurredAt": "2026-01-05T12:00:00.000Z" },
+        { "from": "approved", "to": "signed_off", "possession": null, "occurredAt": "2026-01-05T14:00:00.000Z" }
+      ],
+      "expected": {
+        "agencyMs": 180000000,
+        "clientMs": 216000000,
+        "current": null,
+        "currentMs": 0
+      },
+      "expectedHuman": "agency 50h (2+24+4+2+12+4+2), client 60h (48+12), clock stopped at sign-off — the 4d10h since sign-off accrues to neither side",
+      "roundsUsed": 1
+    },
+    {
+      "name": "open card currently with the client",
+      "cardId": "0193a5f0-f603-7000-8000-f6f6f6f60303",
+      "now": "2026-01-02T08:00:00.000Z",
+      "transitions": [
+        { "from": "draft", "to": "assigned", "possession": "agency", "occurredAt": "2026-01-01T00:00:00.000Z" },
+        { "from": "assigned", "to": "in_progress", "possession": "agency", "occurredAt": "2026-01-01T01:00:00.000Z" },
+        { "from": "in_progress", "to": "internal_review", "possession": "agency", "occurredAt": "2026-01-01T07:00:00.000Z" },
+        { "from": "internal_review", "to": "awaiting_client", "possession": "client", "occurredAt": "2026-01-01T08:00:00.000Z" }
+      ],
+      "expected": {
+        "agencyMs": 28800000,
+        "clientMs": 86400000,
+        "current": "client",
+        "currentMs": 86400000
+      },
+      "expectedHuman": "agency 8h (1+6+1), client 24h and still counting",
+      "roundsUsed": 0
+    },
+    {
+      "name": "unordered rows sum to the same totals",
+      "$doc": "Identical to the case above with the rows shuffled. A query without ORDER BY occurred_at produces this, and it must not change the answer.",
+      "cardId": "0193a5f0-f603-7000-8000-f6f6f6f60303",
+      "now": "2026-01-02T08:00:00.000Z",
+      "transitions": [
+        { "from": "in_progress", "to": "internal_review", "possession": "agency", "occurredAt": "2026-01-01T07:00:00.000Z" },
+        { "from": "draft", "to": "assigned", "possession": "agency", "occurredAt": "2026-01-01T00:00:00.000Z" },
+        { "from": "internal_review", "to": "awaiting_client", "possession": "client", "occurredAt": "2026-01-01T08:00:00.000Z" },
+        { "from": "assigned", "to": "in_progress", "possession": "agency", "occurredAt": "2026-01-01T01:00:00.000Z" }
+      ],
+      "expected": {
+        "agencyMs": 28800000,
+        "clientMs": 86400000,
+        "current": "client",
+        "currentMs": 86400000
+      },
+      "expectedHuman": "same as the previous case",
+      "roundsUsed": 0
+    },
+    {
+      "name": "one transition, never moved again",
+      "cardId": "0193a5f0-f608-7000-8000-f6f6f6f60808",
+      "now": "2026-01-01T03:00:00.000Z",
+      "transitions": [
+        { "from": "draft", "to": "assigned", "possession": "agency", "occurredAt": "2026-01-01T00:00:00.000Z" }
+      ],
+      "expected": {
+        "agencyMs": 10800000,
+        "clientMs": 0,
+        "current": "agency",
+        "currentMs": 10800000
+      },
+      "expectedHuman": "agency 3h, open",
+      "roundsUsed": 0
+    },
+    {
+      "name": "no transitions at all",
+      "$doc": "A card still in draft has never transitioned. Possession is derived from this table and nowhere else (INV-5), so the answer is zero — not 'agency, since created_at'.",
+      "cardId": "0193a5f0-f602-7000-8000-f6f6f6f60202",
+      "now": "2026-01-01T03:00:00.000Z",
+      "transitions": [],
+      "expected": {
+        "agencyMs": 0,
+        "clientMs": 0,
+        "current": null,
+        "currentMs": 0
+      },
+      "expectedHuman": "zero, and specifically not an error",
+      "roundsUsed": 0
+    },
+    {
+      "name": "sub-second segments",
+      "$doc": "Exercises the 1s tolerance rather than hiding inside it. Every segment here is smaller than the tolerance, so an implementation that rounds to seconds fails.",
+      "cardId": "0193a5f0-f607-7000-8000-f6f6f6f60707",
+      "now": "2026-01-01T00:00:03.500Z",
+      "transitions": [
+        { "from": "draft", "to": "assigned", "possession": "agency", "occurredAt": "2026-01-01T00:00:00.000Z" },
+        { "from": "assigned", "to": "in_progress", "possession": "agency", "occurredAt": "2026-01-01T00:00:00.750Z" },
+        { "from": "in_progress", "to": "internal_review", "possession": "agency", "occurredAt": "2026-01-01T00:00:01.250Z" },
+        { "from": "internal_review", "to": "awaiting_client", "possession": "client", "occurredAt": "2026-01-01T00:00:02.000Z" }
+      ],
+      "expected": {
+        "agencyMs": 2000,
+        "clientMs": 1500,
+        "current": "client",
+        "currentMs": 1500
+      },
+      "expectedHuman": "agency 2000ms (750+500+750), client 1500ms",
+      "roundsUsed": 0
+    }
+  ]
+}

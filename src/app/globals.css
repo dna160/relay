@@ -1,0 +1,426 @@
+/* ==========================================================================
+   RELAY — token layer
+   Owned by the design layer. See docs/DESIGN-SYSTEM.md and its appendices.
+
+   Reading order:
+     1. Cascade layer order        — makes white-label mechanically bounded
+     2. Faces                      — @font-face, non-render-blocking
+     3. Tokens (light)             — the locked palette + the one brand hook
+     4. Tokens (dark)              — ground/ink swapped, hues lifted
+     5. Derived tokens             — tints, fills, focus, motion, metrics
+     6. Base element styling       — the paper, the rules, focus visibility
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. CASCADE LAYER ORDER
+
+   `relay.tenant` is declared here and NOWHERE ELSE, which fixes it as the
+   lowest-priority author layer: every unlayered declaration in this file wins
+   over anything inside it, at any specificity. Runtime white-label CSS — if it
+   is ever injected as a stylesheet rather than through the DOM hook below —
+   must be emitted inside `@layer relay.tenant { … }`.
+   -------------------------------------------------------------------------- */
+@layer relay.tenant;
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* --------------------------------------------------------------------------
+   2. FACES
+
+   Three faces, all variable, all `font-display: swap`. `@font-face` costs
+   nothing until a glyph in its unicode-range is painted, and `swap` paints the
+   fallback immediately, so first paint is never gated on a font download.
+   Only latin and latin-ext are declared — the other subsets are dead weight
+   for production paperwork and can be added per-locale later.
+
+   Each `src` tries a same-origin self-hosted file first and falls back to the
+   Google CDN. Drop the three .woff2 files into `public/fonts/` (see the
+   "Vendoring the faces" appendix in docs/DESIGN-SYSTEM.md) and self-hosting
+   takes over with no code change.
+   -------------------------------------------------------------------------- */
+
+/* Archivo — display. Used at wdth 125 (Expanded), wght 600. */
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-weight: 100 900;
+  font-stretch: 62% 125%;
+  font-display: swap;
+  src:
+    url('/fonts/archivo-latin.woff2') format('woff2-variations'),
+    url('https://fonts.gstatic.com/s/archivo/v25/k3kQo8UDI-1M0wlSfdnoLmvDIaI.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-weight: 100 900;
+  font-stretch: 62% 125%;
+  font-display: swap;
+  src:
+    url('/fonts/archivo-latin-ext.woff2') format('woff2-variations'),
+    url('https://fonts.gstatic.com/s/archivo/v25/k3kQo8UDI-1M0wlSfdfoLmvDIaK18A.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+    U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+    U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+/* Public Sans — body. */
+@font-face {
+  font-family: 'Public Sans';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src:
+    url('/fonts/public-sans-latin.woff2') format('woff2-variations'),
+    url('https://fonts.gstatic.com/s/publicsans/v21/ijwRs572Xtc6ZYQws9YVwnNGfJ7QwOk1.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Public Sans';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src:
+    url('/fonts/public-sans-latin-ext.woff2') format('woff2-variations'),
+    url('https://fonts.gstatic.com/s/publicsans/v21/ijwRs572Xtc6ZYQws9YVwnNIfJ7QwOk1Fig.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+    U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+    U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+/* Martian Mono — utility. Everything that is a record. */
+@font-face {
+  font-family: 'Martian Mono';
+  font-style: normal;
+  font-weight: 100 800;
+  font-stretch: 75% 112.5%;
+  font-display: swap;
+  src:
+    url('/fonts/martian-mono-latin.woff2') format('woff2-variations'),
+    url('https://fonts.gstatic.com/s/martianmono/v6/2V0aKIcADoYhV6w87xrTKjsSBanIRWbh8g.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Martian Mono';
+  font-style: normal;
+  font-weight: 100 800;
+  font-stretch: 75% 112.5%;
+  font-display: swap;
+  src:
+    url('/fonts/martian-mono-latin-ext.woff2') format('woff2-variations'),
+    url('https://fonts.gstatic.com/s/martianmono/v6/2V0aKIcADoYhV6w87xrTKjsSC6nIRWbh8q05.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+    U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+    U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+/* --------------------------------------------------------------------------
+   3. TOKENS — LIGHT
+
+   THE WHITE-LABEL RULE, stated once and enforced mechanically below:
+
+     A tenant may set exactly one custom property, `--brand-agency`, and it may
+     do so in exactly one place — a `style` attribute on `[data-relay-root]`,
+     written through `element.style.setProperty` (React's style object does
+     this). Nothing else a tenant supplies can reach the palette.
+
+   Three mechanisms, stacked, so that no single mistake unlocks the palette:
+
+   (a) NAME. `--agency` is not the hook. It is *computed from* the hook. Setting
+       `--agency` directly is inert because the computed declaration below is
+       `!important` and re-reads `--brand-agency` regardless.
+
+   (b) CASCADE POSITION. Every protected token is declared `!important` on BOTH
+       `:root` AND `[data-relay-root]` — the element the tenant hook lives on.
+       An `!important` author declaration beats a normal inline declaration on
+       the same element, so an injected `style="--breach:#0f0"` loses. Declaring
+       on both elements closes the "set it on the element that carries the hook"
+       hole; declaring the tenant layer first (§1) closes the stylesheet hole.
+
+   (c) RANGE. Even the sanctioned hook is bounded. `--agency` is the brand hue
+       re-expressed in OKLCH with lightness clamped to [0.20, 0.50] and chroma
+       to [0, 0.12]. Any in-gamut sRGB colour inside that band reaches at least
+       4.5:1 against `--paper` — worst case (the brightest possible hue at
+       L=0.50) is 4.67:1. A tenant therefore cannot make possession illegible,
+       only differently coloured. Browsers without relative colour syntax get
+       the Relay default and no white-label at all (§ the @supports block) —
+       there is no code path in which an unclamped tenant colour is used.
+
+   `--client`, `--breach`, `--ink`, `--paper`, `--paper-2`, `--rule`,
+   `--rule-strong` and `--muted` are literals. A tenant cannot theme away a
+   warning.
+   -------------------------------------------------------------------------- */
+
+:root,
+[data-relay-root] {
+  /* --- ground and ink -------------------------------------------------- */
+  --ink: #14171a !important;
+  --paper: #e8eae5 !important;
+  --paper-2: #f2f3f0 !important;
+  --rule: #c4c8c0 !important;
+  /* Extension: --rule is a decorative hairline (1.40:1) and is never the sole
+     boundary of a control. --rule-strong (3.01:1) is, and meets WCAG 1.4.11. */
+  --rule-strong: #808978 !important;
+  /* Adjusted from the #6B7168 in DESIGN-SYSTEM.md, which measured 4.14:1 on
+     --paper and failed. #60665D measures 4.87:1. Same hue, ~11% darker. */
+  --muted: #60665d !important;
+
+  /* --- possession ------------------------------------------------------- */
+  --agency: #1f4e46 !important; /* replaced by the clamped form below */
+  --client: #4a4fa6 !important;
+  --breach: #a8201a !important;
+
+  /* --- the one hook ----------------------------------------------------- */
+  /* Deliberately NOT !important. This is the only property a tenant sets. */
+  --brand-agency: #1f4e46;
+
+  color-scheme: light;
+}
+
+/* (c) RANGE — the clamped form. Wins over the literal above by source order.
+   `l` and `c` are the OKLCH channels of --brand-agency; `h` passes through, so
+   a tenant keeps their hue and loses only the ability to be illegible. */
+@supports (color: oklch(from red l c h)) {
+  :root,
+  [data-relay-root] {
+    --agency: oklch(
+      from var(--brand-agency, #1f4e46) clamp(0.2, l, 0.5) clamp(0, c, 0.12) h
+    ) !important;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   4. TOKENS — DARK
+
+   Ground and ink swap. The possession hues lift; they do not change hue, and
+   they keep their relationship — agency stays the cooler green, client the
+   warmer blue, and both stay clear of --breach.
+
+   Measured, against dark --paper AND dark --paper-2 (cards live on --paper-2,
+   which is the harder ground, so it is the one the tokens are tuned against):
+
+     agency   #499D8F   5.57 : 1   5.02 : 1
+     client   #8487C8   5.38 : 1   4.84 : 1
+     breach   #E45953   5.01 : 1   4.51 : 1
+     muted    #999F96   6.64 : 1   5.98 : 1
+     ink      #E8EAE5  14.85 : 1  13.37 : 1
+
+   DESIGN-SYSTEM.md specifies "+18%". Applied as +18 HSL lightness points,
+   client, breach and muted land where they need to; agency measured 4.23:1 on
+   --paper-2 and needed +20. Breach needed +23. The deltas are recorded in
+   docs/design/ACCESSIBILITY.md rather than smoothed over.
+
+   Two selectors, always paired: the media query handles the "system" default,
+   the attribute handles an explicit user choice, and `:not([data-theme=light])`
+   stops the media query from overriding a user who asked for light.
+   -------------------------------------------------------------------------- */
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']),
+  [data-relay-root]:not([data-theme='light']) {
+    --ink: #e8eae5 !important;
+    --paper: #14171a !important;
+    --paper-2: #1d2125 !important;
+    --rule: #363d43 !important;
+    --rule-strong: #616d77 !important;
+    --muted: #999f96 !important;
+    --agency: #499d8f !important;
+    --client: #8487c8 !important;
+    --breach: #e45953 !important;
+    --brand-agency: #499d8f;
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme='dark'],
+[data-relay-root][data-theme='dark'] {
+  --ink: #e8eae5 !important;
+  --paper: #14171a !important;
+  --paper-2: #1d2125 !important;
+  --rule: #363d43 !important;
+  --rule-strong: #616d77 !important;
+  --muted: #999f96 !important;
+  --agency: #499d8f !important;
+  --client: #8487c8 !important;
+  --breach: #e45953 !important;
+  --brand-agency: #499d8f;
+  color-scheme: dark;
+}
+
+/* Dark clamp band. The floor is 0.64, the smallest OKLCH lightness at which
+   the darkest possible in-gamut hue (magenta) still reaches 4.5:1 against dark
+   --paper-2. Chroma is scaled 1.6x before clamping so a tenant's hue does not
+   go chalky when it is lifted. */
+@supports (color: oklch(from red l c h)) {
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme='light']),
+    [data-relay-root]:not([data-theme='light']) {
+      --agency: oklch(
+        from var(--brand-agency, #1f4e46) clamp(0.64, l, 0.9)
+          clamp(0, calc(c * 1.6), 0.12) h
+      ) !important;
+    }
+  }
+  :root[data-theme='dark'],
+  [data-relay-root][data-theme='dark'] {
+    --agency: oklch(
+      from var(--brand-agency, #1f4e46) clamp(0.64, l, 0.9)
+        clamp(0, calc(c * 1.6), 0.12) h
+    ) !important;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   5. DERIVED TOKENS
+
+   Everything below is a function of §3/§4 and inherits their protection: it is
+   either a literal or a var() of a locked token.
+   -------------------------------------------------------------------------- */
+
+:root,
+[data-relay-root] {
+  /* Text laid over a filled possession/breach surface.
+     `--paper` is correct in BOTH modes, and this is not a coincidence: ground
+     and hue lightness invert together, so the ground is always the far end of
+     the lightness axis from the fill. Measured:
+       light  paper on agency 7.75  on client 5.86  on breach 6.00
+       dark   paper on agency 5.57  on client 5.38  on breach 5.01
+     Across the whole clamped white-label band the worst case is 4.67:1. */
+  --on-hue: var(--paper);
+
+  /* Quiet chip grounds — 12% hue over the raised surface. The label on these
+     is always --ink (11.3:1 dark, 13.3:1 light); the hue is carried by the
+     tint and the 2px leading rule, never by the label colour. */
+  --tint-agency: color-mix(in srgb, var(--agency) 12%, var(--paper-2));
+  --tint-client: color-mix(in srgb, var(--client) 12%, var(--paper-2));
+  --tint-breach: color-mix(in srgb, var(--breach) 12%, var(--paper-2));
+
+  /* Hover steps. Mixing toward --ink moves *away from the ground* in both
+     modes — darker on paper, lighter on ink — so one expression gives the
+     correct direction in light and dark without a second declaration. */
+  --agency-hover: color-mix(in srgb, var(--agency) 88%, var(--ink));
+  --client-hover: color-mix(in srgb, var(--client) 88%, var(--ink));
+  --paper-hover: color-mix(in srgb, var(--paper-2) 94%, var(--ink));
+
+  /* Fields and overlays */
+  --field: var(--paper-2);
+  --field-rule: var(--rule-strong);
+  --scrim: color-mix(in srgb, var(--ink) 62%, transparent);
+
+  /* Focus. Neutral by design: a possession-coloured ring would make focus and
+     possession compete for the same channel. --ink is maximally contrasting on
+     both grounds; the 2px offset shows --paper through the gap, so the ring
+     survives on a filled possession button too. */
+  --focus: var(--ink);
+  --focus-width: 2px;
+  --focus-offset: 2px;
+
+  /* Metrics. Production stationery: 2px corners, hairline rules, tight rhythm.
+     No card radius above 3px anywhere in this product. */
+  --radius-1: 2px;
+  --radius-2: 3px;
+  --bar-width: 3px;
+  --hairline: 1px;
+
+  /* Motion. The only motion in the product is the state-chip crossfade. */
+  --dur-chip: 120ms;
+  --ease-chip: cubic-bezier(0.2, 0, 0, 1);
+
+  /* Faces */
+  --face-display: 'Archivo', 'Archivo Expanded', 'Helvetica Neue', Arial,
+    sans-serif;
+  --face-body: 'Public Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    Roboto, Helvetica, Arial, sans-serif;
+  --face-mono: 'Martian Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo,
+    Consolas, monospace;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root,
+  [data-relay-root] {
+    --dur-chip: 0ms;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   6. BASE
+   -------------------------------------------------------------------------- */
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--paper);
+    color: var(--ink);
+    font-family: var(--face-body);
+    font-size: 16px;
+    line-height: 24px;
+    font-synthesis-weight: none;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* The `wdth` axis is set by the font-family utilities in tailwind.config.ts
+     (fontVariationSettings). These two rules carry the same intent for a static
+     fallback face, and pin tabular figures on the mono role — a version stack
+     whose digits shift width is a version stack you cannot scan down. */
+  .font-display {
+    font-stretch: expanded;
+  }
+  .font-mono {
+    font-stretch: semi-condensed;
+    font-variant-numeric: tabular-nums;
+  }
+
+  hr {
+    border: 0;
+    border-top: var(--hairline) solid var(--rule);
+  }
+
+  /* Visible keyboard focus on everything focusable. Mouse users do not get the
+     ring; keyboard and switch users always do. Nothing in this codebase may set
+     `outline: none` without providing an equally visible replacement. */
+  :where(a, button, input, textarea, select, summary, [tabindex]):focus-visible {
+    outline: var(--focus-width) solid var(--focus);
+    outline-offset: var(--focus-offset);
+    border-radius: var(--radius-1);
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--client) 26%, transparent);
+  }
+
+  /* The board scrolls horizontally; the page never should. */
+  body {
+    overflow-x: hidden;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   7. PRINT
+
+   A wrap slate and a decision record get printed and attached to invoices.
+   Print on white, keep the mono records, drop the possession fills to outlines.
+   -------------------------------------------------------------------------- */
+@media print {
+  :root,
+  [data-relay-root] {
+    --paper: #ffffff !important;
+    --paper-2: #ffffff !important;
+    --ink: #000000 !important;
+    --rule: #999999 !important;
+  }
+  body {
+    background: #fff;
+  }
+}

@@ -1,21 +1,58 @@
 import { defineConfig, devices } from '@playwright/test';
 
+/**
+ * Two projects, two audiences, and they do not run the same tests.
+ *
+ * The agency surface is a desktop tool used all day by someone who is paid to
+ * be there. The client surface is a link opened once on a phone by someone who
+ * is not motivated, and it is the acquisition surface. Running both suites
+ * against both devices would double the runtime and prove nothing — the split
+ * is by directory so that a test cannot accidentally be written for the wrong
+ * audience.
+ *
+ * `tests/e2e/client/**` must never touch an agency route. That claim is asserted
+ * inside the tests themselves, at the request level, not inferred from the fact
+ * that the flow completed.
+ */
 export default defineConfig({
   testDir: './tests/e2e',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  reporter: process.env.CI ? [['github'], ['html', { open: 'never' }]] : 'list',
+  // One worker in CI: the suite shares one Postgres and the plan-gate and
+  // archive tests both assert on counts that a parallel run would move.
+  workers: process.env.CI ? 1 : undefined,
+  reporter: process.env.CI
+    ? [['github'], ['html', { open: 'never' }], ['junit', { outputFile: 'playwright-report/junit.xml' }]]
+    : 'list',
+  outputDir: 'test-results',
   use: {
     baseURL: process.env.E2E_BASE_URL ?? 'http://localhost:3000',
+    // Traces are the artifact CI uploads on failure. `on-first-retry` keeps the
+    // green path cheap and still captures every flake.
     trace: 'on-first-retry',
+    screenshot: 'only-on-failure',
+    video: 'off',
   },
   projects: [
-    { name: 'agency', use: { ...devices['Desktop Chrome'] } },
-    // The client board is the acquisition surface and the client is on a phone.
-    { name: 'client-mobile', use: { ...devices['Pixel 7'] } },
+    {
+      name: 'agency',
+      testMatch: /agency\/.*\.spec\.ts$/,
+      use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      // The client board is the acquisition surface and the client is on a phone.
+      name: 'client-mobile',
+      testMatch: /client\/.*\.spec\.ts$/,
+      use: { ...devices['Pixel 7'] },
+    },
   ],
   webServer: process.env.E2E_BASE_URL
     ? undefined
-    : { command: 'npm run dev', url: 'http://localhost:3000', reuseExistingServer: !process.env.CI, timeout: 120_000 },
+    : {
+        command: 'npm run dev',
+        url: 'http://localhost:3000',
+        reuseExistingServer: !process.env.CI,
+        timeout: 120_000,
+      },
 });

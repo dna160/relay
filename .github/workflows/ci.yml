@@ -1,23 +1,103 @@
 name: verify
+
 on:
   push: { branches: [main] }
   pull_request:
 
+# A second push to the same branch cancels the first. The e2e job holds a
+# Postgres service for several minutes and there is no value in two of them.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION_PRIMARY: '22'
+
 jobs:
-  verify:
+  # ---------------------------------------------------------------- install
+  # One `npm ci` for the whole workflow. Every later job restores the same
+  # node_modules from cache rather than resolving the tree again.
+  install:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: '22', cache: 'npm' }
+      - id: cache
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: node-modules-22-${{ hashFiles('package-lock.json') }}
+      - if: steps.cache.outputs.cache-hit != 'true'
+        run: npm ci
+
+  # ------------------------------------------------------------------ gate
+  # Exactly the gate CLAUDE.md names. If this passes, the ten invariants still
+  # hold and the phase may hand over.
+  #
+  # The matrix is Node 22 (the engines floor, and what Railway runs) and Node 24
+  # (the next LTS). The suites here are pure, so the second axis costs ~40s and
+  # catches a runtime difference before a deploy does. It is not a matrix over
+  # databases or browsers — those belong to the e2e job, where they are real.
+  verify:
+    needs: install
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22', '24']
+    name: verify (node ${{ matrix.node }})
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '${{ matrix.node }}', cache: 'npm' }
+      - uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: node-modules-${{ matrix.node }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: node-modules-${{ matrix.node }}-
       - run: npm ci
-      # Exactly the gate CLAUDE.md names. If this passes, the ten invariants
-      # still hold and the phase may hand over.
       - run: npm run verify
 
-  e2e:
+  # ------------------------------------------------------- the handover gate
+  # Two things the suite cannot check about itself, because a skipped test
+  # passes and a deleted test passes twice.
+  invariant-contract:
+    needs: install
     runs-on: ubuntu-latest
-    needs: verify
+    name: invariant contract
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: 'npm' }
+
+      # 1. All ten specs exist, every skipped suite names the phase that
+      #    unskips it, and at Phase 8 nothing is skipped at all.
+      - name: every skipped invariant names its phase
+        run: node .github/scripts/check-invariant-skips.mjs
+
+      # 2. Nothing was removed from tests/invariants without saying so.
+      #    Additions and tightenings pass silently; removals need the label.
+      - name: no invariant was weakened
+        if: github.event_name == 'pull_request'
+        env:
+          INVARIANT_CHANGE_APPROVED: ${{ contains(github.event.pull_request.labels.*.name, 'invariant-change') }}
+        run: node .github/scripts/check-invariant-weakening.mjs origin/${{ github.base_ref }}
+
+      # 3. The report, on every run, so the trend is visible in the log even
+      #    when the gate is green.
+      - name: report
+        if: always()
+        run: node .github/scripts/check-invariant-skips.mjs --report >> "$GITHUB_STEP_SUMMARY"
+
+  # ------------------------------------------------------------------- e2e
+  e2e:
+    needs: [verify, invariant-contract]
+    runs-on: ubuntu-latest
     services:
       postgres:
         image: postgres:16-alpine
@@ -30,11 +110,175 @@ jobs:
       DATABASE_URL: postgres://relay:relay@localhost:5432/relay
       AUTH_SECRET: ci-secret-not-used-in-production
       CLIENT_LINK_SECRET: ci-secret-not-used-in-production
+      CERTIFICATE_SIGNING_KEY: ci-secret-not-used-in-production
+      # Gates the seed and magic-link-capture endpoints the e2e suite needs.
+      # Absent in production, which is what makes those endpoints safe to ship.
+      E2E_SEED_TOKEN: ci-seed-token
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: '22', cache: 'npm' }
+      - uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: node-modules-22-${{ hashFiles('package-lock.json') }}
+          restore-keys: node-modules-22-
       - run: npm ci
-      - run: npx playwright install --with-deps chromium
+
+      # Browsers are ~300MB and change only when @playwright/test does. Keying
+      # on the lockfile means a normal PR never downloads them.
+      - name: playwright browser cache
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+      - if: steps.pw-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+
       - run: npm run db:migrate
+
+      # Migrations must be re-runnable. PHASE-1 EXIT: "rerunning is a no-op."
+      - name: migrations are idempotent
+        run: npm run db:migrate
+
       - run: npm run test:e2e
+
+      # The whole point of `trace: on-first-retry` is that the trace exists when
+      # something flakes. It is worth nothing if CI throws it away.
+      - name: upload playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 14
+      - name: upload traces and failure screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: test-results/
+          retention-days: 14
+
+  # --------------------------------------------------------- destructive jobs
+  # ARCHITECTURE NFR: "All destructive jobs are dry-runnable with --plan and log
+  # a manifest first." A dry run that nobody ever runs is a dry run that stops
+  # working, and the first time anyone notices is during a real purge.
+  #
+  # Skips itself until Phase 6 lands the CLI, then becomes a required check.
+  purge-dry-run:
+    needs: install
+    runs-on: ubuntu-latest
+    name: purge --plan smoke test
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_USER: relay, POSTGRES_PASSWORD: relay, POSTGRES_DB: relay }
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U relay" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgres://relay:relay@localhost:5432/relay
+      CERTIFICATE_SIGNING_KEY: ci-secret-not-used-in-production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: 'npm' }
+
+      - id: exists
+        name: has the purge CLI landed?
+        run: |
+          if [ -f src/workers/purge-cli.ts ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "src/workers/purge-cli.ts does not exist yet — Phase 6 creates it." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - if: steps.exists.outputs.found == 'true'
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: node-modules-22-${{ hashFiles('package-lock.json') }}
+          restore-keys: node-modules-22-
+      - if: steps.exists.outputs.found == 'true'
+        run: npm ci
+      - if: steps.exists.outputs.found == 'true'
+        run: npm run db:migrate
+
+      - name: row counts before
+        if: steps.exists.outputs.found == 'true'
+        run: |
+          psql "$DATABASE_URL" -Atc "
+            SELECT string_agg(t || '=' || n, ',' ORDER BY t) FROM (
+              SELECT relname AS t, n_live_tup AS n
+              FROM pg_stat_user_tables
+            ) s;" > /tmp/counts-before.txt
+          cat /tmp/counts-before.txt
+
+      - name: purge --plan prints a manifest and destroys nothing
+        if: steps.exists.outputs.found == 'true'
+        run: npm run purge:plan | tee /tmp/manifest.txt
+
+      - name: the manifest is a manifest
+        if: steps.exists.outputs.found == 'true'
+        run: |
+          grep -qiE 'object|bytes|engagement' /tmp/manifest.txt \
+            || { echo "purge --plan printed no manifest"; exit 1; }
+
+      - name: row counts unchanged
+        if: steps.exists.outputs.found == 'true'
+        run: |
+          psql "$DATABASE_URL" -Atc "
+            SELECT string_agg(t || '=' || n, ',' ORDER BY t) FROM (
+              SELECT relname AS t, n_live_tup AS n
+              FROM pg_stat_user_tables
+            ) s;" > /tmp/counts-after.txt
+          diff /tmp/counts-before.txt /tmp/counts-after.txt \
+            || { echo "purge --plan changed row counts. A dry run destroys nothing."; exit 1; }
+
+  # -------------------------------------------------------------- deployable
+  # The build has to succeed before anything is promoted. Kept separate from
+  # `verify` so a broken Next build is legible as a build failure rather than
+  # as a mysterious red on the gate everyone reads first.
+  build:
+    needs: verify
+    runs-on: ubuntu-latest
+    env:
+      AUTH_SECRET: ci-secret-not-used-in-production
+      CLIENT_LINK_SECRET: ci-secret-not-used-in-production
+      DATABASE_URL: postgres://relay:relay@localhost:5432/relay
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: 'npm' }
+      - uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: node-modules-22-${{ hashFiles('package-lock.json') }}
+          restore-keys: node-modules-22-
+      - run: npm ci
+      - uses: actions/cache@v4
+        with:
+          path: .next/cache
+          key: next-${{ hashFiles('package-lock.json') }}-${{ hashFiles('src/**/*.ts', 'src/**/*.tsx') }}
+          restore-keys: next-${{ hashFiles('package-lock.json') }}-
+      - run: npm run build
+
+  # ---------------------------------------------------------- env drift gate
+  # Every variable the code reads must be documented in .env.example, and every
+  # variable .env.example documents must be registered in railway.json. A
+  # missing env var is a deploy that boots and then fails on the first request.
+  env-registry:
+    needs: install
+    runs-on: ubuntu-latest
+    name: env registry
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: 'npm' }
+      - run: node .github/scripts/check-env-registry.mjs

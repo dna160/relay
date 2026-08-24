@@ -1,0 +1,56 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+
+  "//": [
+    "The `app` service. Railway Config as Code is per-service, so this file",
+    "configures the one service Railway attaches this repository to.",
+    "",
+    "IMPORTANT — read docs/RUNBOOK.md § Deployment topology before using this.",
+    "Railway deprecated Config as Code in favour of Infrastructure as Code",
+    "(.railway/railway.ts). Existing railway.json services keep working until",
+    "2026-12-01, and new services cannot opt in at all. The full three-service",
+    "topology — app, worker, Postgres — is written out as a railway.ts file in",
+    "the runbook, ready to lift. This file remains because it is the config the",
+    "app service reads today and because it records the deploy ordering that",
+    "must survive the migration to IaC.",
+    "",
+    "The ordering that matters: preDeployCommand runs to completion before the",
+    "new version receives any traffic. Migrations are forward-only and never",
+    "edited after commit (CLAUDE.md), so they are safe to run against the old",
+    "version still serving — but the new version must never serve against an",
+    "un-migrated database, and that is what this ordering buys."
+  ],
+
+  "build": {
+    "builder": "RAILPACK",
+    "buildCommand": "npm run build",
+    "watchPatterns": ["src/**", "package.json", "package-lock.json", "next.config.ts"]
+  },
+
+  "deploy": {
+    "preDeployCommand": ["npm run db:migrate"],
+    "startCommand": "npm run start",
+
+    "healthcheckPath": "/api/health",
+    "healthcheckTimeout": 60,
+
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 5,
+
+    "numReplicas": 1
+  },
+
+  "environments": {
+    "production": {
+      "deploy": {
+        "numReplicas": 2,
+        "healthcheckTimeout": 90
+      }
+    },
+    "staging": {
+      "deploy": {
+        "numReplicas": 1
+      }
+    }
+  }
+}

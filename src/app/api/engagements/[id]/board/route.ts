@@ -1,0 +1,27 @@
+/** `GET /api/engagements/:id/board` — lanes plus agency cards. */
+
+import { NextResponse } from 'next/server';
+import { db } from '@/db/client';
+import { loadAgencyBoard } from '@/db/queries/agency-board';
+import { loadEngagementDetail } from '@/db/queries/engagements';
+import { toErrorResponse } from '@/lib/errors';
+import { requireAgency, type RouteContext } from '../../../_guards';
+
+export async function GET(
+  _request: Request,
+  context: RouteContext<{ id: string }>,
+): Promise<NextResponse> {
+  try {
+    const session = await requireAgency();
+    const { id } = await context.params;
+    const now = new Date();
+
+    // Scoped load first — the board query itself is keyed only by engagement.
+    const engagement = await loadEngagementDetail(db, id, session.orgId, now);
+    const lanes = await loadAgencyBoard(db, engagement.id, now);
+
+    return NextResponse.json({ engagementId: engagement.id, lanes });
+  } catch (error) {
+    return toErrorResponse(error);
+  }
+}

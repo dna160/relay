@@ -84,3 +84,79 @@ describe('INV-1 client projection', () => {
     expect(awaiting).toEqual(['c1']);
   });
 });
+
+/* ------------------------------------------------------------------------ */
+/* Strengthening, added when tests/fixtures landed. The cases above assert    */
+/* the projection against a minimal hand-written board; these assert it       */
+/* against the shared fixture, which every other suite and the e2e run also   */
+/* use. A leak that only shows up on the richer board is still a leak.        */
+/* ------------------------------------------------------------------------ */
+
+import {
+  CARD,
+  EXPECTED_CLIENT_VISIBLE,
+  MUST_NOT_LEAK,
+  cards as fixtureCards,
+  lanes as fixtureLanes,
+  versions as fixtureVersions,
+} from '@tests/fixtures';
+
+describe('INV-1 against the shared fixture board', () => {
+  const board = toClientBoard([...fixtureLanes], [...fixtureCards], [...fixtureVersions]);
+  const flat = JSON.stringify(board);
+
+  it('emits exactly the lanes, cards and versions the client is entitled to', () => {
+    expect(board.map((l) => l.id)).toEqual([...EXPECTED_CLIENT_VISIBLE.laneIds]);
+    expect(board.flatMap((l) => l.cards).map((c) => c.id).sort()).toEqual(
+      [...EXPECTED_CLIENT_VISIBLE.cardIds].sort(),
+    );
+    expect(
+      board.flatMap((l) => l.cards).flatMap((c) => c.versions).map((v) => v.id).sort(),
+    ).toEqual([...EXPECTED_CLIENT_VISIBLE.versionIds].sort());
+  });
+
+  it('leaks none of the strings the fixture marks as agency-only', () => {
+    for (const secret of MUST_NOT_LEAK) {
+      expect(flat, `leaked: ${secret}`).not.toContain(secret);
+    }
+  });
+
+  it('never emits a storage key, an actor id, or an internal note', () => {
+    for (const key of ['storageKey', 'storage_key', 'assigneeId', 'internalNotes', 'effortEstimate', 'possession', 'visibilityOverride']) {
+      expect(flat, key).not.toContain(key);
+    }
+  });
+
+  it('emits no card in a state the client contract cannot represent', () => {
+    for (const card of board.flatMap((l) => l.cards)) {
+      expect(['draft', 'internal_review']).not.toContain(card.state);
+    }
+  });
+
+  it('hides the unpublished third version of the three-version card', () => {
+    const card = board.flatMap((l) => l.cards).find((c) => c.id === CARD.awaitingClient);
+    expect(card?.versions.map((v) => v.versionNo)).toEqual([2, 1]);
+  });
+});
+
+describe.skip('INV-1 at the exported card serialiser', () => {
+  /**
+   * UNSKIP IN: Phase 2, with the query layer. `toClientCard` is exported and
+   * therefore client-reachable, but it applies no visibility check of its own —
+   * `toClientCard(draftCard, [])` returns a card whose `state` is `'draft'`
+   * cast to a type that excludes `'draft'`. Today only `toClientBoard` calls it
+   * and the filter runs first, so nothing leaks; the moment a second caller
+   * appears, something does.
+   *
+   * Reported to the architect as a defect in
+   * `src/domain/projection/client-view.ts` — the fix is the owning agent's, not
+   * this suite's.
+   */
+
+  it('refuses to serialise a card the client may not see', () => {
+    expect.fail(
+      'Defect: toClientCard() must throw (or narrow its input to a VisibleCardRow) rather than ' +
+        'emitting a draft card with a state its own return type forbids.',
+    );
+  });
+});
