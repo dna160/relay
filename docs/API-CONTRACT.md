@@ -173,3 +173,33 @@ session and must never accept it — that asymmetry is INV-6, not an inconsisten
 (Phase 6). The front-end calls each of these and marks it `NOT BUILT` in
 `src/lib/api-client.ts`. `GET /api/attention` is the portfolio's primary
 content and is the first of them to land.
+
+### A8 — routes shipped in round 2
+| Route | Response | Note |
+|---|---|---|
+| `GET /api/attention` | `{ items: AttentionItem[] }` | Optional `?limit=` 1–200, default 50. Ranked server-side in PRD §5.5 order. Scoped to active engagements — an archived one cannot be acted on. |
+| `GET /api/events?engagementId=` | SSE | Agency. The id is authorised against the org and 404s, never 403s. |
+| `GET /api/client/events` | SSE | Client. Takes **no query string at all** (A1). Every frame is filtered through the same predicates as the board. |
+| `GET/POST /api/versions/:id/notes` | `{ notes: AgencyRevisionNote[], cardId }` / `{ note }` | Notes carry `versionNo` — this is the "on v4" binding. |
+| `GET/POST /api/client/versions/:id/notes` | `{ notes: ClientRevisionNote[], cardId }` / `{ note }` | Client shape emits no ids and no emails: display name and side only. |
+| `GET /api/health` | `{ status, db, dbLatencyMs, checkedAt }`, 200 or 503 | A real `select 1` with a 3s race. A Next process boots fine against a wrong `DATABASE_URL`, so liveness alone proves nothing. Names no host, driver, or error text. |
+| `POST /api/test/{seed,session}`, `GET /api/test/last-code` | test-only | Mounted only when `NODE_ENV !== 'production'` **and** a constant-time `E2E_SEED_TOKEN` match. Both, not either. Failure is 404. |
+
+### A9 — client mutations assert writability
+*Self-identified by the back-end in round 2.*
+
+`POST /api/client/comments` and `POST /api/client/versions/:id/decision` did not
+call `assertWritable`. A contact could therefore write into an archived
+workspace — and a recorded decision would bump `last_activity_at`, pulling the
+engagement back out of the retention timeline it had already entered. Both now
+return 423 `ENGAGEMENT_ARCHIVED` before the write. This is the reason
+`status` was added to the client board header (A8's sibling directive B6): the
+surface has to be able to say so before the client types a note they cannot post.
+
+### A10 — no `note.created` server event
+A revision note publishes `comment.created`. Both surfaces already read that as
+"re-read this card", which is the entire semantic content a second variant would
+carry. A discriminated union that grows a case for every writer, rather than for
+every distinct reaction, forces every consumer to handle a distinction that
+changes nothing. Revisit if a surface ever needs to react to a note differently
+from a comment.

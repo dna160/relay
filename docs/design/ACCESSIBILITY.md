@@ -38,7 +38,10 @@ both directions — holds. Light: 7.75 and 5.85. Dark: 5.57 and 5.38.**
 
 ### 1.1 Tokens that had to be adjusted
 
-Two changes, both stated rather than smoothed over.
+Two changes, both stated rather than smoothed over. **Both have since been
+folded into the body of `docs/DESIGN-SYSTEM.md`** (round 2, directive U1), so
+the design system no longer publishes a failing value that a later reader would
+re-derive. What follows is the working.
 
 **`--muted` changed from `#6B7168` to `#60665D`.** The published value measured
 **4.139:1** on `--paper` and failed AA. `--muted` carries real text — due dates,
@@ -58,9 +61,9 @@ only boundary.
 
 ### 1.2 Dark-mode lift, exactly
 
-DESIGN-SYSTEM.md specifies "possession hues lighten by 18%". Applied as +18 HSL
-lightness points and then measured against **`--paper-2`**, which is the ground
-cards actually sit on:
+DESIGN-SYSTEM.md originally specified "possession hues lighten by 18%". Applied
+as +18 HSL lightness points and then measured against **`--paper-2`**, which is
+the ground cards actually sit on:
 
 | Token | +18 result | vs dark `--paper` | vs dark `--paper-2` | Verdict |
 |---|---|---|---|---|
@@ -286,6 +289,8 @@ uses **weight and `--ink`** instead:
 | Form validation error | `text-ink font-semibold`, 3px `--ink` leading bar on the field, `role="alert"` |
 | Server error | `text-ink font-semibold`, `role="alert"` |
 | Destructive confirmation (purge now) | `quiet` Button inside a `dismissible={false}` Dialog that states the consequence |
+| Failed upload (`UploadDock`, any of the four steps) | `text-ink font-semibold` phase line with `role="alert"`, plus an `--ink` row edge. A failed upload is not a breached commitment. |
+| Dropped event stream (`StreamStatus` degraded / offline) | The mono label changes from a word to a timestamp, the dot goes darker rather than redder, and past 30 minutes a banner with an `--ink` leading bar. |
 
 This is a deliberate deviation from the convention that errors are red, taken
 because DESIGN-SYSTEM.md reserves the colour absolutely and the reservation is
@@ -343,13 +348,34 @@ hidden label), toast slide-ins, page transitions.
 
 ---
 
-## 9. What this layer cannot verify
+## 9. The executable form
+
+Everything above is prose, and prose cannot fail CI — which is why two Phase
+EXIT conditions (visible focus, `prefers-reduced-motion`) stood UNPROVEN at the
+end of round 1. The same floor now exists as code:
+
+| Artifact | What it is |
+|---|---|
+| `src/styles/a11y-contract.ts` | The numbers as data: every contrast pair with its measured ratio, `contrastRatio()` and a colour parser that throws rather than guessing, the focus-ring expectations, the motion contract, the hostile white-label values, the locked-token list, target and reflow floors. Owned by the design layer. No dependencies. |
+| `docs/design/A11Y-ASSERTIONS.md` | The Playwright and vitest specs that consume it, written out to be lifted into `tests/`. Owned, once lifted, by QA. |
+
+Two of those suites need no running application and can go green immediately:
+the contrast maths (vitest, recomputed from the shipped hexes) and the
+`outline: none` source scan.
+
+**If you change a token in `globals.css`, change `TOKENS` and the affected
+`measured` values in `a11y-contract.ts` in the same commit, and recompute this
+document.** The contract asserts both that a pair clears its WCAG threshold
+*and* that it still measures what the design layer measured — the second
+assertion is what catches a change nobody looked at.
+
+## 10. What this layer cannot verify
 
 Stated plainly so it is not assumed done:
 
-- Automated axe/Playwright checks against rendered pages. There are no pages
-  yet; this belongs to the QA agent, and this document is the specification it
-  should assert against.
+- axe. `@axe-core/playwright` would be genuinely valuable and it is a new
+  dependency, which needs an ADR and the Architect's approval. Everything in
+  `A11Y-ASSERTIONS.md` is deliberately written without one.
 - `<html lang>`, document `<title>` per route, and the skip link's target — all
   live in `src/app/layout.tsx`, which the design layer does not own.
 - Screen-reader verification with an actual reader (VoiceOver / NVDA). The

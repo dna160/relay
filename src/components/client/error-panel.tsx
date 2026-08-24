@@ -8,7 +8,7 @@
  */
 
 import type { ReactNode } from 'react';
-import type { ApiFailure } from '@/lib/api-client';
+import type { ApiFailure } from '@/lib/api-client.core';
 import { failureCopy } from './failure-copy';
 import { cn, display, mono, muted, surface } from '@/components/style-tokens';
 

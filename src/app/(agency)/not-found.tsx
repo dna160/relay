@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { buttonSecondary, cn, display, muted } from '@/components/style-tokens';
+import { buttonClass, cn, display, muted } from '@/components/style-tokens';
 
 /**
  * The agency 404. `NOT_VISIBLE` is a 404 rather than a 403 throughout the
@@ -14,7 +14,9 @@ export default function AgencyNotFound() {
         This page does not exist, or it belongs to an engagement you do not have.
       </p>
       <div>
-        <Link href="/portfolio" className={buttonSecondary}>
+        {/* A link, so it cannot be the `Button` primitive — `buttonClass` is that
+            same vocabulary as a string, which is the only reason it exists. */}
+        <Link href="/portfolio" className={buttonClass('quiet')}>
           Back to the portfolio
         </Link>
       </div>

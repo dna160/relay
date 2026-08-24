@@ -33,15 +33,6 @@ const BUCKET_POSSESSION: Record<AttentionBucket, 'agency' | 'client'> = {
   no_movement_7d: 'agency',
 };
 
-function byPressure(a: AttentionItem, b: AttentionItem): number {
-  // Longest held first — the thing that has been sitting is the thing that is
-  // rotting. Due date breaks ties rather than leading.
-  if (b.possessionMs !== a.possessionMs) return b.possessionMs - a.possessionMs;
-  const ad = a.dueAt ? new Date(a.dueAt).getTime() : Number.POSITIVE_INFINITY;
-  const bd = b.dueAt ? new Date(b.dueAt).getTime() : Number.POSITIVE_INFINITY;
-  return ad - bd;
-}
-
 function Row({ item }: { item: AttentionItem }) {
   const due = formatDue(item.dueAt);
   const side = BUCKET_POSSESSION[item.bucket];
@@ -82,7 +73,23 @@ export function AttentionList({ items }: { items: AttentionItem[] }) {
   return (
     <div className="flex flex-col gap-6">
       {BUCKET_ORDER.map((bucket) => {
-        const group = items.filter((i) => i.bucket === bucket).sort(byPressure);
+        /*
+         * Filtered, never re-sorted. `GET /api/attention` returns the list
+         * already ranked and the ranking is a product decision made once,
+         * server-side (PRD §5.5) — so two people looking at the same agency see
+         * the same list in the same order, and a front-end sort cannot quietly
+         * turn it back into a deadline list. The server also knows two things
+         * this component cannot: inside "no movement in 7 days" it ranks on
+         * idle time rather than possession time, which is often zero there and
+         * would sort the bucket into noise; and it breaks ties on card id, so a
+         * refresh does not reshuffle rows that are otherwise equal.
+         *
+         * `filter` is stable, so the server's order survives the grouping, and
+         * `BUCKET_ORDER` here matches `BUCKET_RANK` in
+         * `src/domain/attention/rank.ts` — the sections come out in the order
+         * the rows already arrived in.
+         */
+        const group = items.filter((i) => i.bucket === bucket);
         if (group.length === 0) return null;
         return (
           <section key={bucket} aria-label={bucketLabel(bucket)}>

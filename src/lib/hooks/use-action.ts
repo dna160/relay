@@ -11,7 +11,7 @@
  */
 
 import { useCallback, useRef, useState } from 'react';
-import type { ApiFailure, ApiResult } from '@/lib/api-client';
+import type { ApiFailure, ApiResult } from '@/lib/api-client.core';
 
 export interface ActionState<T> {
   pending: boolean;

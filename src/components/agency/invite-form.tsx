@@ -8,9 +8,10 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { agencyApi } from '@/lib/api-client';
+import { agencyApi } from '@/lib/api-client.agency';
 import { useAction } from '@/lib/hooks/use-action';
-import { buttonPrimary, cn, input, mono, muted } from '@/components/style-tokens';
+import { Button } from '@/components/primitives';
+import { cn, input, mono, muted } from '@/components/style-tokens';
 import { ErrorPanel } from './error-panel';
 
 export function InviteForm({ engagementId, disabled }: { engagementId: string; disabled: boolean }) {
@@ -49,9 +50,17 @@ export function InviteForm({ engagementId, disabled }: { engagementId: string; d
         against.
       </p>
       <div>
-        <button type="submit" className={buttonPrimary} disabled={disabled || !ready || invite.pending}>
-          {invite.pending ? 'Sending…' : 'Send the link'}
-        </button>
+        {/* `client`: the link is the handover. Once it is sent, the next move
+            in this flow belongs to the person receiving it. */}
+        <Button
+          type="submit"
+          tone="client"
+          loading={invite.pending}
+          loadingLabel="Sending"
+          disabled={disabled || !ready}
+        >
+          Send the link
+        </Button>
       </div>
       {invite.done && <p className={cn(mono, 'text-12', muted)}>{invite.done}</p>}
       {invite.failure && <ErrorPanel failure={invite.failure} />}

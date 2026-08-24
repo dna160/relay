@@ -10,7 +10,7 @@
  * column somebody has to go looking for.
  */
 
-import { agencyApi } from '@/lib/api-client';
+import { agencyApi } from '@/lib/api-client.agency';
 import { formatDate, formatPurgeCountdown, plural } from '@/lib/format';
 import { chip, cn, eyebrow, mono, muted, surface } from '@/components/style-tokens';
 import { EmptyState } from '@/components/agency/empty-state';

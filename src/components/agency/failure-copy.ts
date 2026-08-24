@@ -6,7 +6,7 @@
  * these are the product's.
  */
 
-import type { ApiFailure } from '@/lib/api-client';
+import type { ApiFailure } from '@/lib/api-client.core';
 
 export interface FailureCopy {
   title: string;

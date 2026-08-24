@@ -11,12 +11,11 @@
  */
 
 import type { ReactNode } from 'react';
-import { agencyApi } from '@/lib/api-client';
 import { cn, display, muted } from '@/components/style-tokens';
 import { ErrorPanel } from '@/components/agency/error-panel';
 import { WrapSlate } from '@/components/agency/wrap-slate';
 import { WorkspaceTabs } from '@/components/agency/workspace-tabs';
-import { serverContext } from '../../_lib/server-context';
+import { getEngagement } from '../../_lib/reads';
 
 export default async function WorkspaceLayout({
   children,
@@ -26,8 +25,7 @@ export default async function WorkspaceLayout({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const ctx = await serverContext();
-  const engagement = await agencyApi.engagement(id, ctx);
+  const engagement = await getEngagement(id);
 
   if (!engagement.ok) {
     return <ErrorPanel failure={engagement} />;

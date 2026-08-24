@@ -9,7 +9,7 @@
  */
 
 import type { Metadata } from 'next';
-import { agencyApi } from '@/lib/api-client';
+import { agencyApi } from '@/lib/api-client.agency';
 import { formatDate, plural } from '@/lib/format';
 import { cn, display, mono, muted, surface } from '@/components/style-tokens';
 import { EmptyState } from '@/components/agency/empty-state';

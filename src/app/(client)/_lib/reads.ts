@@ -11,7 +11,7 @@
  */
 
 import { cache } from 'react';
-import { clientApi } from '@/lib/api-client';
+import { clientApi } from '@/lib/api-client.client';
 import { serverContext } from './server-context';
 
 export const getClientBoard = cache(async () => {

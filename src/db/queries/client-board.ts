@@ -33,6 +33,7 @@ import {
 } from '@/domain/projection/client-view';
 import { daysToPurge } from '@/domain/retention/schedule';
 import { notVisible } from '@/domain/errors';
+import type { EngagementStatus } from '@/lib/types';
 import type { ClientScope } from './client-scope';
 
 async function visibleLanes(exec: Executor, scope: ClientScope): Promise<LaneRow[]> {
@@ -129,6 +130,20 @@ export interface ClientEngagementHeader {
   agencyName: string;
   brandPrimary: string | null;
   brandLogoKey: string | null;
+  /**
+   * The engagement's lifecycle status.
+   *
+   * Carried so the client card page can render read-only *before* the contact
+   * commits to a decision, rather than discovering a 423 on submit — writing a
+   * revision note into a textarea and being told afterwards that the workspace
+   * froze last Tuesday is the worst moment to learn it.
+   *
+   * Not an INV-1 concern: this is the client's own engagement, named by their
+   * own session, and `archived` is precisely the fact they most need. A client
+   * session can never be issued for a `purged` engagement — the magic-link
+   * routes refuse one — so in practice this reads `active` or `archived`.
+   */
+  status: EngagementStatus;
   daysToPurge: number | null;
   contactEmail: string;
   contactName: string | null;
@@ -143,6 +158,7 @@ export async function loadClientEngagementHeader(
   const rows = await exec
     .select({
       title: engagements.title,
+      status: engagements.status,
       purgeAt: engagements.purgeAt,
       agencyName: organizations.name,
       brandPrimary: organizations.brandPrimary,
@@ -172,6 +188,7 @@ export async function loadClientEngagementHeader(
     agencyName: row.agencyName,
     brandPrimary: row.brandPrimary,
     brandLogoKey: row.brandLogoKey,
+    status: row.status,
     daysToPurge: daysToPurge(row.purgeAt, now),
     contactEmail: row.contactEmail,
     contactName: row.contactName,

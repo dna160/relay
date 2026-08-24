@@ -13,7 +13,6 @@
 
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { agencyApi } from '@/lib/api-client';
 import { formatDue, formatRounds, roundsBreached } from '@/lib/format';
 import { breach, chip, cn, display, eyebrow, mono, muted, surface } from '@/components/style-tokens';
 import { ErrorPanel } from '@/components/agency/error-panel';
@@ -21,7 +20,11 @@ import { PossessionBar } from '@/components/agency/possession-bar';
 import { StateChip } from '@/components/agency/state-chip';
 import { TransitionControls } from '@/components/agency/transition-controls';
 import { VersionStack } from '@/components/agency/version-stack';
+import { UploadPanel } from '@/components/agency/upload-panel';
+import { RevisionNotes, type VersionThread } from '@/components/agency/revision-notes';
+import { agencyApi } from '@/lib/api-client.agency';
 import { serverContext } from '../../../../_lib/server-context';
+import { getBoard, getEngagement } from '../../../../_lib/reads';
 
 export default async function CardPage({
   params,
@@ -29,8 +32,7 @@ export default async function CardPage({
   params: Promise<{ id: string; cardId: string }>;
 }) {
   const { id, cardId } = await params;
-  const ctx = await serverContext();
-  const board = await agencyApi.board(id, ctx);
+  const [board, engagement] = await Promise.all([getBoard(id), getEngagement(id)]);
 
   if (!board.ok) return <ErrorPanel failure={board} />;
 
@@ -40,6 +42,26 @@ export default async function CardPage({
 
   const due = formatDue(card.dueAt);
   const breached = roundsBreached(card.roundsUsed, card.contractedRounds);
+  // Predicted from `status`, not discovered on a 423 at submit.
+  const archived = engagement.ok && engagement.data.engagement.status !== 'active';
+
+  // One read per version, issued together. The thread is per-version because
+  // the guarantee is per-version (PRD §5.3) — there is no card-level read that
+  // could honour "never floats forward".
+  const ctx = await serverContext();
+  const latest = [...card.versions].sort((a, b) => b.versionNo - a.versionNo)[0] ?? null;
+  const threads: VersionThread[] = await Promise.all(
+    [...card.versions]
+      .sort((a, b) => b.versionNo - a.versionNo)
+      .map(async (version) => {
+        const notes = await agencyApi.revisionNotes(version.id, ctx);
+        return {
+          versionId: version.id,
+          versionNo: version.versionNo,
+          notes: notes.ok ? notes.data : [],
+        };
+      }),
+  );
 
   return (
     <article className="flex max-w-prose flex-col gap-6">
@@ -82,8 +104,33 @@ export default async function CardPage({
         <h2 id="card-versions" className={cn(eyebrow, 'border-b border-ink pb-1')}>
           Versions
         </h2>
-        <div className="mt-3">
+        <div className="mt-3 flex flex-col gap-4">
+          {/*
+            The upload sits above the stack, not below it. `asset_versions` is
+            append-only (INV-4) and the stack is reverse-chronological, so the
+            row this control is about to create appears directly beneath it.
+          */}
+          <UploadPanel
+            target={{ kind: 'version', engagementId: id, cardId: card.id }}
+            disabled={archived}
+            disabledReason="This engagement is read-only. Every version is still here to read and to export."
+          />
           <VersionStack versions={card.versions} />
+        </div>
+      </section>
+
+      <section aria-labelledby="card-notes">
+        <h2 id="card-notes" className={cn(eyebrow, 'border-b border-ink pb-1')}>
+          Revision notes
+        </h2>
+        <div className="mt-3">
+          <RevisionNotes
+            engagementId={id}
+            threads={threads}
+            latestVersionId={latest?.id ?? null}
+            latestVersionNo={latest?.versionNo ?? null}
+            readOnly={archived}
+          />
         </div>
       </section>
 

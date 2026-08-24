@@ -68,10 +68,12 @@ export async function sendClientInvite(input: {
 
 export async function sendClientCode(input: {
   to: string;
+  engagementId: string;
   engagementTitle: string;
   code: string;
   expiresInMinutes: number;
 }): Promise<void> {
+  captureClientCode(input.engagementId, input.to, input.code);
   await sendMail({
     to: input.to,
     subject: `Your code for ${input.engagementTitle}: ${input.code}`,
@@ -82,4 +84,57 @@ export async function sendClientCode(input: {
       'If you did not ask for this, you can ignore this message.',
     ].join('\n'),
   });
+}
+
+/* ------------------------------------------------------- the e2e mail capture */
+
+/**
+ * The e2e suite cannot read a magic link out of a real inbox, so the last code
+ * issued for a contact is held in memory for `GET /api/test/last-code` to read
+ * back. `tests/e2e/_helpers.ts` calls that endpoint; without it 22 e2e tests
+ * fail at their first `beforeEach`.
+ *
+ * Gated on the same two conditions as the test routes themselves — never in
+ * production, and only when `E2E_SEED_TOKEN` is set. The check is repeated here
+ * rather than imported from `src/app/api/test/_gate.ts` because `src/lib`
+ * importing out of `src/app` is the wrong direction and would make this module
+ * unloadable outside Next.
+ *
+ * A capture, not a log: the code is the credential, and outside a test run
+ * nothing is retained at all. In a test run it lives in one process's memory,
+ * keyed by engagement and address, and is overwritten by the next request.
+ */
+
+interface CapturedCode {
+  code: string;
+  issuedAt: number;
+}
+
+declare global {
+  var __relayCodeCapture: Map<string, CapturedCode> | undefined;
+}
+
+function captureEnabled(): boolean {
+  if (process.env.NODE_ENV === 'production') return false;
+  const token = process.env.E2E_SEED_TOKEN;
+  return typeof token === 'string' && token.length > 0;
+}
+
+function captureKey(engagementId: string, email: string): string {
+  return `${engagementId}:${email.toLowerCase()}`;
+}
+
+function captureClientCode(engagementId: string, email: string, code: string): void {
+  if (!captureEnabled()) return;
+  globalThis.__relayCodeCapture ??= new Map<string, CapturedCode>();
+  globalThis.__relayCodeCapture.set(captureKey(engagementId, email), {
+    code,
+    issuedAt: Date.now(),
+  });
+}
+
+/** The most recent code issued for this address on this engagement, if any. */
+export function lastClientCode(engagementId: string, email: string): string | null {
+  if (!captureEnabled()) return null;
+  return globalThis.__relayCodeCapture?.get(captureKey(engagementId, email))?.code ?? null;
 }

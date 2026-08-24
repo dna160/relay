@@ -68,9 +68,29 @@ Config as Code is per-service.
 > **new services cannot opt into it at all**. A new Relay project therefore
 > cannot be stood up from `railway.json`; it needs `.railway/railway.ts`.
 >
-> That file does not exist in this repository yet and is not owned by the QA
-> role. It is written out in full below so that whoever owns it can lift it
-> verbatim. **This is a blocking item for Phase 8.**
+> **That file now exists, at `.railway/railway.ts`.** QA owns `.railway/**` as
+> of round 2 and lifted it out of this section, with four corrections the
+> snippet below did not carry — `preDeploy: 'npm run db:migrate'` on the app
+> service only (its absence would have meant the first IaC deploy served traffic
+> against an un-migrated database), `PGPOOL_MAX`, an explicit staging/production
+> bucket split, and a test asserting `E2E_SEED_TOKEN` is set in no environment.
+>
+> Two things are still open, and both need the Architect:
+>
+> - **`railway/iac` is not a dependency.** Railway resolves it at deploy time
+>   from the `railway` package, which is not in `package.json`. Adding it needs
+>   an ADR. Until then the file is correct and un-runnable.
+> - **Nothing typechecks or lints it.** `tsc` and `eslint` both skip
+>   dot-directories, so `.railway/**` is outside `npm run verify`'s reach.
+>   `tests/unit/railway-topology.spec.ts` is the gate that stands in for that:
+>   it asserts the migration ordering, the single worker replica, the health
+>   check path, the bucket split, and the absence of any committed credential.
+>   Adding `.railway` to `tsconfig.json`'s `include` would be better and is
+>   blocked on the dependency above.
+>
+> The snippet below is kept as the annotated original. **The file is the source
+> of truth; this is the commentary.** They are cross-checked: the topology spec
+> reads `.railway/railway.ts`, never this section.
 
 ```ts
 // .railway/railway.ts — the whole topology, one file, one source of truth.
@@ -171,7 +191,7 @@ job.
 | Variable | Service | Secret | Missing or wrong ⇒ |
 |---|---|---|---|
 | `DATABASE_URL` | app, worker | yes | Nothing starts. Set by Railway from the `postgres` service; never type it by hand. |
-| `PGPOOL_MAX` | app, worker | no | Pool size falls back to its default. Raise it only with Postgres `max_connections` in mind — app replicas × pool + worker must stay under it. **Not yet in `.env.example`; see §9.** |
+| `PGPOOL_MAX` | app, worker | no | Pool size falls back to its default. Raise it only with Postgres `max_connections` in mind — app replicas × pool + worker must stay under it. Set per environment in `.railway/railway.ts` — lower in production, which runs two app replicas. |
 | `AUTH_SECRET` | app | yes | Every agency session is invalid. Rotating it signs everyone out. |
 | `AUTH_URL` | app | no | Magic links point at the wrong host. Agency sign-in appears to work and the link 404s. |
 | `NEXT_PUBLIC_APP_URL` | app | no | Client-side fetches resolve against the wrong origin. **Not yet in `.env.example`; see §9.** |
@@ -481,11 +501,13 @@ free export exists and why it is never paywalled: it is the copy that survives.
 | Queue depth | `SELECT count(*) FROM pgboss.job WHERE state='created'` | Steady. A growing backlog means the worker is down or wedged. |
 | Object storage | first presign of the day | 200 from R2 |
 
-> **NOT YET IMPLEMENTED.** `/api/health` does not exist. `railway.json` points
-> its health check at it, so **the first deploy will fail its health check until
-> that route ships**. Owner: whoever holds `src/app/api/`. It must check the
-> database — a health check that only proves Node is running will report healthy
-> through a total database outage.
+> **Shipped in round 2** (`src/app/api/health/route.ts`). It checks database
+> connectivity, not just process liveness — a health check that only proves Node
+> is running reports healthy through a total database outage. Both
+> `railway.json` and `.railway/railway.ts` point at it, and
+> `tests/unit/railway-topology.spec.ts` asserts that the two agree, because a
+> health check path that drifts between the two config files fails the deploy
+> that uses the stale one.
 
 The health check must **not** touch R2 or Resend. A third-party blip must not
 take the app out of rotation.
@@ -515,13 +537,20 @@ that is honest about where it stops.
 1. **Nothing here has been executed.** PHASE-8 EXIT requires deploy and rollback
    each performed once against staging. Until that has happened, treat every
    command in §3 and §4 as unverified.
-2. **`.railway/railway.ts` does not exist**, and Railway will not let a new
-   service use `railway.json`. Blocking for Phase 8. The file is written out in
-   §1; it needs an owner.
-3. **`/api/health` does not exist**, and `railway.json` health-checks it.
-4. **`PGPOOL_MAX` and `NEXT_PUBLIC_APP_URL` are read by `src/` and are not in
-   `.env.example`.** The `env registry` CI job fails on this until they are
-   added. It is a two-line fix in a file the QA role does not own.
+2. **`.railway/railway.ts` exists but cannot run.** The topology is written and
+   gated (`tests/unit/railway-topology.spec.ts`, 14 assertions), but the
+   `railway/iac` module it imports comes from the `railway` package, which is
+   not a dependency. Adding it needs an ADR. Consequence: the file is a correct
+   description of the topology that no tool has ever executed — and the
+   deprecation cutoff is **2026-12-01**.
+3. **`.railway/**` is outside the toolchain.** `tsc` and `eslint` skip
+   dot-directories, so a syntax error in the topology file would not fail
+   `npm run verify`. The topology spec reads it as text and asserts the
+   properties whose violation is an incident; that is a floor, not a substitute
+   for a typechecker.
+4. **`NEXT_PUBLIC_APP_URL` is read by `src/lib/api-client.core.ts` and is not in
+   `.env.example`.** The `env registry` CI job fails on this one line.
+   `PGPOOL_MAX` was the other half of this gap and was closed in round 2.
 5. **The purge worker, the warning jobs, and `npm run purge:plan` do not exist**
    (Phase 6). §6 is a contract, not a procedure.
 6. **No error tracking is wired up** (Phase 8 scope). Right now the only

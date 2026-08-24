@@ -123,7 +123,7 @@ export function toAgencyBoard(input: AgencyBoardInput): AgencyLane[] {
           toAgencyCard(
             c,
             versions,
-            computePossession(transitionsByCard.get(c.id) ?? [], now, c.state),
+            computePossession(transitionsByCard.get(c.id) ?? [], now),
             c.assigneeId ? assigneeById.get(c.assigneeId) : undefined,
           ),
         ),

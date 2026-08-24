@@ -14,13 +14,13 @@
 
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { clientApi } from '@/lib/api-client';
+import { clientApi } from '@/lib/api-client.client';
 import { formatDue, formatRounds, roundsBreached } from '@/lib/format';
 import { breach, cn, display, eyebrow, mono, muted } from '@/components/style-tokens';
 import { StateChip } from '@/components/client/state-chip';
 import { VersionStack } from '@/components/client/version-stack';
 import { DecisionBar } from '@/components/client/decision-bar';
-import { CommentThread } from '@/components/client/comment-thread';
+import { RevisionNotes, type VersionThread } from '@/components/client/revision-notes';
 import { ErrorPanel } from '@/components/client/error-panel';
 import { getClientBoard } from '../../../../_lib/reads';
 import { serverContext } from '../../../../_lib/server-context';
@@ -39,16 +39,41 @@ export default async function ClientCardPage({
   if (!lane || !card) notFound();
 
   const ctx = await serverContext();
-  const comments = await clientApi.comments(card.id, ctx);
 
   // `versions` arrives newest-first from the client projection.
   const latest = card.versions[0] ?? null;
   const due = formatDue(card.dueAt);
   const breached = roundsBreached(card.roundsUsed, card.contractedRounds);
-  // The client header does not carry engagement status yet, so read-only is
-  // discovered rather than predicted: a mutation on an archived engagement
-  // returns 423 and the panel says so in the client's words.
-  const readOnly = false;
+
+  /**
+   * Read-only is now *predicted* from the header's `status`, not discovered on
+   * a 423. Writing a note into a textarea and being told afterwards that the
+   * workspace froze last Tuesday is the worst moment to learn it. The server is
+   * still the authority — every write route checks `assertWritable` before it
+   * touches a row — this only stops the surface offering a control that cannot
+   * succeed.
+   */
+  const readOnly = board.data.engagement.status !== 'active';
+
+  /**
+   * One read per version, issued together. PRD §5.3's guarantee is that a note
+   * stays on the version it was written against, so the thread is per-version
+   * by construction and there is no card-level read that could return it.
+   * A card carries a handful of published versions, and a waterfall of even a
+   * handful is felt on 4G.
+   */
+  const threads: VersionThread[] = await Promise.all(
+    card.versions.map(async (version) => {
+      const notes = await clientApi.revisionNotes(version.id, ctx);
+      return {
+        versionId: version.id,
+        versionNo: version.versionNo,
+        // A failed read degrades to an empty thread rather than taking the page
+        // down: the file and the decision are what this page is for.
+        notes: notes.ok ? notes.data : [],
+      };
+    }),
+  );
 
   return (
     <article className="flex max-w-prose flex-col gap-6">
@@ -96,11 +121,10 @@ export default async function ClientCardPage({
           Notes
         </h2>
         <div className="mt-3">
-          {/* There is no read endpoint for notes yet, so a failed read
-              degrades to the empty state and the form still posts. */}
-          <CommentThread
-            cardId={card.id}
-            comments={comments.ok ? comments.data : []}
+          <RevisionNotes
+            threads={threads}
+            latestVersionId={latest?.id ?? null}
+            latestVersionNo={latest?.versionNo ?? null}
             readOnly={readOnly}
           />
         </div>

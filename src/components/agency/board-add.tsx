@@ -11,9 +11,10 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { agencyApi } from '@/lib/api-client';
+import { agencyApi } from '@/lib/api-client.agency';
 import { useAction } from '@/lib/hooks/use-action';
-import { buttonGhost, buttonPrimary, cn, input, mono, muted } from '@/components/style-tokens';
+import { Button } from '@/components/primitives';
+import { cn, input, mono, muted } from '@/components/style-tokens';
 
 export function AddCardForm({ engagementId, laneId }: { engagementId: string; laneId: string }) {
   const router = useRouter();
@@ -23,9 +24,9 @@ export function AddCardForm({ engagementId, laneId }: { engagementId: string; la
 
   if (!open) {
     return (
-      <button type="button" className={cn(buttonGhost, 'w-full')} onClick={() => setOpen(true)}>
+      <Button tone="ghost" block onClick={() => setOpen(true)}>
         Add a deliverable
-      </button>
+      </Button>
     );
   }
 
@@ -55,12 +56,20 @@ export function AddCardForm({ engagementId, laneId }: { engagementId: string; la
         onChange={(e) => setTitle(e.target.value)}
       />
       <div className="flex gap-2">
-        <button type="submit" className={buttonPrimary} disabled={create.pending || !title.trim()}>
-          {create.pending ? 'Adding…' : 'Add'}
-        </button>
-        <button type="button" className={buttonGhost} onClick={() => setOpen(false)}>
+        {/* `agency`: adding a deliverable moves nothing between the two
+            sides, so the ball stays where it is — with us. */}
+        <Button
+          type="submit"
+          tone="agency"
+          loading={create.pending}
+          loadingLabel="Adding"
+          disabled={!title.trim()}
+        >
+          Add
+        </Button>
+        <Button tone="ghost" onClick={() => setOpen(false)}>
           Cancel
-        </button>
+        </Button>
       </div>
       {create.failure && (
         <p className={cn(mono, 'text-12', muted)}>{create.failure.code} — {create.failure.message}</p>
@@ -78,13 +87,13 @@ export function AddLaneForm({ engagementId }: { engagementId: string }) {
 
   if (!open) {
     return (
-      <button
-        type="button"
-        className={cn(buttonGhost, 'w-card shrink-0 justify-start')}
+      <Button
+        tone="ghost"
+        className="w-card shrink-0 justify-start"
         onClick={() => setOpen(true)}
       >
         Add a lane
-      </button>
+      </Button>
     );
   }
 
@@ -129,12 +138,18 @@ export function AddLaneForm({ engagementId }: { engagementId: string }) {
         Keep this lane private to the agency
       </label>
       <div className="flex gap-2">
-        <button type="submit" className={buttonPrimary} disabled={create.pending || !name.trim()}>
-          {create.pending ? 'Adding…' : 'Add'}
-        </button>
-        <button type="button" className={buttonGhost} onClick={() => setOpen(false)}>
+        <Button
+          type="submit"
+          tone="agency"
+          loading={create.pending}
+          loadingLabel="Adding"
+          disabled={!name.trim()}
+        >
+          Add
+        </Button>
+        <Button tone="ghost" onClick={() => setOpen(false)}>
           Cancel
-        </button>
+        </Button>
       </div>
       {create.failure && (
         <p className={cn(mono, 'text-12', muted)}>{create.failure.code} — {create.failure.message}</p>

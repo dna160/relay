@@ -651,6 +651,319 @@ a reader in list mode already has it.
 
 ---
 
+## 8. `UploadDock`
+
+The agency's upload surface. Two mounts, one component:
+
+| Mount | Presign body | Records with |
+|---|---|---|
+| Card detail → **Add a version** | `{ engagementId, cardId, … }` | `POST /api/versions` (carries `sha256`) |
+| Reference shelf → **Add files** | `{ engagementId, … }`, no `cardId` | `POST /api/reference-files` (no `sha256` field) |
+
+This is the flow most likely to be met at 3am on a delivery deadline, on hotel
+wifi, with a 4 GB master. It is specified accordingly: **the file list is the
+component**, the drop zone is a detail of it, and every terminal state names
+which of the four steps failed and what the operator can do about it.
+
+Sequence, failure matrix and copy are in `docs/design/FLOWS.md` §4. This section
+is anatomy, state and accessibility.
+
+### Anatomy
+
+```
+<section aria-labelledby="upload-h">
+  ├─ Row justify=between baseline
+  │   ├─ h2  ADD A VERSION                      lane header treatment
+  │   └─ Mono  2 of 4 · 1.2 GB left             aggregate, only while active
+  ├─ Rule weight="strong"
+  ├─ div[data-dropzone]                          the target — see below
+  │   ├─ p     Drop files here, or              16 body
+  │   ├─ Button tone="quiet" size="md"  Choose files
+  │   ├─ input[type=file] hidden                 the real control
+  │   └─ p     Up to 5 GB each.                 12 muted
+  └─ ul[aria-label="Uploads"]                    one li per file, insertion order
+      └─ li → UploadRow
+</section>
+```
+
+The drop zone is **not** the accessible control. `<input type="file">` is, kept
+in the DOM, visually hidden but focusable, labelled by the same heading; the
+`Choose files` Button forwards its click. Drag-and-drop is an accelerator laid
+over a working file input, never the only way in — the same rule that governs
+the board's drag ordering.
+
+`data-dropzone` also listens on `window` for `dragover`/`drop` so a file dropped
+anywhere on the card detail lands in the dock rather than being opened by the
+browser as a navigation. `preventDefault` on both, always, including when the
+dock is disabled — a dropped 4 GB master that navigates the tab away is how an
+operator loses their board state.
+
+### `UploadRow` anatomy
+
+```
+<li>
+  ├─ div[edge]                                   3px, --rule-strong; --agency once done
+  ├─ Row justify=between gap=2 items-start
+  │   ├─ Stack gap={0} min-w-0
+  │   │   ├─ span   Northwind_master_v4.mov      16, body, truncate, dir="ltr"
+  │   │   ├─ Mono   1.4 GB · 62%                 12, muted — the record line
+  │   │   └─ p      Sending · part 31 of 80      12; phase, or the failure reason
+  │   └─ Row gap={1} shrink-0
+  │       ├─ Button tone="ghost" size="sm"       Pause / Resume / Retry
+  │       └─ Button tone="ghost" size="sm"       Cancel / Remove
+  └─ div[role=progressbar]                       2px, full width, bottom edge
+</li>
+```
+
+Row height 64px, growing to 80px when the third line carries a failure reason.
+Nothing is ever removed from the list automatically — a completed row stays,
+greyed to `--muted` with a `done` mark, until the page is left. An upload that
+vanishes on success is an upload the operator cannot prove happened.
+
+### The four steps, and why the row names them
+
+An upload is four things that fail differently:
+
+| # | Step | State | What a failure means |
+|---|---|---|---|
+| 1 | Read + hash the bytes | `hashing` | Local. The file moved, or the disk is unreadable. Nothing was sent. |
+| 2 | `POST /api/uploads/presign` | `requesting` | Session, permission, archived engagement, or size ceiling. Nothing was sent. |
+| 3 | PUT to storage (± complete) | `transferring` | Network, or an expired window. Bytes were sent and are not yet recorded. |
+| 4 | `POST /api/versions` \| `/api/reference-files` | `recording` | **The bytes are in the bucket and the app does not know.** Retry is safe and is the only correct action. |
+
+A single "Upload failed" across all four is unusable: step 2 needs a different
+human action from step 4, and step 4 in particular must never be answered by
+re-sending 4 GB. The row's third line always names the step.
+
+### State machine
+
+```
+queued ──▶ hashing ──▶ requesting ──▶ transferring ──▶ recording ──▶ done
+   │          │            │               │   ▲            │
+   │          │            │               ▼   │            │
+   │          │            │            paused ┘            │
+   │          ▼            ▼               ▼                ▼
+   └────────▶ failed ◀─────┴───────────────┴────────────────┘
+                 │
+                 └──▶ (Retry) re-enters at the step that failed, except
+                      transferring-after-expiry, which re-enters at requesting
+```
+
+- `queued` — accepted, waiting for a transfer slot. **Two concurrent transfers
+  maximum.** A third file uploading is a third file competing for the same
+  uplink; serialising them makes each finish sooner and makes the progress
+  numbers mean something.
+- `hashing` — progress is bytes read, not a spinner. On a 4 GB file this is tens
+  of seconds and an indeterminate indicator here reads as a hang.
+- `transferring` — `single` mode reports bytes sent; `multipart` reports
+  `part n of m`, because that is the unit that actually retries.
+- `paused` — multipart only. Single-mode PUTs have no resumable unit, so their
+  Pause control is not rendered rather than rendered disabled.
+- `recording` — brief, but it gets its own state because its failure is the one
+  with bytes at stake.
+
+An implementation that folds hashing into the transfer read (one pass over the
+file, hashing each 64 MiB chunk as it is sent) is permitted and preferred. If it
+does, the row shows `Sending` from the start and **one** progress bar. Two
+progress bars for one file is forbidden in either implementation.
+
+### Tokens by part
+
+| Part | Class |
+|---|---|
+| Section heading | `font-display text-lane uppercase text-ink` |
+| Aggregate | `<Mono tone="muted">` |
+| Drop zone, idle | `border-hairline border-dashed border-rule-strong rounded-md bg-paper-2 p-6 text-center` |
+| Drop zone, drag-over | `bg-tint-agency border-agency` — the *only* hue change in the component, and it is agency possession, which is literally true: the file is with the agency |
+| Drop zone, disabled | `opacity-45`, dashed border stays `--rule`, no drag response |
+| Row | `bg-paper-2 border-hairline border-rule rounded-md pl-3 pr-2 py-2` |
+| Row edge | `bg-rule-strong`; `bg-agency` at `done`; `bg-ink` at `failed` |
+| Filename | `font-sans text-16 text-ink truncate` |
+| Record line | `<Mono tone="muted">` — 12px is `Mono`'s default |
+| Phase line | `font-sans text-12 text-muted` |
+| Phase line, failed | `font-sans text-12 text-ink font-semibold` |
+| Progress track | `bg-rule h-0.5` |
+| Progress fill | `bg-agency h-0.5`, `transition-none` |
+| Done mark | `<Mono tone="muted">done</Mono>` — a word, not a tick glyph |
+
+**No `--breach` anywhere in this component.** A failed upload is not a breached
+commitment; it is a failed upload. It is marked by weight, by an `--ink` row
+edge, by `role="alert"` on the phase line and by the words in it. This follows
+the same ruling as validation and server errors.
+
+**The progress fill does not animate.** `transition-none` is deliberate: a
+width transition on a bar that updates every 64 MiB makes the bar lag the
+number beside it, and the number is the truth. This is also why the bar is
+paired with a mono percentage and never appears alone.
+
+### States
+
+| State | Rendering |
+|---|---|
+| default (idle) | Drop zone, empty list. The list element is not rendered when empty; the drop zone's own copy is the empty state. |
+| hover | Drop zone: `bg-paper-hover`. Rows: `bg-paper-hover`. No movement. |
+| focus-visible | Global ring on the file input (rendered around the drop zone via `focus-within`), and on every row Button. |
+| drag-over | As the token table. Announced: the phase line region gets "Release to add 3 files." |
+| disabled | The engagement is archived or purged. Drop zone `opacity-45`, input `disabled`, copy replaces with "This engagement is archived. Files can be exported but not added." No drop handler side effects. |
+| loading | Not applicable — the dock has nothing to fetch. It renders instantly on mount, which is the point of putting the presign call at step 2 rather than on open. |
+| empty | See default. |
+| error | Per row. The section never renders a section-level error: one file failing must not disturb the other three. |
+
+### Name / role
+
+- Section: `<section aria-labelledby="upload-h">`, heading "Add a version".
+- File input: `<input type="file" multiple>` with `aria-describedby` on the
+  "Up to 5 GB each." line. Accessible name "Add a version".
+- List: `<ul aria-label="Uploads">`. Each row is an `<li>`.
+- Progress: `role="progressbar"` with `aria-valuenow` / `aria-valuemin=0` /
+  `aria-valuemax=100` and `aria-valuetext` set to the human string
+  (`"62 percent, part 31 of 80"`), because a bare 62 does not say what of.
+- **One live region for the whole dock**, `aria-live="polite"`, not one per row.
+  Four rows each announcing every percentage tick is a screen reader rendered
+  useless. It announces state *transitions* only, throttled to one message per
+  file per state:
+
+  > "Northwind_master_v4.mov, sending." → "Northwind_master_v4.mov, added as
+  > version 4."
+
+- A **failure** escalates to `role="alert"` on that row's phase line, so it
+  interrupts. A failure is the one thing in this component that has earned an
+  interruption.
+- Row buttons carry the filename in their accessible name — "Retry
+  Northwind_master_v4.mov", not "Retry" — because four identical "Retry"
+  buttons in a list is four identical buttons.
+- `aria-busy="true"` on the `<ul>` while any row is not terminal.
+
+### 360
+
+- Drop zone keeps its copy but loses the dashed frame's padding to `p-4`.
+- `UploadRow` stacks: filename, then record line and phase line, then the two
+  Buttons on their own row, right-aligned, at `size="sm"` but padded to a 44px
+  target. Row grows to ~96px.
+- The aggregate `2 of 4 · 1.2 GB left` moves under the heading rather than
+  beside it.
+- Drag-and-drop does not exist on touch. The `Choose files` Button is therefore
+  full width below `xs`, and is the primary control, not a secondary one.
+
+---
+
+## 9. `StreamStatus`
+
+The visual language for the live event stream, including when it has dropped.
+
+SSE reconnect is real: `GET /api/events?engagementId=` (agency) and
+`GET /api/client/events` (client). A stream that dies silently is worse than no
+stream at all — the board keeps rendering, looking authoritative, while a
+decision the client made ten minutes ago is not on it.
+
+### The rule
+
+**Staleness is stated, never sprung.** The same principle as the wrap slate.
+The board is allowed to be out of date; it is not allowed to be out of date and
+quiet about it.
+
+### Anatomy
+
+One inline element, mounted in the workspace header beside the `WrapSlate` on
+the agency side and at the foot of the client board on the client side.
+
+```
+<div role="status" aria-live="polite" className="flex items-baseline gap-1.5">
+  ├─ span[aria-hidden] dot            6px, --rule-strong / --muted / --ink
+  ├─ Mono                             LIVE | LAST SYNCED 14:02 | OFFLINE
+  └─ Button tone="ghost" size="sm"    Refresh          (degraded and offline only)
+</div>
+```
+
+### The three states, and the fourth that is not a state
+
+| State | Condition | Mono label | Dot | Behaviour |
+|---|---|---|---|---|
+| `live` | Stream open, last event or heartbeat < 45s | `LIVE` | `bg-rule-strong` | Nothing else. No animation, no pulse. |
+| `connecting` | First connect, or reconnecting, < 10s in | `LIVE` (unchanged) | unchanged | **Renders as `live`.** A reconnect that succeeds in two seconds must not flash a warning across the header. |
+| `degraded` | Reconnecting > 10s, or no heartbeat > 45s | `LAST SYNCED 14:02` | `bg-muted` | `Refresh` appears. Data on screen is untouched. |
+| `offline` | Reconnect has failed past the backoff ceiling, or `navigator.onLine` is false | `OFFLINE · LAST SYNCED 14:02` | `bg-ink` | `Refresh` appears. A hairline `--ink` rule is drawn under the header. |
+
+The dot is **decorative and `aria-hidden`** — the mono label already says it. A
+pulsing dot is the exact motion this product does not have; the escalation from
+live to offline is carried by the label changing from a word to a timestamp,
+which is a stronger signal than a colour anyway, and by the dot going *darker*
+rather than redder. `--breach` does not appear here: a dropped stream is not a
+breached commitment.
+
+`LAST SYNCED` is a mono time because it is a record — it is the exact fact the
+operator needs to reason about what they might be missing.
+
+### Escalation — by weight and surface, never by hue
+
+| Elapsed since last event | Treatment |
+|---|---|
+| < 45s | `LIVE`, `text-muted` |
+| 45s – 5m | `LAST SYNCED 14:02`, `text-muted` |
+| 5m – 30m | Same, `text-ink` |
+| > 30m, or offline | `text-ink font-semibold`, plus a full-width hairline `border-t border-ink` under the header, plus the banner below |
+
+### The stale banner — over 30 minutes, or offline
+
+Only past 30 minutes does the status grow a surface. Above the board, one line,
+full width, `bg-paper-2 border-l-bar border-l-ink px-3 py-2`:
+
+> **This board has not updated since 14:02.** Changes made since then are not
+> shown. **Refresh**
+
+Not dismissible while the condition holds — the same reasoning as the wrap
+slate. Dismissible staleness is staleness you will forget about at the exact
+moment it matters.
+
+### What must never happen
+
+- **The board must not blank, spinner, or reorder on reconnect.** The last known
+  state stays on screen. A stream drop is a failure to *learn* about changes,
+  not a loss of what is already known; clearing the board turns a minor
+  degradation into a total one.
+- **No toast.** A toast for a reconnect is motion the product does not have, and
+  it disappears before the person who needed it looks up.
+- **No automatic full-page reload.** `Refresh` refetches the REST projection and
+  re-opens the stream in place. An operator mid-way through typing a revision
+  note does not get their work discarded by the network.
+- **Reconnect backoff must be capped and jittered** — 1s, 2s, 4s, 8s, 15s, 30s,
+  then 30s with ±20% jitter forever. A tab left open overnight on a laptop lid
+  must not reconnect-storm the server at 06:00 alongside every other tab.
+
+### The client side is quieter
+
+The client sees the same component with two changes: it renders at the **foot**
+of the board rather than the header, and the `live` state renders **nothing at
+all** — an empty element with no label. An uninvested client on a phone does not
+need to be told the websocket is healthy; they need to be told, and only told,
+when what they are looking at is old. Degraded and offline render identically
+to the agency side, because at that point the information is the same
+information.
+
+### Name / role
+
+`role="status"` with `aria-live="polite"` on the wrapper, so a state change is
+announced without interrupting. The announced string is the full sentence, not
+the abbreviation:
+
+> "Live." → "Last synced at 14:02. Reconnecting." → "Offline. Last synced at
+> 14:02."
+
+The stale banner is **not** `role="alert"`. It is a persistent condition, not an
+event; `role="alert"` would re-interrupt on every re-render. It is a
+`role="region"` with `aria-label="Connection"` inside the same polite live
+region.
+
+### 360
+
+- The status sits under the engagement title rather than beside it.
+- `LAST SYNCED 14:02` truncates to `14:02` below `xs` — the dot and the darkened
+  ink carry the rest, and the banner carries the full sentence when it matters.
+- The banner is full-bleed and wraps to two lines. `Refresh` becomes a
+  full-width `quiet` Button beneath the text, not an inline link.
+
+---
+
 ## Appendix — the loading placeholder
 
 One implementation, used by every component above.

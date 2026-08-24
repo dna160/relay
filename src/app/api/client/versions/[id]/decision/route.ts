@@ -12,10 +12,15 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { db } from '@/db/client';
-import { loadClientDecidableVersion } from '@/db/queries/client-board';
+import {
+  loadClientDecidableVersion,
+  loadClientEngagementHeader,
+} from '@/db/queries/client-board';
 import { clientScope } from '@/db/queries/client-scope';
 import { recordDecision } from '@/domain/approval/record-decision';
+import { assertWritable } from '@/domain/engagement/lifecycle';
 import { toErrorResponse } from '@/lib/errors';
+import { publishEvent } from '@/lib/sse';
 import { requireClient, requestOrigin, type RouteContext } from '../../../../_guards';
 
 const schema = z
@@ -37,6 +42,16 @@ export async function POST(
     const { ip, userAgent } = requestOrigin(request);
     const now = new Date();
 
+    /**
+     * Read-only means read-only for the client too. The status comes from
+     * `loadClientEngagementHeader()` — the board header's own read, already
+     * enumerated and covered in `visibility.spec.ts` — rather than from a
+     * second scoped query written for this one check. B6 put `status` on that
+     * header so the surface can disable the control first; this is the half
+     * that has to be true regardless of what the surface did.
+     */
+    assertWritable(await loadClientEngagementHeader(db, scope, now));
+
     // Resolved through the same visibility predicate as the board, so an
     // unpublished or private version is a 404 before any write is attempted.
     const target = await loadClientDecidableVersion(db, scope, id);
@@ -54,6 +69,32 @@ export async function POST(
       },
       now,
     );
+
+    /**
+     * The agency's boards are the audience here — this is the moment they have
+     * been waiting on. The client's own board picks the same events up through
+     * `GET /api/client/events`, filtered through the board's predicate.
+     */
+    await publishEvent(db, {
+      engagementId: scope.engagementId,
+      cardId: result.transition.cardId,
+      versionId: target.versionId,
+      event: {
+        type: 'decision.recorded',
+        versionId: target.versionId,
+        decision: result.approval.decision,
+      },
+    });
+    await publishEvent(db, {
+      engagementId: scope.engagementId,
+      cardId: result.transition.cardId,
+      versionId: null,
+      event: {
+        type: 'card.transitioned',
+        cardId: result.transition.cardId,
+        to: result.transition.to,
+      },
+    });
 
     return NextResponse.json(
       {

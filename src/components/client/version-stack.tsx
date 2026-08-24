@@ -12,7 +12,7 @@
  */
 
 import type { ClientVersion } from '@/lib/types';
-import { hrefs } from '@/lib/api-client';
+import { hrefs } from '@/lib/api-client.client';
 import { formatBytes, formatTimestamp, shortHash, versionPip } from '@/lib/format';
 import { chip, cn, mono, muted } from '@/components/style-tokens';
 import { EmptyState } from './empty-state';

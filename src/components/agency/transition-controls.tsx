@@ -21,10 +21,11 @@
 import { useRouter } from 'next/navigation';
 import { POSSESSION, canTransition } from '@/domain/card/state-machine';
 import type { CardState } from '@/lib/types';
-import { agencyApi } from '@/lib/api-client';
+import { agencyApi } from '@/lib/api-client.agency';
 import { actionDoneLabel, actionLabel } from './vocabulary';
 import { useAction } from '@/lib/hooks/use-action';
-import { buttonSecondary, cn, mono, muted } from '@/components/style-tokens';
+import { Button } from '@/components/primitives';
+import { cn, mono, muted } from '@/components/style-tokens';
 
 const ALL_STATES = Object.keys(POSSESSION) as CardState[];
 
@@ -67,11 +68,19 @@ export function TransitionControls({
     <div className="flex flex-col gap-1">
       <div className="flex flex-wrap gap-1">
         {moves.map((to) => (
-          <button
+          /*
+           * The tone is read out of `POSSESSION`, not chosen per button. A
+           * control's hue names the side that holds the work once it has been
+           * pressed, so "Publish to client" is indigo and every move that keeps
+           * the card with us is pine — and `signed_off`, where possession is
+           * `null` because the ball is with nobody, is quiet rather than a
+           * third hue.
+           */
+          <Button
             key={to}
-            type="button"
+            tone={POSSESSION[to] ?? 'quiet'}
+            size={compact ? 'sm' : 'md'}
             disabled={pending}
-            className={cn(buttonSecondary, compact && 'h-7 px-2 text-12')}
             onClick={async () => {
               const result =
                 state === 'internal_review' && to === 'awaiting_client'
@@ -81,7 +90,7 @@ export function TransitionControls({
             }}
           >
             {actionLabel(to)}
-          </button>
+          </Button>
         ))}
       </div>
       <p aria-live="polite" className={cn(mono, 'text-12', muted, 'min-h-4')}>

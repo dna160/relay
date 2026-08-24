@@ -15,22 +15,82 @@ a breached commitment — so it still means something on a Wednesday afternoon.
 
 ## Tokens
 
+Every value below is followed by its measured contrast on `--paper` — computed
+with the WCAG 2.x relative-luminance formula against the exact hex, never
+asserted. The working is in `docs/design/ACCESSIBILITY.md` §1; if you change a
+token, recompute that file.
+
 ```css
 :root {
-  --ink:        #14171A;   /* text, rules at full weight */
-  --paper:      #E8EAE5;   /* cool oat ground, not cream */
-  --paper-2:    #F2F3F0;   /* raised surfaces, cards */
-  --rule:       #C4C8C0;   /* hairlines, table borders */
-  --agency:     #1F4E46;   /* deep pine — ball is with the agency */
-  --client:     #4A4FA6;   /* indigo — ball is with the client */
-  --breach:     #A8201A;   /* commitment missed. Nothing else. */
-  --muted:      #6B7168;
+  --ink:         #14171A;  /* 14.85  text, rules at full weight */
+  --paper:       #E8EAE5;  /*    —   cool oat ground, not cream */
+  --paper-2:     #F2F3F0;  /*    —   raised surfaces, cards */
+  --rule:        #C4C8C0;  /*  1.40  decorative hairline ONLY — never a control's sole boundary */
+  --rule-strong: #808978;  /*  3.01  boundary of any control. WCAG 1.4.11 */
+  --agency:      #1F4E46;  /*  7.75  deep pine — ball is with the agency */
+  --client:      #4A4FA6;  /*  5.85  indigo — ball is with the client */
+  --breach:      #A8201A;  /*  6.00  commitment missed. Nothing else. */
+  --muted:       #60665D;  /*  4.87  secondary text */
 }
 ```
 
-Dark mode inverts ground and ink; possession hues lighten by 18% and keep their
-relationship. White-label overrides `--agency` only — client indigo, breach red,
-and the neutrals stay fixed so a tenant cannot theme away a warning.
+Two of these are corrections to the values this document originally carried, and
+they are stated here rather than buried in an appendix, because the original
+values were published and someone will otherwise re-derive the failure:
+
+- **`--muted` was `#6B7168`. It measured 4.139:1 and failed AA.** `--muted` sets
+  real text — due dates, engagement subtitles, hints, the size and hash columns
+  of a version stack — so the large-text and non-text exemptions do not apply.
+  `#60665D` holds the same hue (hsl 100°, 4% saturation) about 11% darker and
+  measures **4.874:1**. Do not restore the old value.
+- **`--rule-strong` is new.** `--rule` at 1.40:1 cannot be the only boundary of
+  an input or a button under WCAG 1.4.11, which wants 3:1. Darkening `--rule`
+  would coarsen every hairline in a product built out of hairlines, so the token
+  was split instead: `--rule` stays decorative (table rules, version-row
+  dividers, the edge of a card that already has a `--paper-2` ground doing the
+  separating), and `--rule-strong` at **3.005:1** draws anything a user can
+  operate.
+
+### Dark mode
+
+Ground and ink swap. The possession hues lift; hue and saturation are untouched,
+so pine stays the cooler green, indigo the warmer blue, and both stay clear of
+the red.
+
+**The lift is not a flat +18%.** That figure was in this document and it does
+not survive measurement against `--paper-2`, which is the ground cards actually
+sit on and therefore the ground that governs. Applied as +18 HSL lightness
+points:
+
+| Token | +18 | vs dark `--paper` | vs dark `--paper-2` | Verdict |
+|---|---|---|---|---|
+| `--agency` | `#399081` | 4.70 | **4.23** | fails on cards |
+| `--client` | `#8487C8` | 5.38 | 4.84 | passes |
+| `--breach` | `#E1443D` | **4.37** | **3.93** | fails on both |
+| `--muted` | `#999F96` | 6.64 | 5.98 | passes |
+
+So the shipped deltas are **per token, not global**:
+
+| Token | Lift | Value | vs `--paper` | vs `--paper-2` |
+|---|---|---|---|---|
+| `--ink` | — | `#E8EAE5` | 14.85 | 13.37 |
+| `--paper` | — | `#14171A` | — | — |
+| `--paper-2` | — | `#1D2125` | — | — |
+| `--rule` | — | `#363D43` | 1.63 | 1.47 |
+| `--rule-strong` | — | `#616D77` | 3.39 | 3.06 |
+| `--agency` | **+20** | `#499D8F` | 5.57 | **5.02** |
+| `--client` | +18 | `#8487C8` | 5.38 | **4.84** |
+| `--breach` | **+23** | `#E45953` | 5.01 | **4.51** |
+| `--muted` | +18 | `#999F96` | 6.64 | 5.98 |
+
++20 and +23 are the *smallest* lifts that clear 4.5:1 on `--paper-2`; they are
+minima, not taste. `--client` and `--muted` genuinely ship at +18, which is why
+the original figure looked right — it was right for half the palette.
+
+White-label overrides `--agency` only — client indigo, breach red, and the
+neutrals stay fixed so a tenant cannot theme away a warning. The hook is
+`--brand-agency` and it is clamped in OKLCH; the mechanism and its proof are in
+Appendix B.
 
 ## Type
 
@@ -72,6 +132,10 @@ also the conversion surface, and it must never be dismissible.
 - `WrapSlate` — countdown + export
 - `AttentionList` — portfolio home, grouped by actionability: *blocked on you*,
   *blocked on your team*, *with the client*, *no movement in 7 days*
+- `UploadDock` — drop zone plus per-file queue: hashing, transfer, multipart
+  resume, and a failure that says which of the four steps failed
+- `StreamStatus` — the live/stale/offline state of the event stream, in the one
+  place a person is already looking
 
 ## Copy rules
 
@@ -85,16 +149,26 @@ states the date, the count, and the one action that prevents it.
 
 Responsive to 360px. Visible keyboard focus on every interactive element.
 `prefers-reduced-motion` respected — the only motion is a 120ms state-chip
-crossfade on transition. Contrast: possession hues meet 4.5:1 on `--paper` in
-both directions.
+crossfade on transition. Contrast: possession hues meet 4.5:1 on **both**
+`--paper` and `--paper-2`, in both modes. `--paper-2` is the binding ground —
+cards sit on it — and a token that passes only on `--paper` has not passed.
+
+These are not prose commitments. They are executable: `src/styles/a11y-contract.ts`
+exports the pairs, the ratio function, the focus-ring expectations and the
+motion contract as data, and `docs/design/A11Y-ASSERTIONS.md` is the Playwright
+suite that consumes it.
 
 ---
 
 # Appendices
 
 > Appended by the design layer during implementation. The body of this document
-> above is the intent; these appendices are what shipped, including the two
-> places where the intent had to move to survive a measurement.
+> above is the intent; these appendices are what shipped.
+>
+> **Round 2:** the two measurement corrections — `--muted` and the dark-mode
+> lift — have been folded back into the body itself, so the body and these
+> appendices no longer disagree. Appendix A is now a restatement, kept because
+> it is the one table that puts both modes side by side.
 
 ## Appendix A — Tokens as implemented
 
@@ -232,7 +306,9 @@ client board's critical path, which matters against a 1.5s FCP budget on 4G.
 
 | Document | Contains |
 |---|---|
-| `docs/design/COMPONENTS.md` | Anatomy, every state, tokens, spacing, 360px behaviour, and the accessible name and role for `PossessionBar`, `CardTile`, `LaneColumn`, `VersionStack`, `DecisionBar`, `WrapSlate`, `AttentionList`. |
-| `docs/design/FLOWS.md` | The client's first five minutes, the agency's publish-to-client gate, and the purge warning for both sides. |
+| `docs/design/COMPONENTS.md` | Anatomy, every state, tokens, spacing, 360px behaviour, and the accessible name and role for `PossessionBar`, `CardTile`, `LaneColumn`, `VersionStack`, `DecisionBar`, `WrapSlate`, `AttentionList`, `UploadDock`, `StreamStatus`. |
+| `docs/design/FLOWS.md` | The client's first five minutes, the agency's publish-to-client gate, the purge warning for both sides, the upload end to end with its failure matrix, and first-run onboarding. |
 | `docs/design/ACCESSIBILITY.md` | Every contrast ratio, computed. Focus order. The required-note affordance. Reduced motion. The exhaustive list of one for `--breach`. |
+| `docs/design/A11Y-ASSERTIONS.md` | The accessibility floor as executable Playwright specs, for QA to lift into `tests/`. |
+| `src/styles/a11y-contract.ts` | The same floor as importable data: contrast pairs, `contrastRatio()`, focus-ring expectations, the motion contract, the forbidden-pattern list. |
 | `src/components/primitives/` | `Button`, `Chip`, `Field`/`Textarea`, `Dialog`, `Badge`, `Mono`, `Rule`, `Stack`/`Row`, `cn`. |

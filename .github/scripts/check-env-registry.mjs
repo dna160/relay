@@ -15,6 +15,12 @@
  *      a variable nobody will think to check.
  *   3. `.env.example` contains no real secret. It is committed, so anything
  *      that looks like a live key in it already leaked.
+ *   4. Every variable in `.env.example` is actually set by the deploy topology
+ *      in `.railway/railway.ts`. This is the link that was missing: a variable
+ *      can be read by the code, documented in `.env.example`, described in the
+ *      runbook, and *still* never reach the running container, because nothing
+ *      put it there. That failure survives every other check in this file.
+ *      Skipped, with a warning, until the topology file exists.
  *
  * Usage: node .github/scripts/check-env-registry.mjs
  */
@@ -99,6 +105,7 @@ const documented = new Set(
 );
 
 const runbook = read('docs/RUNBOOK.md');
+const iac = read('.railway/railway.ts');
 
 /* -------------------------------------------------------------------- checks */
 
@@ -126,6 +133,51 @@ if (runbook === null) {
   }
 }
 
+/**
+ * The deploy topology. Railway deprecated Config as Code with a hard
+ * 2026-12-01 cutoff and no opt-in for new services, so `.railway/railway.ts`
+ * is what a new environment is actually built from and `railway.json` is not.
+ *
+ * `PLATFORM_PROVIDED` variables are excluded here too — Railway injects those —
+ * and so is anything the topology has deliberately parked as a comment.
+ */
+const TOPOLOGY_EXEMPT = [
+  // Set per-service by hand for the one-off migration/backfill container, not
+  // part of the standing topology. Nothing reads it in a request path.
+];
+
+if (iac === null) {
+  console.log(
+    '  note: .railway/railway.ts does not exist, so the .env.example -> deploy ' +
+      'link is unchecked. Railway Config as Code is deprecated (2026-12-01) and ' +
+      'new services cannot opt in, so this file is required before Phase 8.\n',
+  );
+} else {
+  for (const name of [...documented].sort()) {
+    if (TOPOLOGY_EXEMPT.includes(name)) continue;
+    if (!iac.includes(name)) {
+      failures.push(
+        `${name} is in .env.example and is never set by .railway/railway.ts. ` +
+          'A variable the deploy topology does not set is one the container never ' +
+          'sees, whatever the runbook says about it.',
+      );
+    }
+  }
+  // The inverse of a documentation problem: a test-only gate reaching a
+  // deployed environment. The seed endpoint is gated on E2E_SEED_TOKEN and its
+  // absence is what makes that endpoint safe to ship at all.
+  // Comments stripped first: the file explains *why* E2E_SEED_TOKEN is absent,
+  // and prose about a variable is not the variable.
+  const iacCode = iac.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+  if (/E2E_/.test(iacCode)) {
+    failures.push(
+      '.railway/railway.ts references an E2E_ variable. The test-only endpoints ' +
+        'are gated on E2E_SEED_TOKEN being unset; setting it in a deployed ' +
+        'environment exposes a database reset endpoint to the internet.',
+    );
+  }
+}
+
 // A committed placeholder is fine. A committed secret is not.
 for (const line of envExample.split('\n')) {
   const match = line.match(/^\s*([A-Z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD))\s*=\s*(.+)$/);
@@ -145,7 +197,8 @@ for (const line of envExample.split('\n')) {
 console.log(`Env registry\n`);
 console.log(`  ${usages.size} variable(s) read in src/`);
 console.log(`  ${documented.size} variable(s) documented in .env.example`);
-console.log(`  runbook: ${runbook === null ? 'MISSING' : 'present'}\n`);
+console.log(`  runbook: ${runbook === null ? 'MISSING' : 'present'}`);
+console.log(`  deploy topology (.railway/railway.ts): ${iac === null ? 'MISSING' : 'present'}\n`);
 
 const unread = [...documented].filter((n) => !usages.has(n));
 if (unread.length > 0) {

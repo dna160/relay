@@ -46,6 +46,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       await storeClientCode(engagementId, body.email, code, now);
       await sendClientCode({
         to: body.email,
+        engagementId,
         engagementTitle: engagement.title,
         code,
         expiresInMinutes: CLIENT_CODE_TTL_MINUTES,

@@ -12,6 +12,7 @@ import type { ReactNode } from 'react';
 import { cn, display, muted } from '@/components/style-tokens';
 import { WrapSlate } from '@/components/client/wrap-slate';
 import { ClientTabs } from '@/components/client/tabs';
+import { LiveRefresh } from '@/components/client/live-refresh';
 import { getClientBoard } from '../../_lib/reads';
 
 export default async function ClientWorkspaceLayout({
@@ -39,10 +40,14 @@ export default async function ClientWorkspaceLayout({
         <p className={cn('text-14', muted)}>from {engagement.agencyName}</p>
       </div>
 
-      {/* The client header carries no status and no wrap date — see the
-          handover. Until it does, the slate states the countdown, which is the
-          part the client is owed. */}
+      {/* The header still carries no wrap date, so the slate states the
+          countdown, which is the part the client is owed. */}
       <WrapSlate daysToPurge={engagement.daysToPurge} />
+
+      {/* Mounted here rather than on the board so a contact sitting on the
+          queue or on a card gets the same updates. An archived workspace has
+          nothing left to stream, so the stream is not opened for one. */}
+      <LiveRefresh enabled={engagement.status === 'active'} />
 
       <ClientTabs token={token} awaitingCount={awaiting} />
 

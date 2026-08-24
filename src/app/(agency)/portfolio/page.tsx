@@ -12,7 +12,8 @@
  */
 
 import type { Metadata } from 'next';
-import { agencyApi } from '@/lib/api-client';
+import { redirect } from 'next/navigation';
+import { agencyApi } from '@/lib/api-client.agency';
 import { cn, display, eyebrow, muted } from '@/components/style-tokens';
 import { AttentionList } from '@/components/agency/attention-list';
 import { EngagementRow } from '@/components/agency/engagement-row';
@@ -30,6 +31,17 @@ export default async function PortfolioPage() {
     agencyApi.attention(ctx),
     agencyApi.templates(ctx),
   ]);
+
+  /**
+   * A 401 here does not mean "your session expired". `requireAgency()` refuses
+   * a user whose `org_id` is still null, which is every user between their
+   * first magic link and their first agency (ADR-013) — so the most likely
+   * reader of this branch is someone thirty seconds into the product, not
+   * someone coming back after two weeks. `/onboarding` can tell the two apart
+   * (it reads the Auth.js session as well as ours) and this page cannot, so it
+   * hands the question over rather than guessing at it in an error panel.
+   */
+  if (!engagements.ok && engagements.code === 'UNAUTHENTICATED') redirect('/onboarding');
 
   return (
     <div className="flex flex-col gap-10">

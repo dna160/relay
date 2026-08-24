@@ -13,6 +13,7 @@ import { loadEngagementDetail } from '@/db/queries/engagements';
 import { publishCardToClient } from '@/domain/version/publish-to-client';
 import { assertWritable } from '@/domain/engagement/lifecycle';
 import { toErrorResponse } from '@/lib/errors';
+import { publishEvent } from '@/lib/sse';
 import { requireAgency, type RouteContext } from '../../../_guards';
 
 const schema = z
@@ -46,6 +47,32 @@ export async function POST(
       },
       now,
     );
+
+    /**
+     * Two events, because two things happened and a client cares about both:
+     * a file crossed the internal gate, and the card came to them. Announced
+     * only when the version was newly published — a re-publish is a no-op and
+     * should not make every open board blink.
+     */
+    if (result.newlyPublished) {
+      await publishEvent(db, {
+        engagementId: engagement.id,
+        cardId: id,
+        versionId: result.version.id,
+        event: {
+          type: 'version.published',
+          cardId: id,
+          versionId: result.version.id,
+          versionNo: result.version.versionNo,
+        },
+      });
+    }
+    await publishEvent(db, {
+      engagementId: engagement.id,
+      cardId: id,
+      versionId: null,
+      event: { type: 'card.transitioned', cardId: id, to: result.transition.to },
+    });
 
     return NextResponse.json({
       version: {

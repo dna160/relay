@@ -6,18 +6,15 @@
  * route (ADR-003).
  */
 
-import { agencyApi } from '@/lib/api-client';
 import { Board } from '@/components/agency/board';
 import { ErrorPanel } from '@/components/agency/error-panel';
-import { serverContext } from '../../../_lib/server-context';
+import { getBoard, getEngagement } from '../../../_lib/reads';
 
 export default async function BoardPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const ctx = await serverContext();
-  const [board, engagement] = await Promise.all([
-    agencyApi.board(id, ctx),
-    agencyApi.engagement(id, ctx),
-  ]);
+  // `getEngagement` is the same call the workspace layout already made, and
+  // `cache()` collapses the two into one round trip.
+  const [board, engagement] = await Promise.all([getBoard(id), getEngagement(id)]);
 
   if (!board.ok) return <ErrorPanel failure={board} />;
 

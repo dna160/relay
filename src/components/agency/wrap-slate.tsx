@@ -15,7 +15,7 @@
  */
 
 import { useRouter } from 'next/navigation';
-import { agencyApi } from '@/lib/api-client';
+import { agencyApi } from '@/lib/api-client.agency';
 import { formatPurgeCountdown, formatWrapAge } from '@/lib/format';
 import { useAction } from '@/lib/hooks/use-action';
 import { cn, mono } from '@/components/style-tokens';

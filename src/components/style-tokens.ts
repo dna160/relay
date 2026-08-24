@@ -17,6 +17,7 @@
  * one component ends up with `outline: none`.
  */
 
+import type { ButtonSize, ButtonTone } from '@/components/primitives/Button';
 import type { Possession } from '@/lib/types';
 
 export { cn } from '@/components/primitives/cn';
@@ -38,15 +39,84 @@ export const surface = 'bg-paper-2 border border-hairline border-rule';
 
 export const muted = 'text-muted';
 
-const buttonBase =
-  'inline-flex items-center justify-center gap-2 h-9 px-3 text-14 border border-hairline disabled:opacity-40 disabled:cursor-not-allowed';
+/* ------------------------------------------------------------------ buttons */
 
-export const buttonPrimary = `${buttonBase} bg-ink text-paper border-ink hover:opacity-90`;
+/**
+ * There is **one** button vocabulary in Relay and it is the `Button`
+ * primitive's: four tones — `agency`, `client`, `quiet`, `ghost` — and three
+ * sizes. What follows is that vocabulary projected onto a class string, for the
+ * two cases where a `<button>` element is not what the markup wants: a
+ * `next/link` that has to look like a control, and an `<a>`/`<label>` acting as
+ * one. Anything that renders an actual button imports the primitive.
+ *
+ * The strings below are kept byte-identical in effect to
+ * `src/components/primitives/Button.tsx`'s `TONE` and `SIZE` maps. Two things
+ * that were true here in round 1 and are not any more:
+ *
+ * - There was a second vocabulary — `buttonPrimary` / `buttonSecondary` /
+ *   `buttonGhost` — where primary was `bg-ink text-paper`. The primitive fills
+ *   its primary with the *possession* hue, which is the product's whole colour
+ *   idea: the main action on a surface is "hand the work to the other side", so
+ *   the button is the colour of the side it hands to. An ink-filled primary
+ *   said nothing, and having both meant a screen could be built from either.
+ * - `hover:opacity-90` did nothing. Every colour here is a `var()` string and
+ *   Tailwind 3 cannot compute an alpha from one, so the utility emitted a rule
+ *   the browser could not act on and the hover state was silently missing.
+ *   `--agency-hover` / `--client-hover` / `--paper-hover` exist for exactly
+ *   this and are mixed toward `--ink`, which moves *away* from the ground in
+ *   both light and dark rather than fading toward it.
+ *
+ * `enabled:` on the hover pairs matches the primitive: a disabled control must
+ * not light up under the pointer, and a link cannot be disabled at all.
+ */
+const BUTTON_BASE =
+  'inline-flex items-center justify-center whitespace-nowrap border-hairline rounded-sm font-sans font-medium transition-colors duration-chip ease-chip disabled:opacity-45 disabled:cursor-not-allowed';
 
-/** `--rule-strong` because a hairline is decorative and never a control's only boundary. */
-export const buttonSecondary = `${buttonBase} bg-paper-2 text-ink border-rule-strong hover:border-ink`;
+const BUTTON_TONE: Record<ButtonTone, string> = {
+  agency:
+    'bg-agency text-on-hue border-agency enabled:hover:bg-agency-hover enabled:hover:border-agency-hover',
+  client:
+    'bg-client text-on-hue border-client enabled:hover:bg-client-hover enabled:hover:border-client-hover',
+  /** `--rule-strong`: a hairline is decorative and never a control's only boundary. */
+  quiet: 'bg-paper-2 text-ink border-rule-strong enabled:hover:bg-paper-hover',
+  ghost: 'bg-transparent text-ink border-transparent enabled:hover:bg-paper-hover',
+};
 
-export const buttonGhost = `${buttonBase} bg-transparent text-ink border-transparent hover:border-rule-strong`;
+const BUTTON_SIZE: Record<ButtonSize, string> = {
+  sm: 'h-7 px-2 text-12 gap-1',
+  md: 'h-9 px-3 text-14 gap-1.5',
+  /* 44px: the client decision bar's touch target on a phone. */
+  lg: 'h-11 px-4 text-16 gap-2',
+};
+
+/**
+ * Which tone a control takes, stated once so two screens cannot answer it
+ * differently.
+ *
+ * **The hue names the side that holds the work once the control has been
+ * pressed.** That is the same sentence DESIGN-SYSTEM.md uses for the possession
+ * bar — hue tells you whose move it is — applied to a control instead of a
+ * card, and it is why the primary action is coloured at all.
+ *
+ * - Agency **Publish to client** hands the ball over, so it is `client`.
+ * - The client's **Approve** and **Request changes** hand it back, so both are
+ *   `agency`. They are told apart by fill versus `quiet`, not by hue, because
+ *   they have the same consequence for possession and differ in what they ask
+ *   for.
+ * - An action that moves nothing — sign in, add a lane, add a deliverable, save
+ *   a setting — leaves the ball where it is, which is with the side whose
+ *   surface it is: `agency` on the agency's screens, `client` on the client's.
+ * - Cancel, Back, and anything reversible is `quiet` or `ghost`. They are not
+ *   possession events.
+ *
+ * There is no `breach` tone and there must not be one: `--breach` means a
+ * commitment was missed, and a red Delete would spend that meaning on something
+ * else. Destructive actions are `quiet` inside a `Dialog` that states the
+ * consequence.
+ */
+export function buttonClass(tone: ButtonTone = 'quiet', size: ButtonSize = 'md'): string {
+  return `${BUTTON_BASE} ${BUTTON_TONE[tone]} ${BUTTON_SIZE[size]}`;
+}
 
 export const input =
   'w-full bg-field border border-hairline border-rule-strong px-3 py-2 text-14 text-ink placeholder:text-muted';

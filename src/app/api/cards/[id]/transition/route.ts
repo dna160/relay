@@ -17,6 +17,7 @@ import { runTransition } from '@/domain/card/transition-card';
 import { assertWritable } from '@/domain/engagement/lifecycle';
 import { notVisible } from '@/domain/errors';
 import { toErrorResponse } from '@/lib/errors';
+import { publishEvent } from '@/lib/sse';
 import { requireAgency, type RouteContext } from '../../../_guards';
 
 const schema = z
@@ -57,6 +58,15 @@ export async function POST(
       { cardId: id, to: body.to, actor: { kind: 'agency', userId: session.userId } },
       now,
     );
+
+    // Best-effort, after the transaction has committed. A dropped announcement
+    // costs a stale board until its next read; it never costs the transition.
+    await publishEvent(db, {
+      engagementId: engagement.id,
+      cardId: outcome.cardId,
+      versionId: null,
+      event: { type: 'card.transitioned', cardId: outcome.cardId, to: outcome.to },
+    });
 
     return NextResponse.json({
       transition: {

@@ -14,28 +14,32 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { AgencyLane } from '@/lib/types';
-import { agencyApi } from '@/lib/api-client';
+import { agencyApi, agencyEventStreamUrl } from '@/lib/api-client.agency';
 import { useCardReorder } from '@/lib/hooks/use-card-reorder';
-import { useServerEvents } from '@/lib/hooks/use-server-events';
+import { useEventStream } from '@/lib/hooks/use-server-events';
 import { useAction } from '@/lib/hooks/use-action';
-import { buttonGhost, chip, cn, mono, muted } from '@/components/style-tokens';
+import { Button } from '@/components/primitives';
+import { chip, cn, mono, muted } from '@/components/style-tokens';
 import { CardTile } from './card-tile';
 import { LaneColumn } from './lane-column';
 import { TransitionControls } from './transition-controls';
 import { AddCardForm, AddLaneForm } from './board-add';
 import { ErrorPanel } from './error-panel';
 
-const moveButton = 'h-6 px-1.5 text-12';
+/** One step tighter than `size="sm"`: four of these sit inside a 280px card. */
+const moveButton = 'h-6 px-1.5';
 
 function LaneVisibilityToggle({ engagementId, lane }: { engagementId: string; lane: AgencyLane }) {
   const router = useRouter();
   const update = useAction(agencyApi.updateLane);
   const nextVisibility = lane.visibility === 'private' ? 'published' : 'private';
   return (
-    <button
-      type="button"
-      disabled={update.pending}
-      className={cn(buttonGhost, moveButton)}
+    <Button
+      tone="ghost"
+      size="sm"
+      loading={update.pending}
+      loadingLabel="Updating"
+      className={moveButton}
       title={
         nextVisibility === 'private'
           ? 'Hide this lane and its cards from the client'
@@ -47,7 +51,7 @@ function LaneVisibilityToggle({ engagementId, lane }: { engagementId: string; la
       }}
     >
       {nextVisibility === 'private' ? 'Make private' : 'Publish lane'}
-    </button>
+    </Button>
   );
 }
 
@@ -59,7 +63,14 @@ export interface BoardProps {
 }
 
 export function Board({ engagementId, lanes: serverLanes, archived }: BoardProps) {
-  useServerEvents(engagementId, !archived);
+  /*
+   * The agency stream takes the engagement as a query parameter and authorises
+   * it against the org (amendment A1). The client's takes none at all — the two
+   * are not the same route with a different caller, and the URL is built here
+   * rather than inside the hook so that neither surface's route strings end up
+   * in the other's bundle.
+   */
+  const stream = useEventStream(agencyEventStreamUrl(engagementId), !archived);
   const { lanes, failure, announcement, move } = useCardReorder(engagementId, serverLanes);
   const [dragCardId, setDragCardId] = useState<string | null>(null);
   const [dropAt, setDropAt] = useState<{ laneId: string; beforeCardId: string | null } | null>(null);
@@ -87,6 +98,29 @@ export function Board({ engagementId, lanes: serverLanes, archived }: BoardProps
       <p aria-live="polite" className="sr-only">
         {announcement}
       </p>
+
+      {/*
+        A dropped stream is a *staleness* statement, not an error: the board on
+        screen is still correct as of the last read, it has simply stopped
+        updating itself. So it is stated in `--muted` with a manual reload, not
+        in a panel and never in `--breach` — red means a breached commitment and
+        nothing else. Nothing is rendered while the stream is healthy or still
+        connecting, because "live" is the expected state and does not need
+        announcing.
+      */}
+      {stream === 'dropped' && (
+        <p role="status" className={cn('text-12', muted)}>
+          Live updates stopped. This board is still what it was a moment ago —{' '}
+          <button
+            type="button"
+            className="underline hover:text-ink"
+            onClick={() => window.location.reload()}
+          >
+            reload for the current state
+          </button>
+          .
+        </p>
+      )}
 
       <div className="flex gap-4 overflow-x-auto pb-2">
         {lanes.map((lane, laneIndex) => {
@@ -160,42 +194,46 @@ export function Board({ engagementId, lanes: serverLanes, archived }: BoardProps
                               aria-label={`Move ${card.title}`}
                             >
                               <span className={cn(mono, 'text-12', muted)}>move</span>
-                              <button
-                                type="button"
-                                className={cn(buttonGhost, moveButton)}
+                              <Button
+                                tone="ghost"
+                                size="sm"
+                                className={moveButton}
                                 disabled={!prev}
                                 onClick={() => void move(card.id, lane.id, prev?.id ?? null)}
                                 aria-label={`Move ${card.title} up`}
                               >
                                 ↑
-                              </button>
-                              <button
-                                type="button"
-                                className={cn(buttonGhost, moveButton)}
+                              </Button>
+                              <Button
+                                tone="ghost"
+                                size="sm"
+                                className={moveButton}
                                 disabled={!next}
                                 onClick={() => void move(card.id, lane.id, afterNext?.id ?? null)}
                                 aria-label={`Move ${card.title} down`}
                               >
                                 ↓
-                              </button>
-                              <button
-                                type="button"
-                                className={cn(buttonGhost, moveButton)}
+                              </Button>
+                              <Button
+                                tone="ghost"
+                                size="sm"
+                                className={moveButton}
                                 disabled={!prevLane}
                                 onClick={() => prevLane && void move(card.id, prevLane.id, null)}
                                 aria-label={`Move ${card.title} to ${prevLane?.name ?? 'the previous lane'}`}
                               >
                                 ←
-                              </button>
-                              <button
-                                type="button"
-                                className={cn(buttonGhost, moveButton)}
+                              </Button>
+                              <Button
+                                tone="ghost"
+                                size="sm"
+                                className={moveButton}
                                 disabled={!nextLane}
                                 onClick={() => nextLane && void move(card.id, nextLane.id, null)}
                                 aria-label={`Move ${card.title} to ${nextLane?.name ?? 'the next lane'}`}
                               >
                                 →
-                              </button>
+                              </Button>
                             </div>
                             <TransitionControls
                               engagementId={engagementId}

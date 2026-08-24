@@ -8,7 +8,7 @@
 > behind it. This document is where that claim is either true or visibly not.
 > Read the **UNPROVEN** rows first; they are the whole point.
 
-**Generated at:** Phase 1–3 landed, Phases 4–8 outstanding.
+**Generated at:** end of round 2. Phases 1–4 landed and parts of 5 pulled forward; Phases 6–8 outstanding.
 **Owner:** QA. Update it in the same commit that changes what is provable.
 
 ## How to read a row
@@ -26,7 +26,7 @@
 npm run verify        # typecheck + lint + unit + invariants. The handover gate.
 npm run test:e2e      # Playwright, both projects. Needs a running app and a database.
 node .github/scripts/check-invariant-skips.mjs     # the ten specs exist; skips name their phase
-node .github/scripts/check-env-registry.mjs        # env drift between src, .env.example, runbook
+node .github/scripts/check-env-registry.mjs        # env drift: src -> .env.example -> runbook -> .railway/railway.ts
 ```
 
 ---
@@ -35,9 +35,11 @@ node .github/scripts/check-env-registry.mjs        # env drift between src, .env
 
 | | Invariant | Status | Proven by |
 |---|---|---|---|
-| **INV-1** | No client response contains a private lane, private card, or internal field | 🟢 live | `tests/invariants/visibility.spec.ts` — 12 live cases, incl. `INV-1 against the shared fixture board > leaks none of the strings the fixture marks as agency-only`. Extended by `tests/unit/client-projection.spec.ts` (25 cases: ordering, nullability, purity, version attribution). |
-| | ↳ at the exported card serialiser | ⬜ skipped | `visibility.spec.ts > INV-1 at the exported card serialiser` — **open defect**, see §4. Phase 2. |
-| | ↳ every client-reachable query has a case | ⚠️ **UNPROVEN** | No `src/app/api/client/**` routes exist yet. The projection is covered; the query layer is not. **Phase 4.** |
+| **INV-1** | No client response contains a private lane, private card, or internal field | 🟢 live | `tests/invariants/visibility.spec.ts` — **40 live cases**, up from 12. Incl. `INV-1 against the shared fixture board > leaks none of the strings the fixture marks as agency-only`. Extended by `tests/unit/client-projection.spec.ts` (25 cases: ordering, nullability, purity, version attribution). |
+| | ↳ at the exported card serialiser | 🟢 live | `visibility.spec.ts > INV-1 at the exported card serialiser` — 5 cases incl. a negative control. The round-1 defect (`toClientCard` exported with no visibility check of its own) was fixed by the Architect; this suite asserts the fix. |
+| | ↳ every client-reachable query has a case | 🟢 **live, and mechanical** | `visibility.spec.ts > INV-1 the query layer is enumerated, not remembered` — 6 cases. The layer is enumerated from source two ways and diffed against a registry that must name a real `it()`. See §5A. |
+| | ↳ at the query layer, in compiled SQL | 🟢 live | `visibility.spec.ts > INV-1 at the query layer, against compiled SQL` — 11 cases. Runs each client-reachable read against a fake driver and asserts the emitted predicate, so a read that forgets `clientScope()` fails on the SQL rather than on a projection shape. |
+| | ↳ the two pre-session reads | 🟢 live | `visibility.spec.ts > INV-1 the two reads that happen before a session exists` — 6 cases. `loadLinkableEngagement` and `findContact` reach exactly one table each and return three thin columns between them. |
 | **INV-2** | `cards.state` changes only via the state machine | 🟢 live | `tests/invariants/inv-02-state-machine-sole-writer.spec.ts` — 3 structural scans over the whole tree. Behaviour: `tests/unit/state-machine.spec.ts` (15 cases). |
 | **INV-3** | An approval binds one immutable version and stores its sha256 | 🟢 live (structural + schema) | `tests/invariants/inv-03-approval-binds-version.spec.ts` — 9 live cases: the copy, the sole writer, no re-derivation at read time, no `card_id` column, both CHECK constraints in the migration. |
 | | ↳ under a live database | ⬜ skipped | Same file, `INV-3 under a live database` — 4 cases. **Phase 3** (needs Postgres). |
@@ -82,7 +84,7 @@ Nine of ten suites now execute. At Phase 0 handover it was four.
 | INV-1, INV-2, INV-5 (transition-row half), INV-9 unskipped and passing | `npm run test:invariants` — all four live. INV-5's transition-row half: `inv-05 > every persisted transition appends exactly one state_transitions row`. |
 | A PATCH carrying `state` returns 400 and does not write | Structural: `inv-02 > the API rejects state on the card patch route`. E2E: `tests/e2e/agency/engagement-flow.spec.ts > PATCH /api/cards/:id rejects a state field (INV-2)` — **red**, no route. |
 | An illegal edge returns 409 `INVALID_TRANSITION` | Unit: `tests/unit/state-machine.spec.ts > error shape > carries the INVALID_TRANSITION code`. E2E: `engagement-flow.spec.ts > an illegal transition returns 409` — **red**, no route. |
-| Every new query in `src/db/queries/` has a case in `visibility.spec.ts` | ⚠️ **UNPROVEN.** Nothing enumerates the query layer and cross-checks it against the spec. `src/db/queries/client-scope.ts` exists and is uncovered. **Recommendation in §5.** |
+| Every new query in `src/db/queries/` has a case in `visibility.spec.ts` | 🟢 **PROVEN, mechanically.** `visibility.spec.ts > the query layer is enumerated, not remembered`. Two enumerations, deliberately overlapping: every exported function taking a `ClientScope`, **and** every query symbol the client route handlers import. The second exists because the first has a hole — `loadClientVisibleNotes` takes a plain `engagementId` and was invisible to it. Both diff against a registry whose every entry must name an `it()` that exists. Verified to fail in all four directions by mutation. |
 
 ### PHASE 3 — Assets, versions, approvals
 
@@ -98,7 +100,7 @@ Nine of ten suites now execute. At Phase 0 handover it was four.
 | EXIT condition | Proven by |
 |---|---|
 | A Playwright run completes invite → verify → approve without touching an agency route | `tests/e2e/client/invite-verify-approve.spec.ts > invite -> verify -> approve, touching no agency route` — **red**, pending the seed endpoints in §4. The route claim is asserted at the request level by `RouteRecorder`, not inferred from the flow completing. The classifier it depends on is itself tested: `tests/unit/routes.spec.ts` (49 live cases), which runs in `npm run verify`. |
-| INV-1 extended with a case for every new client query | ⚠️ **UNPROVEN** until the queries exist. See §5 for the mechanical check that would make this self-enforcing. |
+| INV-1 extended with a case for every new client query | 🟢 **PROVEN.** Same guard as Phase 2's row above; eight client-reachable queries are enumerated and each has a compiled-SQL case. A ninth appearing fails the build until someone writes its case. |
 | Client board FCP under 1.5s on a throttled 4G profile | `tests/e2e/client/board-performance.spec.ts > first contentful paint stays under 1.5s on a throttled 4G profile` — CDP `Network.emulateNetworkConditions`, cache disabled, reads the `first-contentful-paint` entry. **Red**, no board. |
 | The client bundle contains no agency route code | `board-performance.spec.ts > the client bundle carries no agency route code` — inspects downloaded JS, not the import graph. **Red.** |
 
@@ -137,7 +139,7 @@ Nine of ten suites now execute. At Phase 0 handover it was four.
 | All ten invariant suites unskipped and green in CI | **CI job `invariant contract`** → `node .github/scripts/check-invariant-skips.mjs`, which fails at Phase ≥ 8 if any `.skip` remains. Verified to fail correctly: `node .github/scripts/check-invariant-skips.mjs --phase 8` exits 1 today and names all five. |
 | Every destructive job is dry-runnable and logs its manifest before acting | CI job `purge --plan smoke test` (see Phase 6). Currently self-skipping. |
 | Full e2e matrix, agency desktop and client mobile | `playwright.config.ts` — two projects, split by directory so a test cannot be written for the wrong audience. 22 tests across 4 files, all **red** pending routes. |
-| Accessibility sweep against the DESIGN-SYSTEM floor | ⚠️ **UNPROVEN.** Only the 360px no-horizontal-scroll case exists (`board-performance.spec.ts`). Visible focus, `prefers-reduced-motion`, and 4.5:1 on possession hues have nothing behind them. **Phase 8.** |
+| Accessibility sweep against the DESIGN-SYSTEM floor | 🟡 **mostly proven.** `tests/unit/a11y-contract.spec.ts` (78 cases) and `tests/unit/a11y-source.spec.ts` (11 cases) run inside `npm run verify` with no browser: all 44 contrast pairs on both grounds in both modes, `globals.css` diffed against the contract module so neither can drift, the global `:focus-visible` rule and its 2px/2px geometry, the reduced-motion token collapse, `<html lang>`, the `data-relay-root` anchor, and the absence of `outline:none`. The browser half — that the *rendered* page resolves to those tokens, that the white-label OKLCH clamp holds against seven hostile brand values, and that focus is never obscured — is `tests/e2e/{agency,client}/a11y-shell.spec.ts`, 37 tests, written against a shell route that needs no seed. **Not yet executed against a running app.** |
 
 ---
 
@@ -145,92 +147,114 @@ Nine of ten suites now execute. At Phase 0 handover it was four.
 
 | Job | Enforces | Blocking now? |
 |---|---|---|
-| `verify (node 22)` / `verify (node 24)` | `npm run verify` — typecheck, lint, unit, invariants | Yes — green; see §4.6 for a latent lint failure |
-| `invariant contract` | All ten specs exist; every skipped suite names its phase; at Phase 8 none are skipped; nothing removed from `tests/invariants` without the `invariant-change` label | Yes |
+| `verify (node 22)` / `verify (node 24)` | `npm run verify` — typecheck, lint, unit, invariants | Yes — **green**. 398 live assertions (309 unit, 89 invariant), up from 321 at the end of round 1. |
+| `invariant contract` | All ten specs exist; every skipped suite names its phase; at Phase 8 none are skipped; nothing removed from `tests/invariants` without the `invariant-change` label | Yes — green |
 | `build` | `next build` succeeds | Yes |
-| `env registry` | Every `process.env` read in `src/` is in `.env.example`; every `.env.example` variable is in the runbook; no real secret is committed | Yes — **currently red**, see §4 |
-| `e2e` | Playwright both projects; migrations idempotent; traces uploaded on failure | Yes — red pending routes |
+| `env registry` | Every `process.env` read in `src/` is in `.env.example`; every `.env.example` variable is in the runbook **and is set by `.railway/railway.ts`**; no `E2E_` variable reaches a deployed environment; no real secret is committed | Yes — **red on one line**: `NEXT_PUBLIC_APP_URL` (F7). `PGPOOL_MAX` was fixed by B8. |
+| `e2e` | Playwright both projects; migrations idempotent; traces uploaded on failure | Yes — see §4 for the run status |
 | `purge --plan smoke test` | A dry run prints a manifest and changes no row counts | Self-skips until Phase 6 |
 
----
-
-## 4. Open defects blocking a green board
-
-Full detail in the QA report to the Architect. Summarised here because this is
-the document that gets audited.
-
-1. **`.env.example` is missing `PGPOOL_MAX` and `NEXT_PUBLIC_APP_URL`**, both
-   read by `src/`. Fails the `env registry` job. Two lines, and the file is not
-   QA-owned.
-2. **`/api/health` does not exist** and `railway.json` health-checks it. The
-   first deploy fails its health check.
-3. **`toClientCard()` is exported and applies no visibility check of its own.**
-   Nothing leaks today because only `toClientBoard` calls it and the filter runs
-   first. The moment a second caller appears, a draft card ships with a `state`
-   its own return type forbids. `src/domain/projection/client-view.ts`.
-4. **The `no-non-null-assertion` ESLint override is a no-op that reads as a
-   safeguard.** `eslint.config.mjs` turns the rule *off* for `client-view.ts`
-   under a comment explaining why a non-null assertion there is dangerous — and
-   the rule is not in `typescript-eslint`'s `recommended` set anyway, so
-   CLAUDE.md's "no non-null assertions on database reads" is unenforced
-   everywhere in the tree.
-5. **Config as Code is deprecated at Railway** and new services cannot use
-   `railway.json`. `.railway/railway.ts` is needed and unowned. `docs/RUNBOOK.md`
-   §1 carries the file, ready to lift.
-6. **`eslint .` fails whenever Next's generated `next-env.d.ts` is present.**
-   Observed once during this session and then self-resolved when the file was
-   regenerated. It is in `.gitignore`, but ESLint flat config does not read
-   `.gitignore`, so `next-env.d.ts` needs adding to the `ignores` list in
-   `eslint.config.mjs`. Latent: it will take `npm run verify` — and therefore
-   the handover gate and CI — down on whichever machine happens to have run
-   `next dev` or `next build` first. One line.
-7. **Route paths diverge from `docs/ARCHITECTURE.md`.** The file tree documents
-   the agency workspace at `(agency)/e/[id]/`; the implementation ships
-   `(agency)/w/[id]/`. The implementation is arguably better — it keeps the
-   agency prefix off `/e/`, which is the client's — but the doc and the code
-   disagree, and the audience classifier the Phase 4 exit test depends on has to
-   be right about which is which. Guarded now by `tests/unit/routes.spec.ts`;
-   still needs one of the two to be corrected.
-8. **Routes named in `docs/API-CONTRACT.md` that do not exist yet:**
-   `GET/POST /api/templates` (Phase 7), `POST /api/engagements/:id/export` and
-   `GET /api/client/export` (Phase 6), `GET /api/events` (SSE). Routes that
-   exist and are *not* in the contract: `/api/cards/reorder`,
-   `/api/onboarding/org`, `/api/reference-files`,
-   `/api/engagements/:id/shelf`. The contract says it wins where an
-   implementation diverges; someone has to reconcile the four extras into it.
-9. **The e2e suite needs three test-only endpoints that do not exist**, and is
-   red at the first `beforeEach` until they do. All three are gated on
-   `E2E_SEED_TOKEN` and must be absent when it is unset — that gate is what
-   makes them safe to ship. Shapes are typed in `tests/e2e/_helpers.ts`:
-   - `POST /api/test/seed` — resets to `tests/fixtures` and returns the eight
-     ids and tokens in `SeedResult`. Cards seed in `draft` and reach their
-     fixture state by replaying `transitionScripts` through the state machine;
-     a seed that writes `cards.state` directly breaks INV-2.
-   - `GET /api/test/last-code` — the most recent magic-link code for an email on
-     an engagement. CI cannot read a real inbox.
-   - `POST /api/test/session` — an agency sign-in shortcut.
-10. **Deploy and rollback have never been executed.** Phase 8's only EXIT
-    condition that a test cannot cover.
+The env-registry gate gained a fourth link this round: `.env.example` →
+`.railway/railway.ts`. The failure it now catches is a variable that is read by
+the code, documented in `.env.example`, described in the runbook, and *still*
+never reaches the running container because nothing in the deploy topology sets
+it — a failure that survived all three of the previous checks.
 
 ---
 
-## 5. Recommendations
+## 4. Open defects
 
-Two mechanical checks that would close **UNPROVEN** rows permanently rather than
-one phase at a time.
+Full detail and ownership in the QA report to the Architect. Summarised here
+because this is the document that gets audited.
 
-**A. Make "every client-reachable query has a visibility case" self-enforcing.**
-Phase 2 and Phase 4 both carry that EXIT condition and neither has a check.
-Add to `visibility.spec.ts`: enumerate the exported functions in
-`src/db/queries/` that take a client session, and assert each name appears in
-this spec file. A new client query then fails the build until someone writes its
-case — which is what ADR-006 says the guard is, described as mechanical rather
-than procedural. Today it is procedural.
+### Closed since round 1
 
-**B. Give the accessibility floor one test each.** Visible focus,
-`prefers-reduced-motion`, and 4.5:1 contrast on the possession hues are three
-Playwright assertions, not a sweep. The contrast one can be a unit test over the
-token file and needs no browser at all.
+| # | Was | Closed by |
+|---|---|---|
+| 1 | `toClientCard()` exported with no visibility check of its own | Architect. `visibility.spec.ts > INV-1 at the exported card serialiser`, 5 cases. |
+| 2 | The `no-non-null-assertion` override was a no-op that read as a safeguard | Architect. Rule now enforced, scoped to `src/`. |
+| 3 | `eslint .` fails whenever `next-env.d.ts` is present | Architect. Added to `ignores`. |
+| 4 | `/api/health` does not exist while `railway.json` health-checks it | B4. Checks database connectivity, not just liveness. |
+| 5 | The e2e suite needs three test-only endpoints that do not exist | B7. Gated on `E2E_SEED_TOKEN` **and** refusing to mount in production. |
+| 6 | `PGPOOL_MAX` read by `src/` and absent from `.env.example` | B8. |
+| 7 | `computePossession`'s optional third argument softened ADR-010 | B5. Two parameters now. |
+| 8 | Docs diverge from the code (routes, contract) | Architect. Amendments A1–A7. |
+| 9 | `.railway/railway.ts` does not exist and is unowned | QA (Q1). `.railway/**` is now QA-owned; the file is written and gated by 14 assertions. |
+
+### Open
+
+1. **`NEXT_PUBLIC_APP_URL` is read by `src/lib/api-client.core.ts` and is not in
+   `.env.example`.** One line. Fails the `env registry` job. **Owner: front-end
+   (F7).** This is the only thing standing between that gate and green.
+2. **`railway/iac` is not a dependency**, so `.railway/railway.ts` describes the
+   topology correctly and cannot be executed by anything. Adding the `railway`
+   package needs an ADR. **Owner: Architect.** The Config-as-Code cutoff is
+   2026-12-01.
+3. **`.railway/**` is outside the toolchain.** `tsc` and `eslint` both skip
+   dot-directories, so nothing in `npm run verify` would catch a syntax error in
+   the deploy topology. `tests/unit/railway-topology.spec.ts` reads it as text
+   and asserts the properties whose violation is an incident, which is a floor
+   rather than a substitute. Fixing it properly means adding `.railway` to
+   `tsconfig.json`'s `include`, which is blocked on defect 2. **Owner:
+   Architect.**
+4. **`src/components/agency/card-tile.tsx` animates outside the motion budget.**
+   `transition-opacity` on hover, silenced with `motion-reduce:transition-none`
+   at the call site. ACCESSIBILITY.md §7 says reduction happens at the token
+   precisely so that no component has to remember the variant — and the next one
+   will not. Not an accessibility failure (reduced motion is honoured, and
+   `focus-within:` keeps the controls keyboard-reachable), so it is recorded
+   rather than suppressed: `a11y-source.spec.ts` allows this one file by name
+   and fails on any second. **Owner: front-end.**
+5. **Deploy and rollback have never been executed.** Phase 8's only EXIT
+   condition a test cannot cover, and the largest open risk in the build.
+   Now also gated on defect 2 — the topology file cannot run without the
+   dependency. **Owner: Architect.**
+6. **Backups are Railway's defaults and no restore has ever been tested.**
+   RUNBOOK §4c depends on one. **Owner: Architect.**
+
+---
+
+## 5. Recommendations from round 1 — both now built
+
+**A. "Every client-reachable query has a visibility case" is mechanical.**
+Built. `visibility.spec.ts` enumerates the query layer from source in two
+independent ways and diffs both against a registry:
+
+- *by signature* — every exported function in `src/db/queries/` taking a
+  `ClientScope`, since a scope can only be built from a session (INV-6) and
+  therefore accepting one is what "client-reachable" means at that layer;
+- *by import graph* — every query symbol the handlers under
+  `src/app/api/client/**` and `src/app/api/auth/client/**` actually import.
+
+The second was added after the first reported full coverage while
+`loadClientVisibleNotes` — client-reachable, but taking a plain `engagementId`
+because its caller resolves visibility first — had no case at all. A guard that
+only reads signatures can be stepped around by choosing a parameter type, which
+is not a hypothetical: it had already happened.
+
+Each registry entry must name an `it()` that exists in the file, so the map
+cannot be satisfied by editing the map. Each covered query then gets a case that
+runs it against a fake driver and asserts the **compiled SQL** — the predicate,
+the bound parameters, the tables joined, and the columns selected. Verified by
+mutation: removing an entry, adding a stale one, renaming a case title, and
+dropping a runner each fail, and each names the cause.
+
+**B. The accessibility floor has tests.** Built, in two halves.
+`tests/unit/a11y-contract.spec.ts` and `tests/unit/a11y-source.spec.ts` run in
+`npm run verify` with no browser (89 cases). `tests/e2e/{agency,client}/a11y-shell.spec.ts`
+covers what only a browser can resolve (37 tests), against `/e/<token>/verify` —
+the one route that renders the full shell while touching no database, so the
+accessibility floor does not wait on the seed endpoints.
+
+Both halves import their numbers from `src/styles/a11y-contract.ts`, which the
+design layer owns. Nobody retypes a hex value, and `globals.css` is diffed
+against that module so the two cannot drift apart silently.
+
+### New recommendation
+
+**C. `.railway/**` needs to be inside the toolchain.** It is the only
+TypeScript in the repository that nothing typechecks, and it is the file a new
+production environment is built from. See open defect 3.
 
 ---
 
@@ -248,11 +272,18 @@ tests/
 │   ├── possession.ts  typed loader, validates the file at import
 │   ├── seed.ts        insertion graph + transition scripts (seeds never write cards.state)
 │   └── index.ts
-├── invariants/        61 live, 17 skipped, across 10 specs + 2 helpers
-├── unit/              194 live, 20 skipped, across 7 specs
-└── e2e/               22 tests, 4 specs, 2 projects + routes.ts — red pending seed endpoints
+├── invariants/        89 live, 16 skipped, across 10 specs + 3 helpers
+│   ├── _source.ts         source-tree scanning; query-layer enumeration
+│   ├── _query-capture.ts  runs a query against a fake driver, returns the compiled SQL
+│   └── _sql.ts
+├── unit/              309 live, 20 skipped, across 11 specs
+│   ├── a11y-contract.spec.ts     78 — the contrast floor, and globals.css against it
+│   ├── a11y-source.spec.ts       11 — focus ring, motion budget, app shell
+│   ├── railway-topology.spec.ts  14 — the deploy topology nothing else checks
+│   └── round-counter.spec.ts     12 — ADR-014 as behaviour, never as a location
+└── e2e/               59 tests, 6 specs, 2 projects + routes.ts + _a11y.ts
 ```
 
-Live totals: **255 passing, 37 skipped**. `npm run verify` is green.
+Live totals: **398 passing, 36 skipped**. `npm run verify` is green.
 Every skipped block names the phase that unskips it; the `invariant contract`
-job fails if one does not.
+job fails if one does not. At the end of round 1 the same line read 255.

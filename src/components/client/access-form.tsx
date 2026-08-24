@@ -13,9 +13,10 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { clientApi } from '@/lib/api-client';
+import { clientApi } from '@/lib/api-client.client';
 import { useAction } from '@/lib/hooks/use-action';
-import { buttonPrimary, buttonSecondary, cn, input, mono, muted } from '@/components/style-tokens';
+import { Button } from '@/components/primitives';
+import { cn, input, mono, muted } from '@/components/style-tokens';
 import { ErrorPanel } from './error-panel';
 
 export function AccessForm({
@@ -69,9 +70,18 @@ export function AccessForm({
           We send a code to confirm it is you. Your email is what an approval is recorded against.
         </p>
         <div>
-          <button type="submit" className={buttonPrimary} disabled={!emailReady || requestLink.pending}>
-            {requestLink.pending ? 'Sending…' : 'Send me a code'}
-          </button>
+          {/* `client`: signing in moves no work between the two sides, so the
+              ball stays where it is — on this side of the workspace. */}
+          <Button
+            type="submit"
+            tone="client"
+            size="lg"
+            loading={requestLink.pending}
+            loadingLabel="Sending"
+            disabled={!emailReady}
+          >
+            Send me a code
+          </Button>
         </div>
         {requestLink.failure && <ErrorPanel failure={requestLink.failure} />}
       </form>
@@ -122,16 +132,19 @@ export function AccessForm({
       </p>
 
       <div className="flex flex-wrap gap-2">
-        <button
+        <Button
           type="submit"
-          className={buttonPrimary}
-          disabled={!codeReady || !emailReady || verify.pending}
+          tone="client"
+          size="lg"
+          loading={verify.pending}
+          loadingLabel="Checking"
+          disabled={!codeReady || !emailReady}
         >
-          {verify.pending ? 'Checking…' : 'Open the workspace'}
-        </button>
-        <button type="button" className={buttonSecondary} onClick={() => setStep('email')}>
+          Open the workspace
+        </Button>
+        <Button tone="quiet" size="lg" onClick={() => setStep('email')}>
           Use a different email
-        </button>
+        </Button>
       </div>
       {verify.failure && <ErrorPanel failure={verify.failure} />}
     </form>

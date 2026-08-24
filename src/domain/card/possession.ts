@@ -10,7 +10,7 @@
  */
 
 import type { PossessionSplit } from '@/lib/types';
-import { POSSESSION, type CardState, type Possession } from './state-machine';
+import type { CardState, Possession } from './state-machine';
 
 export interface TransitionRow {
   cardId: string;
@@ -26,16 +26,25 @@ const EMPTY: PossessionSplit = { agencyMs: 0, clientMs: 0, current: null, curren
  * The last one is still open, so it runs to `now` — unless the card is signed
  * off, in which case the clock stops rather than accruing to a party that is
  * no longer doing anything.
+ *
+ * Transitions in, milliseconds out. There is deliberately no third argument.
+ * An earlier signature accepted the card's `state` and used it to fill in
+ * `current` when the card had never moved, which let a caller derive current
+ * possession from `cards.state` — a second source for a number ADR-010 says
+ * comes from `state_transitions` and nowhere else. A card with no transitions
+ * has opened no possession interval, and reporting `current: null` for it is
+ * the honest answer rather than a convenient one.
+ *
+ * Callers that need to know which side the board *shows* the ball on read
+ * `cards.state` themselves through the state machine's own `POSSESSION` table.
+ * That is a different question from the clock, and keeping the two apart is
+ * the point.
  */
 export function computePossession(
   transitions: readonly TransitionRow[],
   now: Date,
-  currentState?: CardState,
 ): PossessionSplit {
-  if (transitions.length === 0) {
-    if (!currentState) return EMPTY;
-    return { ...EMPTY, current: POSSESSION[currentState] };
-  }
+  if (transitions.length === 0) return EMPTY;
 
   const ordered = [...transitions].sort(
     (a, b) => a.occurredAt.getTime() - b.occurredAt.getTime(),

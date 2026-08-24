@@ -9,7 +9,7 @@
  */
 
 import { headers } from 'next/headers';
-import type { RequestContext } from '@/lib/api-client';
+import type { RequestContext } from '@/lib/api-client.core';
 
 export async function serverContext(): Promise<RequestContext> {
   const incoming = await headers();

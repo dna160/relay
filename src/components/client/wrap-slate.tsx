@@ -11,7 +11,7 @@
  * agency twin — ephemerality is stated, never sprung.
  */
 
-import { hrefs } from '@/lib/api-client';
+import { hrefs } from '@/lib/api-client.client';
 import { formatPurgeCountdown, formatWrapAge } from '@/lib/format';
 import { cn, mono } from '@/components/style-tokens';
 

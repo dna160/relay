@@ -23,7 +23,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { AgencyCard, AgencyLane } from '@/lib/types';
-import { type ApiFailure, type ReorderItem, agencyApi } from '@/lib/api-client';
+import type { ApiFailure } from '@/lib/api-client.core';
+import { type ReorderItem, agencyApi } from '@/lib/api-client.agency';
 
 export interface Relocation {
   lanes: AgencyLane[];

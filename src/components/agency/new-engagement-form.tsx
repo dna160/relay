@@ -13,9 +13,10 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { type TemplateSummary, agencyApi } from '@/lib/api-client';
+import { type TemplateSummary, agencyApi } from '@/lib/api-client.agency';
 import { useAction } from '@/lib/hooks/use-action';
-import { buttonGhost, buttonPrimary, cn, input, muted } from '@/components/style-tokens';
+import { Button } from '@/components/primitives';
+import { cn, input, muted } from '@/components/style-tokens';
 import { ErrorPanel } from './error-panel';
 
 export function NewEngagementForm({ templates }: { templates: TemplateSummary[] }) {
@@ -28,9 +29,9 @@ export function NewEngagementForm({ templates }: { templates: TemplateSummary[] 
 
   if (!open) {
     return (
-      <button type="button" className={buttonPrimary} onClick={() => setOpen(true)}>
+      <Button tone="agency" onClick={() => setOpen(true)}>
         New engagement
-      </button>
+      </Button>
     );
   }
 
@@ -99,16 +100,18 @@ export function NewEngagementForm({ templates }: { templates: TemplateSummary[] 
       )}
 
       <div className="flex flex-wrap gap-2">
-        <button
+        <Button
           type="submit"
-          className={buttonPrimary}
-          disabled={create.pending || !title.trim() || !clientOrgName.trim()}
+          tone="agency"
+          loading={create.pending}
+          loadingLabel="Creating"
+          disabled={!title.trim() || !clientOrgName.trim()}
         >
-          {create.pending ? 'Creating…' : 'Create engagement'}
-        </button>
-        <button type="button" className={buttonGhost} onClick={() => setOpen(false)}>
+          Create engagement
+        </Button>
+        <Button tone="ghost" onClick={() => setOpen(false)}>
           Cancel
-        </button>
+        </Button>
       </div>
 
       {create.failure && <ErrorPanel failure={create.failure} />}

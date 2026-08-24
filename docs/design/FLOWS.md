@@ -1,8 +1,14 @@
 # Flows
 
-> Three flows are specified here because three flows decide whether Relay works:
-> the client's first five minutes, the agency's publish gate, and the purge
-> warning. Everything else in the product is a variation on a board and a form.
+> Five flows are specified here because five flows decide whether Relay works:
+> the client's first five minutes, the agency's publish gate, the purge warning,
+> the upload, and first run. Everything else in the product is a variation on a
+> board and a form.
+>
+> The upload and first run were added in Round 2. They are the two flows that
+> were being built with no specification at all — one of them is the only way a
+> file ever enters the product, and the other is the only door into the agency
+> side of it.
 
 ---
 
@@ -364,3 +370,257 @@ Set entirely in `Mono` at `text-14`, on `bg-paper`, with `--rule-strong`
 hairlines above and below. It is a receipt, and it should look like one. This is
 the artifact an agency forwards to their client's legal team, which is how the
 paywall's downside becomes a compliance feature.
+
+---
+
+## 4. The upload, end to end
+
+### Who this is for
+
+An editor at 02:40 with a 4.1 GB ProRes master, a client review at 09:00, and
+hotel wifi. They are not going to read anything. They will look at one number
+and decide whether to go to bed. **That number must be trustworthy and the
+failure text must tell them what to do without a support ticket.**
+
+The component anatomy is `docs/design/COMPONENTS.md` §8. This section is the
+sequence, the resume rules, and the exhaustive failure matrix.
+
+### The sequence
+
+```
+  ① select / drop            local              nothing sent
+  ② hash                     local, streamed    nothing sent
+  ③ POST /api/uploads/presign                   ~200 bytes
+  ④ PUT direct to storage    single, or N parts + complete
+  ⑤ POST /api/versions | /api/reference-files   ~400 bytes
+```
+
+Steps ③ and ⑤ are the only two that touch the app server, and neither carries a
+byte of the file (INV-10, ADR-009). Step ④ is the browser talking to storage
+directly, which is why the front-end — not the back-end — owns retry, part
+ordering, and abort (ADR-015).
+
+**Presign is requested at step ③, not on mount.** The URLs live one hour and the
+clock starts when they are signed; signing them when the dock opens spends the
+window on a person deciding which file to pick.
+
+### The size boundary
+
+| Size | Mode | Parts | Resume unit |
+|---|---|---|---|
+| ≤ 100 MB | `single` | — | none — retry is a restart |
+| > 100 MB | `multipart` | `max(64 MiB, ceil(size / 1000))`, so ≤ 1000 parts | one part |
+| > 5 GB | rejected client-side, before ③ | — | — |
+
+At the 5 GB ceiling this is 80 parts of 64 MiB. The part is the retry unit and
+the progress unit, which is why the row reports `part 31 of 80` rather than a
+byte count during multipart transfer: a part that fails re-sends 64 MiB, not
+4 GB, and the operator should be able to see that.
+
+### Resume, precisely
+
+Three different things get called "resume" and they are not the same:
+
+1. **Pause / Resume inside the hour.** Multipart only. Part URLs are valid for
+   an hour from signing; a paused upload resumes by PUTting only the parts not
+   yet acknowledged. Free, and the common case.
+2. **Reload inside the hour.** The queue item's manifest — key, `uploadId`,
+   part URLs, part size, completed part numbers and ETags — is written to
+   `sessionStorage` after every acknowledged part. On mount the dock offers
+   "Resume Northwind_master_v4.mov — 62% already sent." The file handle is
+   **not** recoverable, so resuming requires the operator to re-select the same
+   file; the dock verifies size and name before continuing and refuses on a
+   mismatch. State this in the copy: "Choose the same file to continue."
+3. **After the hour.** The window has closed. A re-presign creates a **new**
+   `uploadId` and a new key — `versionKey()` mints a fresh uuidv7 per call — so
+   the bytes already sent cannot be reused. This is a restart and must be
+   labelled one:
+
+   > **This upload's window closed after an hour.** 2.6 GB was already sent and
+   > cannot be reused. Restarting sends the whole 4.1 GB again. **Restart**
+
+   Do not silently restart. An operator on a metered connection at 03:00 has a
+   right to decide.
+
+   *Back-end note:* the orphaned multipart upload is reclaimed by the bucket's
+   `AbortIncompleteMultipartUpload` lifecycle rule (7 days, per ADR-015). If the
+   abort URL is still valid the dock fires it on restart as a courtesy, and
+   ignores the result — an abort that fails is not an error the operator caused.
+
+### The failure matrix
+
+Every row of this table is a distinct message. "Upload failed" is not an
+acceptable rendering of any of them.
+
+| Step | Condition | Copy on the phase line | Controls |
+|---|---|---|---|
+| ① | File > 5 GB | "That file is 6.2 GB. The limit is 5 GB." | Remove |
+| ① | 0 bytes | "That file is empty." | Remove |
+| ② | Read error / file moved | "That file could not be read. It may have been moved or renamed." | Retry, Remove |
+| ③ | 401 | "Your session expired. Sign in again — nothing was sent." | Sign in, Remove |
+| ③ | 423 `ENGAGEMENT_ARCHIVED` | "This engagement is archived. Files can be exported but not added." | Remove. Whole dock goes to `disabled`. |
+| ③ | 410 `ENGAGEMENT_PURGED` | "This engagement has been purged." | Link to the certificate. Dock unmounts. |
+| ③ | 404 `NOT_VISIBLE` | "That card is no longer here." | Remove |
+| ③ | 402 / 500 / offline | "The upload could not be started. Nothing was sent." | Retry, Remove |
+| ④ | Network drop, part | *silent* for the first three attempts — 1s, 4s, 10s, jittered. The row stays `transferring` and the phase line reads "Sending · part 31 of 80 · retrying". | Pause, Cancel |
+| ④ | Network drop, part, past 3 attempts | "Part 31 of 80 keeps failing. Your connection may have dropped." | Retry, Pause, Cancel |
+| ④ | 403 from storage (URL expired) | The hour-expiry copy above. | Restart, Remove |
+| ④ | `navigator.onLine` false | "You are offline. This will continue when you reconnect." Auto-resumes on `online`; does **not** count against the retry budget. | Pause, Cancel |
+| ④ | Complete call fails | "The upload finished but could not be assembled. Retrying is safe." | Retry (re-issues complete with the same ETag list), Cancel |
+| ⑤ | Any failure | "**The file uploaded but was not recorded.** Retrying is safe and will not re-send it." | Retry, Remove |
+| ⑤ | 409 / duplicate | "That version is already recorded as v4." Row goes to `done`. | Remove |
+
+Step ⑤ is bolded in its own copy because it is the one failure where the naïve
+reaction — cancel and start again — is exactly wrong. The bytes are in the
+bucket. Retry is a 400-byte POST.
+
+**Cancel** on a multipart upload fires the presigned abort URL, then removes the
+row. Cancel on a single PUT aborts the fetch and removes the row; the partial
+object, if any, is overwritten or lifecycle-collected — nothing in the app ever
+learns about it, which is the trade ADR-015 accepted.
+
+### What success looks like
+
+The row goes `done`: edge turns `--agency`, the record line becomes the
+permanent record —
+
+```
+v4 · 1.4 GB · 3a91f2…
+```
+
+— and the phase line becomes "Added as version 4. Not visible to the client
+yet." with an inline `Publish to client` link to the gate in §2.
+
+That last sentence is load-bearing. The single most likely misunderstanding in
+this product is an agency believing an upload published something. It did not.
+`POST /api/versions` records; `POST /api/cards/:id/publish` publishes. The
+upload's success state says so, in the same words the gate uses.
+
+### Measuring it
+
+- Time from drop to first progress under 2s on a 4 GB file. If hashing blocks
+  that, hashing is in the wrong place.
+- A failed part never costs more than one part of re-transfer.
+- Zero uploads that reach storage and are not recorded, per week, that a retry
+  could not fix.
+
+### One open constraint, stated
+
+`crypto.subtle.digest` takes a single buffer and has no streaming form, so
+hashing a 4 GB file by that route means 4 GB resident in the tab. The dock's
+specification assumes an **incremental** sha256 over the same chunks the
+transfer already reads — which, with no new dependency permitted, means a
+hand-written digest in a Worker. That is an engineering decision for the
+front-end and the Architect, not a design one, but the UI cannot be built
+honestly without it being made: if hashing is one-shot, the `hashing` state is a
+memory cliff rather than a progress bar, and the 5 GB ceiling is fiction.
+
+---
+
+## 5. First run — a user with no organisation
+
+### Who this is for
+
+Someone who just clicked a magic link in their email for the first time. They
+have a session and no org. Every agency route 401s until `POST
+/api/onboarding/org` runs. This is the entire door to the product's agency side
+and it is one screen.
+
+### The shape
+
+One screen, `max-w-dialog` centred, on `bg-paper`. Not a wizard, not a
+multi-step, not a progress indicator across the top. Two fields.
+
+```
+<main>
+  ├─ span   RELAY                        eyebrow, muted
+  ├─ h1     Name your studio             28 display
+  ├─ p      This is what your clients see at the top of every workspace.
+  │                                      16, muted, max-w-prose
+  ├─ Field  Studio name        (required)
+  │         hint: "Northwind Pictures"
+  ├─ Field  Workspace address  (required)   font-mono
+  │         hint: "Lowercase letters, numbers and hyphens. You cannot change this later."
+  ├─ Mono   relay.app/northwind             live preview, 14, muted
+  ├─ Button tone="agency" size="lg"      Create studio
+  └─ p      Signed in as jo@northwind.tv · Sign out
+                                         12, muted
+</main>
+```
+
+`tone="agency"` on the button is not decoration. This is the moment the person
+becomes the agency; the possession hue is the correct one and it is the first
+time they see it.
+
+### The two fields, and the rules that go with them
+
+**Studio name** — `z.string().min(1).max(200)`. Free text. Counter at 200 via
+the `Field` primitive's `counter` prop, shown only past 160.
+
+**Workspace address** — `z.string().min(2).max(60)`. This is a slug, it is
+permanent, and the screen must say so *before* it is submitted, not after.
+
+- The input itself is `font-mono` — it is a record, and it follows the same rule
+  as every other record in this product.
+- **The full address is shown as a live preview beneath the field**, not as a
+  prefix inside it: `<Mono size="14" tone="muted">relay.app/northwind</Mono>`,
+  updating as the slug is typed, with an `aria-live="polite"` on it so a
+  screen-reader user hears the derived slug they did not type.
+
+  An inline `relay.app/` prefix inside the control's frame was the obvious
+  design and it was rejected: the only ways to draw it require either
+  suppressing the input's own focus ring or drawing a second one on a wrapper,
+  and `outline: none` without an equally visible replacement is forbidden in
+  this codebase — there is a source-scan test for it. A preview line is also
+  better at 360px, where a prefix eats a third of the field, and better copy:
+  it shows the *whole* address rather than half of it.
+- Derived from the studio name as it is typed, **until the person edits the slug
+  themselves**, after which it stops following. Silently re-deriving over
+  someone's deliberate edit is the single most irritating bug in this class of
+  form.
+- Derivation: lowercase, spaces and `_` to `-`, strip anything not
+  `[a-z0-9-]`, collapse runs of `-`, trim leading and trailing `-`, cut to 60.
+- Validated on blur, not on keystroke. "That address is taken." replaces the
+  hint in the same slot, `text-ink font-semibold`, `role="alert"` — no red, per
+  the `--breach` reservation.
+
+### Copy rules applied
+
+Name things by what people control. It is a **studio**, not an "organisation" or
+a "tenant" or a "workspace group" — the person filling this in runs a production
+company. The API calls it an org; the human never has to.
+
+The heading is an instruction ("Name your studio"), not a greeting ("Welcome to
+Relay!"). Relay's empty states instruct; so does its first screen.
+
+### States
+
+| State | Rendering |
+|---|---|
+| default | As above. Focus lands on Studio name on mount — the one place in the product where an autofocus is right, because the screen has exactly one purpose and one entry point. |
+| submitting | Button `loading` with `loadingLabel="Creating your studio"`. Both fields `disabled`. The three static mono dots, no spinner. |
+| error, slug taken | Per above, on the slug field. Button re-enables. |
+| error, 500 | A `role="alert"` line above the button: "Your studio could not be created. Nothing was saved — try again." Fields keep their values. Never clear a form on a server error. |
+| success | Redirect to `/w/<id>` — the new workspace, empty, showing the portfolio's empty state. The onboarding screen is never reachable again for that user. |
+| already onboarded | This route must not render at all. A user with an org who reaches it is redirected to `/w`. A person seeing "Name your studio" for a studio they already named will assume they are in the wrong account. |
+
+### What is deliberately not here
+
+- **No plan or billing step.** The plan limit bites at engagement creation
+  (402 `PLAN_LIMIT_REACHED`), which is where the person has context for the
+  decision. Asking for a card before they have seen a board is how a trial dies.
+- **No team invitations.** There is nothing to invite anyone to yet. It belongs
+  on the empty portfolio, next to the thing it is about.
+- **No logo or brand colour.** The white-label hook exists and it is a settings
+  concern. A brand-colour picker on the first screen is a five-minute detour
+  before the person has seen the product the colour applies to.
+- **No skip link on this screen and no navigation chrome.** There is exactly one
+  thing to do. Adding a way around it produces a session that can reach nothing.
+
+### 360
+
+- `max-w-dialog` becomes full width at `px-4`.
+- The preview line truncates from the left (`direction: rtl` on a `dir="ltr"`
+  span) so the end of the slug — the part being typed — stays visible.
+- The Button is full width at `size="lg"` (44px).
+- "Signed in as …" wraps to two lines with `Sign out` on the second.

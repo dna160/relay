@@ -22,18 +22,11 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { ClientVersion } from '@/lib/types';
-import { clientApi } from '@/lib/api-client';
+import { clientApi } from '@/lib/api-client.client';
 import { shortHash, versionPip } from '@/lib/format';
 import { useAction } from '@/lib/hooks/use-action';
-import {
-  buttonPrimary,
-  buttonSecondary,
-  cn,
-  input,
-  mono,
-  muted,
-  surface,
-} from '@/components/style-tokens';
+import { Button } from '@/components/primitives';
+import { cn, input, mono, muted, surface } from '@/components/style-tokens';
 import { ErrorPanel } from './error-panel';
 
 type Mode = 'idle' | 'confirming-approve' | 'requesting-changes';
@@ -90,16 +83,19 @@ export function DecisionBar({
 
       {mode === 'idle' && (
         <div className="mt-3 flex flex-wrap gap-2">
-          <button type="button" className={buttonPrimary} onClick={() => setMode('confirming-approve')}>
+          {/*
+            Both controls are pine, and that is not a mistake. A button's hue
+            names the side that holds the work once it has been pressed, and
+            both of these hand it straight back to the agency. What tells them
+            apart is fill against quiet — the weight of the act — not the hue,
+            because their consequence for possession is identical.
+          */}
+          <Button tone="agency" size="lg" onClick={() => setMode('confirming-approve')}>
             Approve
-          </button>
-          <button
-            type="button"
-            className={buttonSecondary}
-            onClick={() => setMode('requesting-changes')}
-          >
+          </Button>
+          <Button tone="quiet" size="lg" onClick={() => setMode('requesting-changes')}>
             Request changes
-          </button>
+          </Button>
         </div>
       )}
 
@@ -111,17 +107,18 @@ export function DecisionBar({
             not move to a later version.
           </p>
           <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              className={buttonPrimary}
-              disabled={decide.pending}
+            <Button
+              tone="agency"
+              size="lg"
+              loading={decide.pending}
+              loadingLabel="Approving"
               onClick={() => void send('approved')}
             >
-              {decide.pending ? 'Approving…' : 'Approve'}
-            </button>
-            <button type="button" className={buttonSecondary} onClick={() => setMode('idle')}>
+              Approve
+            </Button>
+            <Button tone="quiet" size="lg" onClick={() => setMode('idle')}>
               Back
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -160,19 +157,26 @@ export function DecisionBar({
             .
           </p>
           <div className="flex flex-wrap gap-2">
-            <button type="submit" className={buttonPrimary} disabled={!noteReady || decide.pending}>
-              {decide.pending ? 'Sending…' : 'Request changes'}
-            </button>
-            <button
-              type="button"
-              className={buttonSecondary}
+            <Button
+              type="submit"
+              tone="agency"
+              size="lg"
+              loading={decide.pending}
+              loadingLabel="Sending"
+              disabled={!noteReady}
+            >
+              Request changes
+            </Button>
+            <Button
+              tone="quiet"
+              size="lg"
               onClick={() => {
                 setMode('idle');
                 setNote('');
               }}
             >
               Back
-            </button>
+            </Button>
           </div>
         </form>
       )}
