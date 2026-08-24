@@ -168,6 +168,12 @@ export const ERROR_CODES = {
   NOT_VISIBLE: 404,
   VALIDATION_FAILED: 400,
   UNAUTHENTICATED: 401,
+  /**
+   * The only code that does not describe a decision the product made. It
+   * carries no details to the caller — an internal failure explaining itself
+   * to a client contact is an information leak with a stack trace attached.
+   */
+  INTERNAL: 500,
 } as const;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

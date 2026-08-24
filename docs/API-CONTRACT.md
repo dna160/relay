@@ -109,7 +109,67 @@ but is hidden leaks the thing INV-1 protects.
 
 ## Events (SSE)
 
-`GET /api/events?engagementId=` streams:
+**Amended R2 — see Amendment A1.** Agency: `GET /api/events?engagementId=`.
+Client: `GET /api/client/events`, which takes the engagement from the session
+and accepts no parameter. Both stream:
 `card.transitioned`, `version.published`, `decision.recorded`,
 `comment.created`, `engagement.warned`. Client streams are filtered through the
 same projection as REST — the stream is not a side door.
+
+
+---
+
+## Amendments
+
+Changes made after the contract was frozen, each with the reason. This log is
+the provenance — where an amendment and the body of this document disagree, the
+amendment is newer and wins.
+
+### A1 — the client event stream takes no parameter (INV-6)
+*Raised by the back-end in round 1. Contract defect.*
+
+The frozen contract specified one stream, `GET /api/events?engagementId=`. For a
+client session that is an INV-6 violation on its face: a client route must take
+the engagement from the session and never from the request. The invariant is
+law and the contract was wrong. Split into an agency stream, which keeps the
+parameter and authorises it against the org, and `GET /api/client/events`, which
+accepts no parameter at all. Neither is a side door — both are filtered through
+the same projection as REST.
+
+### A2 — `INTERNAL` (500) added to `ERROR_CODES`
+The error helper emitted `code: 'INTERNAL'`, which was not a valid `ErrorCode`.
+It carries no `details` — an internal failure explaining itself to a client
+contact is an information leak with a stack trace attached.
+
+### A3 — every response is enveloped
+Responses are `{ card }`, `{ lane }`, `{ engagements }`, `{ transition }` rather
+than bare objects or arrays. A bare top-level array cannot gain a field later
+without breaking every caller; the envelope is what makes `{ engagements, plan }`
+possible without a v2.
+
+### A4 — agency engagement routes live at `/w/[id]`, not `/e/[id]`
+*Raised by the front-end in round 1. Framework constraint, not preference.*
+
+`(agency)/e/[id]/board` and `(client)/e/[token]/board` both resolve to
+`/e/:x/board`, and Next refuses to build. `/e/{token}` is the link printed in
+client emails and could not move, so the agency side did. `docs/ARCHITECTURE.md`
+has been corrected to match.
+
+### A5 — mutations carry `engagementId` in the body
+Agency mutation routes take the engagement explicitly so the authorisation check
+has a subject before any row is read. Client routes still take it from the
+session and must never accept it — that asymmetry is INV-6, not an inconsistency.
+
+### A6 — routes added that the contract did not name
+| Route | Why it had to exist |
+|---|---|
+| `POST /api/onboarding/org` | The Auth.js adapter creates a user before org membership exists, so a freshly magic-linked user has no org and every agency route 401s. Without this, no agency session can ever be reached. ADR-013. |
+| `POST /api/cards/reorder` | Drag is a batch reindex. N individual PATCHes lose their ordering on refresh. |
+| `POST /api/reference-files`, `GET /api/engagements/:id/shelf` | Presign already signed shelf keys; without these the shelf was a dead end. |
+
+### A7 — routes named here that are not built yet, with their owning phase
+`/api/attention` (Phase 5) · `/api/events`, `/api/client/events` (Phase 5) ·
+`/api/templates` (Phase 7) · `/api/engagements/:id/export`, `/api/client/export`
+(Phase 6). The front-end calls each of these and marks it `NOT BUILT` in
+`src/lib/api-client.ts`. `GET /api/attention` is the portfolio's primary
+content and is the first of them to land.

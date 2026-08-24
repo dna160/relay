@@ -9,6 +9,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   toClientBoard,
+  toClientCard,
   type CardRow,
   type LaneRow,
   type VersionRow,
@@ -139,24 +140,52 @@ describe('INV-1 against the shared fixture board', () => {
   });
 });
 
-describe.skip('INV-1 at the exported card serialiser', () => {
+describe('INV-1 at the exported card serialiser', () => {
   /**
-   * UNSKIP IN: Phase 2, with the query layer. `toClientCard` is exported and
-   * therefore client-reachable, but it applies no visibility check of its own —
-   * `toClientCard(draftCard, [])` returns a card whose `state` is `'draft'`
-   * cast to a type that excludes `'draft'`. Today only `toClientBoard` calls it
-   * and the filter runs first, so nothing leaks; the moment a second caller
-   * appears, something does.
-   *
-   * Reported to the architect as a defect in
-   * `src/domain/projection/client-view.ts` — the fix is the owning agent's, not
-   * this suite's.
+   * `toClientCard` is exported and therefore client-reachable. It now checks
+   * visibility itself rather than trusting its caller: `toClientBoard` filters
+   * first and this guard never fires, but the second caller will not filter,
+   * and this is what stops them leaking. Hardened by the architect in round 2
+   * after QA reported it; this suite asserts the fix rather than describing the
+   * defect.
    */
 
-  it('refuses to serialise a card the client may not see', () => {
-    expect.fail(
-      'Defect: toClientCard() must throw (or narrow its input to a VisibleCardRow) rather than ' +
-        'emitting a draft card with a state its own return type forbids.',
-    );
+  const publishedLane: LaneRow = { id: 'l1', name: 'Deliverables', position: 0, visibility: 'published' };
+  const privateLane: LaneRow = { id: 'l2', name: 'Internal QA', position: 1, visibility: 'private' };
+  const base = {
+    description: null, dueAt: null, roundsUsed: 0, contractedRounds: 2,
+    visibilityOverride: 'inherit' as const, assigneeId: 'u1',
+    internalNotes: 'do not show', effortEstimate: 13,
+  };
+
+  it('refuses to serialise a draft card', () => {
+    const draft: CardRow = { ...base, id: 'x1', laneId: 'l1', title: 'Unstarted', state: 'draft', position: 0 };
+    expect(() => toClientCard(draft, publishedLane, [])).toThrow(/state is draft/);
+  });
+
+  it('refuses to serialise a card in a private lane', () => {
+    const card: CardRow = { ...base, id: 'x2', laneId: 'l2', title: 'QA notes', state: 'in_progress', position: 0 };
+    expect(() => toClientCard(card, privateLane, [])).toThrow(/lane is private/);
+  });
+
+  it('refuses to serialise a card overridden to private', () => {
+    const card: CardRow = {
+      ...base, id: 'x3', laneId: 'l1', title: 'Hidden one', state: 'in_progress',
+      position: 0, visibilityOverride: 'private',
+    };
+    expect(() => toClientCard(card, publishedLane, [])).toThrow(/overridden to private/);
+  });
+
+  it('refuses a lane that does not own the card, so a caller cannot supply a permissive one', () => {
+    const card: CardRow = { ...base, id: 'x4', laneId: 'l2', title: 'QA notes', state: 'in_progress', position: 0 };
+    expect(() => toClientCard(card, publishedLane, [])).toThrow(/does not own this card/);
+  });
+
+  it('serialises a visible card, so the guard is not simply refusing everything', () => {
+    const card: CardRow = { ...base, id: 'x5', laneId: 'l1', title: 'Key art', state: 'awaiting_client', position: 0 };
+    const out = toClientCard(card, publishedLane, []);
+    expect(out.state).toBe('awaiting_client');
+    expect(JSON.stringify(out)).not.toContain('do not show');
   });
 });
+

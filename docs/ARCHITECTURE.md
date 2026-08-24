@@ -108,9 +108,9 @@ relay/
 │   ├── app/
 │   │   ├── (agency)/
 │   │   │   ├── portfolio/        # home screen: all engagements
-│   │   │   ├── e/[id]/board/
-│   │   │   ├── e/[id]/shelf/
-│   │   │   ├── e/[id]/settings/
+│   │   │   ├── w/[id]/board/     # `w` not `e` — see API-CONTRACT amendment A4
+│   │   │   ├── w/[id]/shelf/
+│   │   │   ├── w/[id]/settings/
 │   │   │   └── templates/
 │   │   ├── (client)/
 │   │   │   └── e/[token]/        # magic-link surface; board + decision queue

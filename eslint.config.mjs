@@ -3,7 +3,7 @@ import tseslint from 'typescript-eslint';
 import reactHooks from 'eslint-plugin-react-hooks';
 
 export default tseslint.config(
-  { ignores: ['.next/**', 'node_modules/**', 'src/db/migrations/**', 'playwright-report/**', 'test-results/**'] },
+  { ignores: ['.next/**', 'node_modules/**', 'src/db/migrations/**', 'playwright-report/**', 'test-results/**', 'next-env.d.ts'] },
   ...tseslint.configs.recommended,
   {
     files: ['**/*.{ts,tsx}'],
@@ -14,6 +14,19 @@ export default tseslint.config(
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
       '@typescript-eslint/consistent-type-imports': ['error', { prefer: 'type-imports', fixStyle: 'inline-type-imports' }],
     },
+  },
+  {
+    /**
+     * CLAUDE.md: no non-null assertions on database reads. The rule is not in
+     * `recommended`, so stating it in prose left it unenforced tree-wide —
+     * reported by QA in round 1. Scoped to `src/` deliberately: the hazard is a
+     * production row that turns out to be null, and narrowing the type is
+     * always available instead (see `isPublished` in the client projection).
+     * Test fixtures asserting `arr[0]!` after a length check carry no such
+     * hazard, and 53 cosmetic edits there would buy nothing.
+     */
+    files: ['src/**/*.{ts,tsx}'],
+    rules: { '@typescript-eslint/no-non-null-assertion': 'error' },
   },
   {
     // INV-9: business logic lives in src/domain and stays framework-free.
@@ -28,11 +41,5 @@ export default tseslint.config(
         ],
       }],
     },
-  },
-  {
-    // The client projection is the one serialiser a client contact reaches (INV-1).
-    // A non-null assertion here is how an unpublished version leaks.
-    files: ['src/domain/projection/client-view.ts'],
-    rules: { '@typescript-eslint/no-non-null-assertion': 'off' },
   },
 );

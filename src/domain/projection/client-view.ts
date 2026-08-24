@@ -89,19 +89,59 @@ export function isCardVisibleToClient(card: CardRow, lane: LaneRow): boolean {
   return true;
 }
 
-function toClientVersion(v: VersionRow): ClientVersion {
-  // Non-null asserted only after the publish filter below.
+/** A version that has passed the internal gate. The narrowing is the proof. */
+type PublishedVersionRow = VersionRow & { publishedToClientAt: Date };
+
+function isPublished(v: VersionRow): v is PublishedVersionRow {
+  return v.publishedToClientAt !== null;
+}
+
+function toClientVersion(v: PublishedVersionRow): ClientVersion {
   return {
     id: v.id,
     versionNo: v.versionNo,
     filename: v.filename,
     sizeBytes: v.sizeBytes,
     sha256: v.sha256,
-    publishedAt: v.publishedToClientAt!.toISOString(),
+    publishedAt: v.publishedToClientAt.toISOString(),
   };
 }
 
-export function toClientCard(card: CardRow, versions: VersionRow[]): ClientCard {
+/**
+ * Raised when a caller asks the client serialiser to emit something the client
+ * is not entitled to. It is a programming error, never a user-facing one — the
+ * query layer should have filtered it. Crashing beats leaking (INV-1).
+ */
+export class ClientVisibilityError extends Error {
+  readonly code = 'CLIENT_VISIBILITY_VIOLATION';
+  constructor(cardId: string, reason: string) {
+    super(`Refusing to serialise card ${cardId} for a client: ${reason}`);
+  }
+}
+
+/**
+ * Serialises one card for a client contact.
+ *
+ * Takes the lane so it can check visibility itself rather than trusting the
+ * caller to have done it. `toClientBoard` filters first and this check never
+ * fires; the guard exists for the second caller, who will not filter, and who
+ * would otherwise emit a draft card carrying a state this function's own
+ * return type forbids.
+ */
+export function toClientCard(card: CardRow, lane: LaneRow, versions: VersionRow[]): ClientCard {
+  if (lane.id !== card.laneId) {
+    throw new ClientVisibilityError(card.id, `lane ${lane.id} does not own this card`);
+  }
+  if (!isCardVisibleToClient(card, lane)) {
+    throw new ClientVisibilityError(
+      card.id,
+      lane.visibility === 'private'
+        ? 'its lane is private'
+        : card.visibilityOverride === 'private'
+          ? 'it is overridden to private'
+          : `its state is ${card.state}`,
+    );
+  }
   const aliased = (CLIENT_STATE_ALIAS[card.state] ?? card.state) as ClientCard['state'];
   return {
     id: card.id,
@@ -114,7 +154,8 @@ export function toClientCard(card: CardRow, versions: VersionRow[]): ClientCard 
     roundsUsed: card.roundsUsed,
     contractedRounds: card.contractedRounds,
     versions: versions
-      .filter((v) => v.cardId === card.id && v.publishedToClientAt !== null)
+      .filter((v) => v.cardId === card.id)
+      .filter(isPublished)
       .sort((a, b) => b.versionNo - a.versionNo)
       .map(toClientVersion),
     awaitingYou: isAwaitingClient(card.state),
@@ -127,7 +168,6 @@ export function toClientBoard(
   cards: CardRow[],
   versions: VersionRow[],
 ): ClientLane[] {
-  const laneById = new Map(lanes.map((l) => [l.id, l]));
   return lanes
     .filter(isLaneVisibleToClient)
     .sort((a, b) => a.position - b.position)
@@ -137,8 +177,8 @@ export function toClientBoard(
       position: lane.position,
       cards: cards
         .filter((c) => c.laneId === lane.id)
-        .filter((c) => isCardVisibleToClient(c, laneById.get(c.laneId)!))
+        .filter((c) => isCardVisibleToClient(c, lane))
         .sort((a, b) => a.position - b.position)
-        .map((c) => toClientCard(c, versions)),
+        .map((c) => toClientCard(c, lane, versions)),
     }));
 }
