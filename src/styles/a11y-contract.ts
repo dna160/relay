@@ -263,6 +263,32 @@ export const WHITE_LABEL_FLOOR = 4.5;
 export const BRAND_HOOK = '--brand-agency';
 export const BRAND_ROOT_SELECTOR = '[data-relay-root]';
 
+/**
+ * `--agency` has TWO resolution paths and only one of them is clamped:
+ *
+ *   - no tenant  -> the published literal in `TOKENS[mode]['--agency']`,
+ *                   untouched. `--brand-agency` is left undeclared, so
+ *                   `--agency-tenant` is invalid at computed-value time and
+ *                   `var(--agency-tenant, <literal>)` falls through.
+ *   - tenant set -> the brand hue re-expressed through the OKLCH clamp.
+ *
+ * ROUND 2 DEFECT, and the reason this constant exists: the clamp used to be
+ * applied to the default as well, via `var(--brand-agency, #1f4e46)`. In dark
+ * mode its `c * 1.6` chroma lift re-lifted a colour that was already lifted, so
+ * the browser painted rgb(0, 163, 144) while every document — this file
+ * included — published #499D8F. Contrast still passed (5.690 vs the recorded
+ * 5.571), which is exactly why nothing caught it: the ratio assertions were
+ * right about the wrong colour.
+ *
+ * A ratio-only assertion cannot catch that class of drift. The browser half of
+ * the suite must assert the untenanted `--agency` resolves to this EXACT value,
+ * per mode — see `A11Y-ASSERTIONS.md` §4.
+ */
+export const UNTENANTED_AGENCY: Readonly<Record<Mode, string>> = {
+  light: '#1F4E46',
+  dark: '#499D8F',
+} as const;
+
 /** Deliberately awful. Each one is a plausible mistake or a deliberate attack. */
 export const HOSTILE_BRAND_VALUES: readonly string[] = [
   '#FFFF00', // maximum luminance

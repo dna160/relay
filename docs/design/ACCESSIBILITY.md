@@ -85,12 +85,30 @@ white-label hook goes through (see §2), which lands it at OKLCH lightness 0.64.
 
 ## 2. White-label cannot break contrast
 
-A tenant sets one property, `--brand-agency`. `--agency` is then computed as:
+A tenant sets one property, `--brand-agency`. `--agency` then resolves down one
+of two paths, and **only the tenant path is clamped**:
 
 ```css
-/* light */ oklch(from var(--brand-agency) clamp(0.20, l, 0.50) clamp(0, c, 0.12) h)
-/* dark  */ oklch(from var(--brand-agency) clamp(0.64, l, 0.90) clamp(0, calc(c*1.6), 0.12) h)
+/* the tenant branch — declared only inside @supports, and note that
+   var(--brand-agency) carries NO fallback */
+/* light */ --agency-tenant: oklch(from var(--brand-agency) clamp(0.20, l, 0.50) clamp(0, c, 0.12) h);
+/* dark  */ --agency-tenant: oklch(from var(--brand-agency) clamp(0.64, l, 0.90) clamp(0, calc(c*1.6), 0.12) h);
+
+/* the selection. --brand-agency is deliberately undeclared, so with no tenant
+   --agency-tenant is invalid at computed-value time and the literal wins. */
+--agency: var(--agency-tenant, #1F4E46);   /* light */
+--agency: var(--agency-tenant, #499D8F);   /* dark  */
 ```
+
+The default never goes through the clamp, and that is load-bearing rather than
+tidy. In round 2 it did — via `var(--brand-agency, #1f4e46)` — and the dark
+expression's `c * 1.6` chroma lift re-lifted a colour that was already lifted,
+so the browser painted **rgb(0, 163, 144)** while this document, `DESIGN-SYSTEM.md`
+and `a11y-contract.ts` all published `#499D8F`. It measured 5.690:1 on `--paper`
+against the recorded 5.571:1 — legible, and therefore invisible to every ratio
+assertion in this file. A contrast table can be right about the wrong colour.
+`A11Y-ASSERTIONS.md` §4 now asserts the untenanted `--agency` resolves to the
+exact published hex, per mode, which is the only shape of test that catches it.
 
 The two bands were chosen by exhaustive search over the sRGB gamut — every hue
 at 2° steps, every chroma at 0.005 steps — for the worst case at each lightness:
@@ -124,8 +142,24 @@ Across the full clamped white-label band the worst case for `--on-hue` on an
 `--agency` fill is **4.67:1** (light, L = 0.50) and **5.02:1** (dark, L = 0.64).
 
 Browsers without relative colour syntax fall back to the Relay default and get
-**no white-label at all**. There is deliberately no code path in which an
-unclamped tenant colour reaches the page.
+**no white-label at all** — the whole tenant branch lives inside the `@supports`
+block, so neither `--agency-tenant` nor the `var()` that selects it is ever
+declared. There is deliberately no code path in which an unclamped tenant colour
+reaches the page.
+
+Verified in-browser across all four combinations of light/dark x default/tenant,
+plus the seven `HOSTILE_BRAND_VALUES`:
+
+| Mode | Tenant | Painted `--agency` | on `--paper` | on `--paper-2` |
+|---|---|---|---|---|
+| Light | none | **#1F4E46** | 7.750 | 8.430 |
+| Light | worst of seven (`#00FF00`) | #347430 | 4.70 | 5.11 |
+| Dark | none | **#499D8F** | 5.571 | 5.016 |
+| Dark | worst of seven (`#000000`) | #8C8C8C | 5.35 | 4.82 |
+
+The two untenanted rows match `TOKENS` in `a11y-contract.ts` to three decimal
+places, and the derived `--tint-agency` resolves to `#D9DFDC` / `#223032` — the
+recorded values — rather than to a mix of a drifted hue.
 
 `--client`, `--breach` and every neutral are literals declared `!important` on
 both `:root` and `[data-relay-root]`, which is the element the tenant hook lives

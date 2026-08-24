@@ -184,7 +184,7 @@ asserted; the working is in `docs/design/ACCESSIBILITY.md`.
 | `--paper-2` | `#F2F3F0` | — | unchanged |
 | `--rule` | `#C4C8C0` | 1.40 | unchanged; decorative hairline only |
 | `--rule-strong` | `#808978` | 3.01 | **added** — control boundaries (WCAG 1.4.11) |
-| `--agency` | `#1F4E46` | 7.75 | unchanged; now computed through the brand clamp |
+| `--agency` | `#1F4E46` | 7.75 | unchanged; the literal is what an untenanted install paints |
 | `--client` | `#4A4FA6` | 5.85 | unchanged |
 | `--breach` | `#A8201A` | 6.00 | unchanged |
 | `--muted` | `#60665D` | 4.87 | **changed** from `#6B7168`, which measured 4.14 and failed AA |
@@ -199,6 +199,7 @@ asserted; the working is in `docs/design/ACCESSIBILITY.md`.
 | `--rule` | `#363D43` | 1.63 | 1.47 |
 | `--rule-strong` | `#616D77` | 3.39 | 3.06 |
 | `--agency` | `#499D8F` | 5.57 | 5.02 |
+
 | `--client` | `#8487C8` | 5.38 | 4.84 |
 | `--breach` | `#E45953` | 5.01 | 4.51 |
 | `--muted` | `#999F96` | 6.64 | 5.98 |
@@ -206,6 +207,9 @@ asserted; the working is in `docs/design/ACCESSIBILITY.md`.
 The "+18%" lift holds for `--client` and `--muted`. `--agency` needed +20 and
 `--breach` +23 to clear 4.5:1 on `--paper-2`, which is the ground cards sit on.
 Hue and saturation are untouched, so the relationship between the hues survives.
+
+Every value in both tables is verified in-browser as the colour actually
+painted, not only as the colour declared — see ACCESSIBILITY.md §2.
 
 ### Derived (all functions of the above)
 
@@ -225,10 +229,10 @@ A tenant sets exactly one property, `--brand-agency`, in exactly one place: a
 mechanisms make "`--agency` only" a property of the cascade rather than a rule
 someone has to remember in review.
 
-**(a) Name.** `--agency` is not the hook — it is computed *from* the hook.
-Setting `--agency` directly is inert, because the computed declaration is
-`!important` and re-reads `--brand-agency` regardless of what `--agency` was set
-to.
+**(a) Name.** `--agency` is not the hook — it *selects between* the published
+default and a clamped tenant colour. The hook is read in exactly one place, the
+`--agency-tenant` declaration inside the `@supports` block. Setting `--agency`
+or `--agency-tenant` inline is inert; both are `!important`.
 
 **(b) Cascade position.** Every protected token is declared `!important` on both
 `:root` **and** `[data-relay-root]` — the element the hook lives on. An
@@ -240,9 +244,17 @@ else, fixing it as the lowest-priority author layer; any tenant CSS injected as 
 stylesheet must live inside it and loses to every unlayered declaration in the
 token block.
 
-**(c) Range.** Even the sanctioned hook is bounded. `--agency` is the brand hue
-re-expressed in OKLCH with lightness clamped to `[0.20, 0.50]` in light and
-`[0.64, 0.90]` in dark, and chroma clamped to `≤ 0.12`. Those bounds come from an
+**(c) Range.** Even the sanctioned hook is bounded. A *tenant's* `--agency` is
+the brand hue re-expressed in OKLCH with lightness clamped to `[0.20, 0.50]` in
+light and `[0.64, 0.90]` in dark, and chroma clamped to `≤ 0.12`. The **default**
+does not go through the clamp at all: `--brand-agency` is left undeclared, which
+makes `--agency-tenant` invalid at computed-value time, which makes
+`var(--agency-tenant, #499D8F)` fall through to the published literal. Round 2
+shipped the clamp over the default as well, and in dark mode its `c * 1.6`
+chroma lift re-lifted an already-lifted colour: the browser painted
+rgb(0, 163, 144) where this table published #499D8F. Still legible, so no
+contrast assertion caught it — which is why the browser suite now asserts the
+untenanted value exactly, not just its ratio. Those bounds come from an
 exhaustive sweep of the sRGB gamut: at OKLCH L = 0.50 the brightest possible hue
 still reaches 4.67:1 on `--paper`; at L = 0.64 the darkest possible hue still
 reaches 4.50:1 on dark `--paper-2`. No tenant value produces an illegible

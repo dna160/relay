@@ -135,9 +135,11 @@
 
    Three mechanisms, stacked, so that no single mistake unlocks the palette:
 
-   (a) NAME. `--agency` is not the hook. It is *computed from* the hook. Setting
-       `--agency` directly is inert because the computed declaration below is
-       `!important` and re-reads `--brand-agency` regardless.
+   (a) NAME. `--agency` is not the hook. The hook is `--brand-agency`, and it is
+       read in exactly one place: the `--agency-tenant` declaration inside the
+       @supports block. Setting `--agency` or `--agency-tenant` directly is
+       inert — both are declared `!important`, and `--agency` selects between
+       the tenant branch and the published default rather than taking a value.
 
    (b) CASCADE POSITION. Every protected token is declared `!important` on BOTH
        `:root` AND `[data-relay-root]` — the element the tenant hook lives on.
@@ -154,6 +156,15 @@
        only differently coloured. Browsers without relative colour syntax get
        the Relay default and no white-label at all (§ the @supports block) —
        there is no code path in which an unclamped tenant colour is used.
+
+       The clamp applies to a TENANT colour only. `--brand-agency` is
+       deliberately left undeclared, so with no tenant `var(--brand-agency)` is
+       the guaranteed-invalid value, `--agency-tenant` is invalid at
+       computed-value time, and `var(--agency-tenant, <literal>)` falls through
+       to the published default untouched. Routing the default through the
+       clamp is what made dark `--agency` paint rgb(0,163,144) instead of the
+       published #499D8F in round 2: the dark expression re-applied its `c*1.6`
+       chroma lift to a value that had already been lifted.
 
    `--client`, `--breach`, `--ink`, `--paper`, `--paper-2`, `--rule`,
    `--rule-strong` and `--muted` are literals. A tenant cannot theme away a
@@ -175,26 +186,43 @@
   --muted: #60665d !important;
 
   /* --- possession ------------------------------------------------------- */
-  --agency: #1f4e46 !important; /* replaced by the clamped form below */
+  /* The published default. This literal is what an untenanted install paints,
+     byte for byte, and it is the value docs/DESIGN-SYSTEM.md and
+     src/styles/a11y-contract.ts record. It is never recomputed. */
+  --agency: #1f4e46 !important;
   --client: #4a4fa6 !important;
   --breach: #a8201a !important;
 
   /* --- the one hook ----------------------------------------------------- */
-  /* Deliberately NOT !important. This is the only property a tenant sets. */
-  --brand-agency: #1f4e46;
+  /* `--brand-agency` is deliberately NOT declared here. Leaving it undeclared
+     is the mechanism, not an omission — see the @supports block below. */
 
   color-scheme: light;
 }
 
-/* (c) RANGE — the clamped form. Wins over the literal above by source order.
-   `l` and `c` are the OKLCH channels of --brand-agency; `h` passes through, so
-   a tenant keeps their hue and loses only the ability to be illegible. */
+/* (c) RANGE — the tenant branch.
+
+   `--agency-tenant` is the brand hue re-expressed in OKLCH with lightness and
+   chroma clamped into the legible band. `var(--brand-agency)` carries NO
+   fallback on purpose: with no tenant it is the guaranteed-invalid value, which
+   makes this whole declaration invalid at computed-value time, which makes
+   `--agency-tenant` itself guaranteed-invalid — and a `var()` whose custom
+   property is guaranteed-invalid substitutes its fallback. So `--agency` below
+   resolves to the published literal when there is no tenant, and to the clamped
+   brand hue when there is one. One expression, both cases, no second code path.
+
+   `--agency-tenant` is `!important` for the same reason every locked token is:
+   an inline `style="--agency-tenant:hotpink"` would otherwise walk round the
+   clamp. */
 @supports (color: oklch(from red l c h)) {
   :root,
   [data-relay-root] {
-    --agency: oklch(
-      from var(--brand-agency, #1f4e46) clamp(0.2, l, 0.5) clamp(0, c, 0.12) h
+    --agency-tenant: oklch(
+      from var(--brand-agency) clamp(0.2, l, 0.5) clamp(0, c, 0.12) h
     ) !important;
+    /* The fallback repeats the published literal declared above. If you change
+       one, change the other — a11y-contract.ts records this value too. */
+    --agency: var(--agency-tenant, #1f4e46) !important;
   }
 }
 
@@ -222,11 +250,20 @@
    Two selectors, always paired: the media query handles the "system" default,
    the attribute handles an explicit user choice, and `:not([data-theme=light])`
    stops the media query from overriding a user who asked for light.
+
+   The second selector in each pair is DESCENDANT — `:root[…] [data-relay-root]`,
+   not `[data-relay-root][…]`. The theme attribute lives on <html> and the
+   tenant hook lives on <body>, so a self-qualified `[data-relay-root][data-theme]`
+   never matches, while an unqualified `[data-relay-root]:not([data-theme=light])`
+   matches <body> ALWAYS — which made <body> paint dark on a dark system even
+   when the reader had explicitly chosen light. Scoping the hook element to the
+   root's state is what keeps mechanism (b)'s re-declaration from overriding the
+   reader's own choice.
    -------------------------------------------------------------------------- */
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']),
-  [data-relay-root]:not([data-theme='light']) {
+  :root:not([data-theme='light']) [data-relay-root] {
     --ink: #e8eae5 !important;
     --paper: #14171a !important;
     --paper-2: #1d2125 !important;
@@ -236,13 +273,12 @@
     --agency: #499d8f !important;
     --client: #8487c8 !important;
     --breach: #e45953 !important;
-    --brand-agency: #499d8f;
     color-scheme: dark;
   }
 }
 
 :root[data-theme='dark'],
-[data-relay-root][data-theme='dark'] {
+:root[data-theme='dark'] [data-relay-root] {
   --ink: #e8eae5 !important;
   --paper: #14171a !important;
   --paper-2: #1d2125 !important;
@@ -252,30 +288,40 @@
   --agency: #499d8f !important;
   --client: #8487c8 !important;
   --breach: #e45953 !important;
-  --brand-agency: #499d8f;
   color-scheme: dark;
 }
 
-/* Dark clamp band. The floor is 0.64, the smallest OKLCH lightness at which
-   the darkest possible in-gamut hue (magenta) still reaches 4.5:1 against dark
-   --paper-2. Chroma is scaled 1.6x before clamping so a tenant's hue does not
-   go chalky when it is lifted. */
+/* Dark clamp band — the tenant branch again, same shape as light.
+
+   The floor is 0.64, the smallest OKLCH lightness at which the darkest possible
+   in-gamut hue (magenta) still reaches 4.5:1 against dark --paper-2. Chroma is
+   scaled 1.6x before clamping so a tenant's hue does not go chalky when it is
+   lifted — the cap at 0.12 is what the 0.64 floor was computed against, so the
+   lift cannot escape the guarantee.
+
+   That `c * 1.6` is exactly why the default must not come through here: the
+   published dark #499D8F is ALREADY the lifted colour, and lifting it a second
+   time is what painted rgb(0,163,144) in round 2. `var(--brand-agency)` carries
+   no fallback, so with no tenant this declaration is invalid at computed-value
+   time and the literal above survives untouched. */
 @supports (color: oklch(from red l c h)) {
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme='light']),
-    [data-relay-root]:not([data-theme='light']) {
-      --agency: oklch(
-        from var(--brand-agency, #1f4e46) clamp(0.64, l, 0.9)
+    :root:not([data-theme='light']) [data-relay-root] {
+      --agency-tenant: oklch(
+        from var(--brand-agency) clamp(0.64, l, 0.9)
           clamp(0, calc(c * 1.6), 0.12) h
       ) !important;
+      --agency: var(--agency-tenant, #499d8f) !important;
     }
   }
   :root[data-theme='dark'],
-  [data-relay-root][data-theme='dark'] {
-    --agency: oklch(
-      from var(--brand-agency, #1f4e46) clamp(0.64, l, 0.9)
+  :root[data-theme='dark'] [data-relay-root] {
+    --agency-tenant: oklch(
+      from var(--brand-agency) clamp(0.64, l, 0.9)
         clamp(0, calc(c * 1.6), 0.12) h
     ) !important;
+    --agency: var(--agency-tenant, #499d8f) !important;
   }
 }
 

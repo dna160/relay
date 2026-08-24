@@ -39,6 +39,8 @@ node .github/scripts/check-env-registry.mjs        # env drift: src -> .env.exam
 | | ↳ at the exported card serialiser | 🟢 live | `visibility.spec.ts > INV-1 at the exported card serialiser` — 5 cases incl. a negative control. The round-1 defect (`toClientCard` exported with no visibility check of its own) was fixed by the Architect; this suite asserts the fix. |
 | | ↳ every client-reachable query has a case | 🟢 **live, and mechanical** | `visibility.spec.ts > INV-1 the query layer is enumerated, not remembered` — 10 cases. The layer is enumerated **by transitive reachability** from every client entry point, not by signature. See §6A. |
 | | ↳ card-level discussion, on the write | 🟢 live | `visibility.spec.ts > INV-1 a reply cannot be grafted onto a thread it does not belong to` — 9 cases. `parent_id` is a bare self-reference, so before the back-end hardened `postComment()` a reply could be grafted onto another card, another engagement, or an internal root. Driven against a programmable fake driver, asserting on the **bound insert parameters** rather than the returned row — what the code decided to write, not what a fixture said. |
+| | ↳ card-level discussion, at the route | 🟢 live | `tests/unit/comment-writer.spec.ts` — 24 cases against the shipped `POST /api/comments`. `@/db/client` and `requireAgency()` are replaced; everything between them is the real handler taking its real branches in its real order. Covers the 404 for another org's card, the engagement/card mismatch that stops a valid card being smuggled under someone else's engagement, and `assertWritable` running **before** the insert (amendment A9). |
+| | ↳ an internal comment announces nothing | 🟢 live | Same file, 4 cases. `publishEvent()` emits `pg_notify` through the same executor, so whether a frame was published is visible in the captured statements — the one assertion that looked like it needed a live bus does not. Includes the case the route cannot decide from its input: a reply forced internal by its root, where the publish gate must read the written row rather than the request. |
 | | ↳ the client revision thread | 🟢 live | `visibility.spec.ts > INV-1 the client revision thread` — 8 cases; the comment thread gets its own, including the parent self-join that stops a public reply under an internal root from leaking. The three 404 paths (unpublished version, private lane, another engagement's version), their indistinguishability from each other, and the internal-note filter. |
 | | ↳ at the query layer, in compiled SQL | 🟢 live | `visibility.spec.ts > INV-1 at the query layer, against compiled SQL` — 11 cases. Runs each client-reachable read against a fake driver and asserts the emitted predicate, so a read that forgets `clientScope()` fails on the SQL rather than on a projection shape. |
 | | ↳ the two pre-session reads | 🟢 live | `visibility.spec.ts > INV-1 the two reads that happen before a session exists` — 6 cases. `loadLinkableEngagement` and `findContact` reach exactly one table each and return three thin columns between them. |
@@ -149,7 +151,7 @@ Nine of ten suites now execute. At Phase 0 handover it was four.
 
 | Job | Enforces | Blocking now? |
 |---|---|---|
-| `verify (node 22)` / `verify (node 24)` | `npm run verify` — typecheck, lint, unit, invariants | Yes — **green**. 430 live assertions (317 unit, 113 invariant), up from 321 at the end of round 1. |
+| `verify (node 22)` / `verify (node 24)` | `npm run verify` — typecheck, lint, unit, invariants | Yes — **green**. 454 live assertions (341 unit, 113 invariant), up from 321 at the end of round 1. |
 | `invariant contract` | All ten specs exist; every skipped suite names its phase; at Phase 8 none are skipped; nothing removed from `tests/invariants` without the `invariant-change` label | Yes — green |
 | `build` | `next build` succeeds | Yes |
 | `env registry` | Every `process.env` read in `src/` is in `.env.example`; every `.env.example` variable is in the runbook **and is set by `.railway/railway.ts`**; no `E2E_` variable reaches a deployed environment; no real secret is committed | Yes — **red on one line**: `NEXT_PUBLIC_APP_URL` (F7). `PGPOOL_MAX` was fixed by B8. |
@@ -210,7 +212,8 @@ because this is the document that gets audited.
 | 7 | `computePossession`'s optional third argument softened ADR-010 | B5. |
 | 8 | Docs diverge from the code | Architect. Amendments A1–A7. |
 | 9 | `.railway/railway.ts` does not exist and is unowned | QA (Q1). Written and gated by 14 assertions. |
-| 10 | The audience classifier put `/api/events` on the client side | QA (round 2). Amendment A1 makes it the agency stream; a client page fetching it would not have tripped the Phase 4 exit assertion. Five cases pin the split. |
+| 10 | `POST /api/comments` did not exist, so `internal` could only ever be false and every defence around internal threads guarded an empty set | Back-end. Now covered live by `tests/unit/comment-writer.spec.ts` — 24 cases against the shipped handler. |
+| 11 | The audience classifier put `/api/events` on the client side | QA (round 2). Amendment A1 makes it the agency stream; a client page fetching it would not have tripped the Phase 4 exit assertion. Five cases pin the split. |
 
 ### Open
 
@@ -262,23 +265,14 @@ because this is the document that gets audited.
    keeps the controls keyboard-reachable), so it is recorded rather than
    suppressed: `a11y-source.spec.ts` allows this one file by name and fails on
    any second. **Owner: front-end.**
-8. **`POST /api/comments` does not exist.** `GET /api/comments?cardId=` shipped
-   this round; the writer did not. Until it does, `internal` can only ever be
-   false in production, which means the parent-validation and orphan-thread
-   defences guard a set with no members. The defences are right and are tested
-   at the domain layer where they live; the route that lets an agency member
-   create an internal comment is what turns them from theory into the thing
-   standing between a client and an internal thread. Placeholder:
-   `tests/unit/comment-writer.spec.ts`, skipped and naming its phase.
-   **Owner: back-end.**
-9. **The 22 data-driven e2e tests have never run.** Not for want of endpoints —
+8. **The 22 data-driven e2e tests have never run.** Not for want of endpoints —
    B7 shipped them. Docker Hub is unreachable from this environment, so no
    Postgres exists here. See §4 for the full list of what that leaves unproven.
    **Owner: CI, on the next push.**
-10. **Deploy and rollback have never been executed.** Phase 8's only EXIT
+9. **Deploy and rollback have never been executed.** Phase 8's only EXIT
    condition a test cannot cover, and the largest open risk in the build. Now
    also gated on defect 5. **Owner: Architect.**
-11. **Backups are Railway's defaults and no restore has ever been tested.**
+10. **Backups are Railway's defaults and no restore has ever been tested.**
     RUNBOOK §4c depends on one. **Owner: Architect.**
 
 ### Still UNPROVEN in this document
@@ -375,16 +369,19 @@ tests/
 │   ├── _query-capture.ts  runs a query or a write against a fake driver; compiled
 │   │                      SQL, bound insert parameters, and empty-result 404 paths
 │   └── _sql.ts
-├── unit/              317 live, 22 skipped, across 12 specs
+├── unit/              341 live, 20 skipped, across 12 specs
 │   ├── a11y-contract.spec.ts     78 — the contrast floor, and globals.css against it
 │   ├── a11y-source.spec.ts       11 — focus ring, motion budget, app shell
 │   ├── railway-topology.spec.ts  14 — the deploy topology nothing else checks
 │   ├── round-counter.spec.ts     12 — ADR-014 as behaviour, never as a location
-│   └── comment-writer.spec.ts     2 — skipped; POST /api/comments, Phase 4
+│   └── comment-writer.spec.ts    24 — the agency writer, driven end to end
+│                                   with no database: order of operations, the
+│                                   423 gate, and the events an internal
+│                                   comment must not publish
 └── e2e/               59 tests, 6 specs, 2 projects + routes.ts + _a11y.ts
                     37 accessibility (33 pass, executed); 22 data-driven (never run, §4)
 ```
 
-Live totals: **430 passing, 38 skipped**. `npm run verify` is green.
+Live totals: **454 passing, 36 skipped**. `npm run verify` is green.
 Every skipped block names the phase that unskips it; the `invariant contract`
 job fails if one does not. At the end of round 1 the same line read 255.

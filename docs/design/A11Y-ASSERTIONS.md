@@ -139,6 +139,7 @@ import {
   HOSTILE_BRAND_VALUES,
   LOCKED_TOKENS,
   TOKENS,
+  UNTENANTED_AGENCY,
   WHITE_LABEL_FLOOR,
   contrastRatio,
   parseColor,
@@ -185,6 +186,54 @@ for (const mode of ['light', 'dark'] as const) {
     });
   });
 }
+
+test.describe('the untenanted default is the published colour', () => {
+  /**
+   * ROUND 2 DEFECT. `--agency` resolves down two paths — the published literal
+   * with no tenant, the OKLCH clamp with one — and the clamp used to swallow
+   * the default too. Dark `--agency` painted rgb(0, 163, 144) while every
+   * document published #499D8F, and every ratio assertion passed, because
+   * 5.690:1 clears 4.5 just as comfortably as 5.571:1 does.
+   *
+   * A ratio assertion cannot catch a colour that is wrong but still legible.
+   * This one asserts the exact value, which is the only thing that can.
+   */
+  for (const mode of ['light', 'dark'] as const) {
+    test(`--agency is exactly ${UNTENANTED_AGENCY[mode]} in ${mode} with no tenant`, async ({
+      page,
+    }) => {
+      await page.goto('/');
+      await page.evaluate((m) => document.documentElement.setAttribute('data-theme', m), mode);
+
+      // Nothing sets --brand-agency: this is the shipped, untenanted state.
+      const painted = await resolveToken(page, '--agency');
+      expect(
+        parseColor(painted),
+        `the default --agency is computed rather than published. ` +
+          `a11y-contract.ts records ${UNTENANTED_AGENCY[mode]}; the browser paints ${painted}. ` +
+          'Check that --brand-agency is still undeclared and that the clamp only ' +
+          'reaches --agency-tenant.',
+      ).toEqual(parseColor(UNTENANTED_AGENCY[mode]));
+    });
+  }
+
+  /**
+   * The same trap one layer down: the tints are `color-mix()` of `--agency`, so
+   * a drifted hue drifts them too and the recorded tint hexes become fiction.
+   */
+  test('--tint-agency is the mix of the published colour, not of a computed one', async ({
+    page,
+  }) => {
+    await page.goto('/');
+    for (const mode of ['light', 'dark'] as const) {
+      await page.evaluate((m) => document.documentElement.setAttribute('data-theme', m), mode);
+      const painted = await resolveToken(page, '--tint-agency');
+      expect(parseColor(painted), `--tint-agency in ${mode}`).toEqual(
+        parseColor(TOKENS[mode]['--tint-agency']),
+      );
+    }
+  });
+});
 
 test.describe('white-label cannot break contrast', () => {
   for (const brand of HOSTILE_BRAND_VALUES) {

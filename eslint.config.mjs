@@ -17,6 +17,17 @@ export default tseslint.config(
   },
   {
     /**
+     * ADR-019 — `.railway/**` is the file a new production environment is built
+     * from, and dot-directories are skipped by tsc and eslint by default. It
+     * was the only TypeScript here that nothing checked, which is exactly the
+     * wrong file for that. Named explicitly so it is checked like everything
+     * else.
+     */
+    files: ['.railway/**/*.ts'],
+    rules: {},
+  },
+  {
+    /**
      * CLAUDE.md: no non-null assertions on database reads. The rule is not in
      * `recommended`, so stating it in prose left it unenforced tree-wide —
      * reported by QA in round 1. Scoped to `src/` deliberately: the hazard is a
