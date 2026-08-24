@@ -9,8 +9,8 @@ past a degraded context window.
 
 Context is not preserved by prose. Prose gets summarised, and summaries drift.
 Context is preserved by **constraints a machine can check**: types, migrations,
-and the invariant suite. Documentation says what we meant; `npm run verify` says
-what is still true. Every phase therefore ends by leaving behind machine-checked
+and the invariant suite. Documentation says what we meant; `npm run verify:all`
+says what is still true. Every phase therefore ends by leaving behind machine-checked
 facts, not just notes.
 
 Each phase file carries the same six sections:
@@ -26,8 +26,12 @@ HANDOVER     what to write into docs/state/HANDOVER.md before stopping
 
 ### Session close checklist
 
-1. `npm run verify` passes. If it does not, the phase is not done — do not write
-   a handover that says it is.
+1. `npm run verify:all` passes — verify **plus `next build`**. If it does not,
+   the phase is not done; do not write a handover that says it is.
+   `npm run verify` alone is the inner-loop gate and does not prove the build:
+   a `'use server'` file exporting a non-async const passes typecheck and lint
+   and fails page-data collection. That shipped once and was caught by a build,
+   not by the suite.
 2. Update `docs/state/PROGRESS.md`: tick the phase, note anything deferred.
 3. Overwrite `docs/state/HANDOVER.md` using the template in that file.
 4. Commit with `phase(N): <summary>`.

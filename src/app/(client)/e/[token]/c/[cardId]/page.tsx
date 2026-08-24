@@ -15,12 +15,13 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { clientApi } from '@/lib/api-client.client';
-import { formatDue, formatRounds, roundsBreached } from '@/lib/format';
+import { formatDue, formatRounds, roundsBreached, versionPip } from '@/lib/format';
 import { breach, cn, display, eyebrow, mono, muted } from '@/components/style-tokens';
 import { StateChip } from '@/components/client/state-chip';
 import { VersionStack } from '@/components/client/version-stack';
 import { DecisionBar } from '@/components/client/decision-bar';
 import { RevisionNotes, type VersionThread } from '@/components/client/revision-notes';
+import { CommentThread } from '@/components/client/comment-thread';
 import { ErrorPanel } from '@/components/client/error-panel';
 import { getClientBoard } from '../../../../_lib/reads';
 import { serverContext } from '../../../../_lib/server-context';
@@ -62,18 +63,26 @@ export default async function ClientCardPage({
    * A card carries a handful of published versions, and a waterfall of even a
    * handful is felt on 4G.
    */
-  const threads: VersionThread[] = await Promise.all(
-    card.versions.map(async (version) => {
-      const notes = await clientApi.revisionNotes(version.id, ctx);
-      return {
-        versionId: version.id,
-        versionNo: version.versionNo,
-        // A failed read degrades to an empty thread rather than taking the page
-        // down: the file and the decision are what this page is for.
-        notes: notes.ok ? notes.data : [],
-      };
-    }),
-  );
+  /**
+   * The card's discussion, issued alongside the note reads rather than after
+   * them. It is one request and it is not on the critical path for the
+   * decision, so it must not add a round trip to it.
+   */
+  const [threads, discussion] = await Promise.all([
+    Promise.all(
+      card.versions.map(async (version) => {
+        const notes = await clientApi.revisionNotes(version.id, ctx);
+        return {
+          versionId: version.id,
+          versionNo: version.versionNo,
+          // A failed read degrades to an empty thread rather than taking the page
+          // down: the file and the decision are what this page is for.
+          notes: notes.ok ? notes.data : [],
+        };
+      }),
+    ) as Promise<VersionThread[]>,
+    clientApi.comments(card.id, ctx),
+  ]);
 
   return (
     <article className="flex max-w-prose flex-col gap-6">
@@ -120,11 +129,41 @@ export default async function ClientCardPage({
         <h2 id="client-notes" className={cn(eyebrow, 'border-b border-ink pb-1')}>
           Notes
         </h2>
+        <p className={cn('mt-2 max-w-prose text-12', muted)}>
+          Attached to one version. A note on {latest ? versionPip(latest.versionNo) : 'a file'}{' '}
+          stays there when a newer one is published.
+        </p>
         <div className="mt-3">
           <RevisionNotes
             threads={threads}
             latestVersionId={latest?.id ?? null}
             latestVersionNo={latest?.versionNo ?? null}
+            readOnly={readOnly}
+          />
+        </div>
+      </section>
+
+      {/*
+        Below the notes, not above: the files and the decision are what this
+        page is for, and PRD §5.3's per-version thread is the one an approval
+        argument is made of. This is the other half of PRD §7 — discussion
+        attaches to cards *and* versions — and it is about the card.
+
+        A failed read renders the empty state rather than an error panel. The
+        decision bar and the files above it are unaffected by it, and taking the
+        page down over the discussion would be the tail wagging the deliverable.
+      */}
+      <section aria-labelledby="client-discussion">
+        <h2 id="client-discussion" className={cn(eyebrow, 'border-b border-ink pb-1')}>
+          Discussion
+        </h2>
+        <p className={cn('mt-2 max-w-prose text-12', muted)}>
+          About the card itself. Not attached to any one version.
+        </p>
+        <div className="mt-3">
+          <CommentThread
+            cardId={card.id}
+            comments={discussion.ok ? discussion.data : []}
             readOnly={readOnly}
           />
         </div>

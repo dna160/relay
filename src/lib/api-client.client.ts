@@ -61,16 +61,41 @@ export interface ClientBoard {
   lanes: ClientLane[];
 }
 
-/** `POST /api/client/comments`. Card-level discussion (ADR-011). */
+/**
+ * Card-level discussion, as the contact reads it (ADR-011, PRD §7:
+ * "Discussion attaches to cards and versions").
+ *
+ * No longer assumed. `GET /api/client/comments?cardId=` shipped and this shape
+ * is `ClientComment` in `src/db/queries/comments.ts` verbatim — the round-2
+ * placeholder guessed `authorName?: string` and had no `side` at all.
+ *
+ * **No identifiers of people.** Not a user id, not a contact id, not an email:
+ * a display name and a side, which is what a thread needs to be readable and
+ * nothing that can be correlated (INV-1). `id` and `parentId` are ids of rows
+ * the contact is looking at, and a reply has to be able to name its root.
+ *
+ * A comment is about *the card*. A `ClientRevisionNote` is bound to one
+ * immutable version. Both are intended and they do different jobs — which is
+ * why they are two shapes here and two tables underneath.
+ */
 export interface ClientComment {
   id: string;
   cardId: string;
-  body: string;
+  /** Null for a root. One level only: the domain refuses a reply to a reply. */
   parentId: string | null;
+  body: string;
+  side: 'agency' | 'client';
+  authorName: string | null;
   createdAt: string;
-  /** ASSUMED — the shipped POST does not return one; a read endpoint would. */
-  authorName?: string;
 }
+
+/**
+ * What `POST /api/client/comments` returns: the same shape minus `authorName`,
+ * because the author is the caller. Typed as its own thing rather than made
+ * optional on `ClientComment`, so a renderer cannot be handed a posted row
+ * where it expected a read one.
+ */
+export type PostedClientComment = Omit<ClientComment, 'authorName'>;
 
 /**
  * A revision note, threaded to the version it was written against and never
@@ -140,22 +165,35 @@ export const clientApi = {
    *
    * `cardId` is not an engagement selector — the card is resolved through
    * `clientScope()` and a card outside the session's engagement is a 404, not a
-   * 403 (INV-1). Read support is landing in the same round; until it does a
-   * failed read degrades to the empty state and the form still posts.
+   * 403 (INV-1).
+   *
+   * The order is part of the contract and the renderer depends on it: roots
+   * oldest-first, each root immediately followed by its own replies,
+   * oldest-first. Oldest-first because a thread on a deliverable is a record,
+   * not a feed.
    */
   comments(cardId: string, ctx?: RequestContext) {
-    return request<{ comments: ClientComment[] }>(
+    return request<{ comments: ClientComment[]; cardId: string }>(
       `/api/client/comments?cardId=${encodeURIComponent(cardId)}`,
       { ctx },
     ).then((r) => pick(r, (p) => p.comments));
   },
 
-  /** POST /api/client/comments */
+  /**
+   * POST /api/client/comments
+   *
+   * `parentId` is the one level of reply the schema allows. Sending the id of a
+   * comment that is itself a reply is refused by the domain, not by this
+   * signature — a type cannot know which rows are roots.
+   *
+   * No `internal` key, and nothing to strip: a client-authored comment cannot
+   * be marked internal at all.
+   */
   createComment(
     body: { cardId: string; body: string; parentId?: string | null },
     ctx?: RequestContext,
   ) {
-    return request<{ comment: ClientComment }>('/api/client/comments', {
+    return request<{ comment: PostedClientComment }>('/api/client/comments', {
       method: 'POST',
       body,
       ctx,

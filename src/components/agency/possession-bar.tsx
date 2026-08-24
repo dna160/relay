@@ -8,9 +8,34 @@
  * Agency surface only. Possession is internal-only in v1 (PRD §9) and this file
  * lives under `components/agency/` so that importing it into the client bundle
  * is a visible mistake rather than an invisible one.
+ *
+ * ## Two questions, one bar
+ *
+ * `computePossession` answers "how long has each side held this", and it takes
+ * `state_transitions` and nothing else (ADR-010, INV-5). A card that has never
+ * moved has opened no possession interval, so the clock reports `current: null`
+ * for it — the honest answer, and the reason the clock's third argument was
+ * removed (directive B5).
+ *
+ * The board asks a different question: "whose move is it". That one is answered
+ * by `cards.state` through the state machine's own `POSSESSION` table, which is
+ * where the state chip two lines up already gets its answer. A freshly created
+ * card is in `draft`, the ball is with the agency, and rendering no holder at
+ * all was the surface failing to say something it already knew.
+ *
+ * So the fallback is here, in the surface, and not in the clock: `state` is an
+ * optional prop, consulted only when the clock reports no open interval. It
+ * cannot put a number on the bar — there is no interval to measure and
+ * inventing `< 1m` for a card created last Tuesday would be the invented
+ * reading the clock was cleaned up to avoid. It shows the side and no duration,
+ * and says why on hover.
+ *
+ * A signed-off card needs no special case: `POSSESSION.signed_off` is `null`,
+ * so the fallback returns null there too and the bar still reads `closed`.
  */
 
-import type { PossessionSplit } from '@/lib/types';
+import { POSSESSION } from '@/domain/card/state-machine';
+import type { CardState, Possession, PossessionSplit } from '@/lib/types';
 import { formatDuration, formatPossession } from '@/lib/format';
 import {
   POSSESSION_CLOSED_FILL,
@@ -21,28 +46,59 @@ import {
   mono,
 } from '@/components/style-tokens';
 
+/** What the bar is about to draw: a side, and whether the clock has started. */
+interface Held {
+  side: Possession | null;
+  /** True when `side` came from `cards.state` because no interval is open. */
+  unstarted: boolean;
+}
+
+/**
+ * The clock first, `cards.state` only as a fallback. Never the other way round:
+ * once a transition exists it is the record, and `cards.state` is a projection
+ * of it.
+ */
+function heldBy(possession: PossessionSplit, state?: CardState): Held {
+  if (possession.current) return { side: possession.current, unstarted: false };
+  const fallback = state ? POSSESSION[state] : null;
+  return { side: fallback, unstarted: fallback !== null };
+}
+
+const UNSTARTED_TITLE =
+  'No transition recorded yet. The possession clock starts the first time this card moves.';
+
 /** The leading edge itself. Decorative: the label below carries the meaning. */
-export function PossessionEdge({ possession }: { possession: PossessionSplit }) {
-  const fill = possession.current ? POSSESSION_FILL[possession.current] : POSSESSION_CLOSED_FILL;
+export function PossessionEdge({
+  possession,
+  state,
+}: {
+  possession: PossessionSplit;
+  state?: CardState;
+}) {
+  const { side } = heldBy(possession, state);
+  const fill = side ? POSSESSION_FILL[side] : POSSESSION_CLOSED_FILL;
   return <span aria-hidden="true" className={cn('absolute inset-y-0 left-0 w-bar', fill)} />;
 }
 
 /** `client · 6d`. Mono, because it is a record of who held the work. */
 export function PossessionLabel({
   possession,
+  state,
   className,
 }: {
   possession: PossessionSplit;
+  state?: CardState;
   className?: string;
 }) {
-  const tone = possession.current
-    ? POSSESSION_TEXT[possession.current]
-    : POSSESSION_CLOSED_TEXT;
-  const text = possession.current
-    ? formatPossession(possession.current, possession.currentMs)
-    : 'closed';
+  const { side, unstarted } = heldBy(possession, state);
+  const tone = side ? POSSESSION_TEXT[side] : POSSESSION_CLOSED_TEXT;
+  // No duration on the fallback: the side is known, the elapsed time is not.
+  const text = side ? (unstarted ? side : formatPossession(side, possession.currentMs)) : 'closed';
   return (
-    <span className={cn(mono, 'text-12', tone, className)}>
+    <span
+      className={cn(mono, 'text-12', tone, className)}
+      title={unstarted ? UNSTARTED_TITLE : undefined}
+    >
       {text}
     </span>
   );
@@ -52,16 +108,29 @@ export function PossessionLabel({
  * Edge plus label as one block, for rows that are not cards — a portfolio row,
  * an engagement header. The split is spelled out in the title attribute rather
  * than on screen; the glance is the hue, the detail is on demand.
+ *
+ * `state` is optional here for the same reason it is optional above: an
+ * engagement roll-up (`sumPossession`) has no single state to fall back to and
+ * must keep reading `closed`.
  */
-export function PossessionBar({ possession }: { possession: PossessionSplit }) {
-  const fill = possession.current ? POSSESSION_FILL[possession.current] : POSSESSION_CLOSED_FILL;
-  const split = `agency ${formatDuration(possession.agencyMs)} · client ${formatDuration(
-    possession.clientMs,
-  )}`;
+export function PossessionBar({
+  possession,
+  state,
+}: {
+  possession: PossessionSplit;
+  state?: CardState;
+}) {
+  const { side, unstarted } = heldBy(possession, state);
+  const fill = side ? POSSESSION_FILL[side] : POSSESSION_CLOSED_FILL;
+  const split = unstarted
+    ? UNSTARTED_TITLE
+    : `agency ${formatDuration(possession.agencyMs)} · client ${formatDuration(
+        possession.clientMs,
+      )}`;
   return (
     <span className="inline-flex items-center gap-2" title={split}>
       <span aria-hidden="true" className={cn('block h-4 w-bar', fill)} />
-      <PossessionLabel possession={possession} />
+      <PossessionLabel possession={possession} state={state} />
     </span>
   );
 }

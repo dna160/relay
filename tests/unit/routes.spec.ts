@@ -42,6 +42,10 @@ const AGENCY_PATHS = [
   '/api/reference-files',
   '/api/onboarding/org',
   '/api/auth/session',
+  '/api/attention',
+  // Amendment A1: this is the *agency* stream. See the A1 suite below.
+  '/api/events',
+  '/api/events?engagementId=0193a5f0-c302-7000-8000-c3c3c3c30202',
 ];
 
 const CLIENT_PATHS = [
@@ -113,5 +117,50 @@ describe('off-origin traffic', () => {
   it('classifies a same-origin absolute URL the same as its path', () => {
     expect(isAgencyRoute(`${BASE}/portfolio`, BASE)).toBe(true);
     expect(isAgencyRoute(`${BASE}/e/tok/board`, BASE)).toBe(false);
+  });
+});
+
+/* ------------------------------------------------------------------------ */
+
+describe('amendment A1 — the event stream is two streams', () => {
+  /**
+   * The frozen contract had one SSE endpoint taking its engagement from a query
+   * parameter. For a client session that is exactly what INV-6 forbids, so A1
+   * split it: the agency keeps `GET /api/events?engagementId=`, and the client
+   * gets `GET /api/client/events`, which takes no parameter at all.
+   *
+   * The classifier did not follow the amendment. `/api/events` sat in
+   * `CLIENT_ROUTE_PATTERNS` until round 2, which means a client page fetching
+   * the agency stream would have been classified as staying on its own side —
+   * the Phase 4 exit test would have passed through the one leak the amendment
+   * was written to prevent. Reported by the back-end; these are the cases that
+   * stop it coming back.
+   */
+
+  it('classifies the parameterised stream as agency', () => {
+    expect(classify('/api/events')).toBe(true);
+    expect(classify('/api/events?engagementId=abc')).toBe(true);
+  });
+
+  it('does not offer the parameterised stream to a client', () => {
+    expect(
+      matchesClient('/api/events'),
+      'a client permitted to reach /api/events can name someone else’s engagement',
+    ).toBe(false);
+  });
+
+  it('classifies the client stream as client, and it carries no engagement id', () => {
+    expect(matchesClient('/api/client/events')).toBe(true);
+    expect(classify('/api/client/events')).toBe(false);
+  });
+
+  it('keeps the two apart on prefix alone, so neither can be reached by the other name', () => {
+    expect(classify('/api/client/events')).toBe(false);
+    expect(matchesClient('/api/events')).toBe(false);
+  });
+
+  it('classifies the attention endpoint as agency — it is the portfolio, and a client has no portfolio', () => {
+    expect(classify('/api/attention')).toBe(true);
+    expect(matchesClient('/api/attention')).toBe(false);
   });
 });

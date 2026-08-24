@@ -118,6 +118,36 @@ export function buttonClass(tone: ButtonTone = 'quiet', size: ButtonSize = 'md')
   return `${BUTTON_BASE} ${BUTTON_TONE[tone]} ${BUTTON_SIZE[size]}`;
 }
 
+/**
+ * **Legacy. Agency surface only, and shrinking.** Do not reach for this in new
+ * code — use the `Field` / `Textarea` primitives.
+ *
+ * This is a second input vocabulary, the exact thing `buttonClass` above exists
+ * to prevent for controls, and it computes to a 38px-tall box at 14px. Both
+ * numbers are under a hard floor: 44px is the target minimum, and 16px is the
+ * threshold below which iOS Safari zooms the viewport when a field takes focus.
+ * On the client surface — reached on a phone, from an email, by someone who did
+ * not ask to be there — that was a real defect and every client call site has
+ * been moved to the primitives. `src/components/client/` no longer references
+ * this string at all.
+ *
+ * Six agency files still do, and two concrete gaps in the primitive are what
+ * stop this from being deleted today. Both are in `primitives/`, which this
+ * layer does not own:
+ *
+ * 1. **No visually-hidden label.** `Field` always renders its label. The inline
+ *    add-a-lane and add-a-card forms in `board-add.tsx` deliberately have none
+ *    — they are one box under a lane heading that already names them — and
+ *    converting them would put a redundant label on the board. A `labelHidden`
+ *    prop closes this.
+ * 2. **No mono control.** `Field` hardcodes `font-sans` and does not forward a
+ *    class to the input, so the org short-name field in `onboarding-form.tsx`
+ *    cannot keep the mono face that marks it as the slug appearing in a URL.
+ *
+ * With those two, the remaining call sites convert mechanically and this
+ * constant goes the way `buttonPrimary` did in F4 — deleted, so the rule is
+ * grep-checkable rather than remembered. Raised with the architect.
+ */
 export const input =
   'w-full bg-field border border-hairline border-rule-strong px-3 py-2 text-14 text-ink placeholder:text-muted';
 

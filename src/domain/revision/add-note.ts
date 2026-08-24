@@ -19,8 +19,9 @@
  */
 
 import { and, eq } from 'drizzle-orm';
-import { assetVersions, cards, clientContacts, revisionNotes, users } from '@/db/schema';
-import type { Database, Tx } from '@/db/types';
+import { assetVersions, cards, revisionNotes } from '@/db/schema';
+import type { Database } from '@/db/types';
+import { authorNameFor } from '../actor-name';
 import type { Actor } from '../card/state-machine';
 import { bumpActivity } from '../engagement/lifecycle';
 import { notVisible, validationFailed } from '../errors';
@@ -112,27 +113,4 @@ export async function addRevisionNote(
 
     return { ...row, authorName: await authorNameFor(tx, actor) };
   });
-}
-
-/**
- * The author's display name, and nothing else about them. A client contact's
- * email is deliberately not a fallback: the note read that serves the client
- * emits no addresses at all (INV-1), and a POST response that did would be the
- * one place the rule was not held.
- */
-async function authorNameFor(tx: Tx, actor: Actor): Promise<string | null> {
-  if (actor.kind === 'agency') {
-    const rows = await tx
-      .select({ name: users.name })
-      .from(users)
-      .where(eq(users.id, actor.userId))
-      .limit(1);
-    return rows[0]?.name ?? null;
-  }
-  const rows = await tx
-    .select({ name: clientContacts.name })
-    .from(clientContacts)
-    .where(eq(clientContacts.id, actor.contactId))
-    .limit(1);
-  return rows[0]?.name ?? null;
 }

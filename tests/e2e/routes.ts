@@ -34,6 +34,21 @@ export const AGENCY_ROUTE_PATTERNS: readonly RegExp[] = [
   /^\/api\/approvals\b/,
   /^\/api\/reference-files\b/,
   /^\/api\/onboarding\b/,
+  // The portfolio's attention list. Phase 5's endpoint, pulled forward.
+  /^\/api\/attention\b/,
+  /**
+   * Amendment A1 split the event stream in two. `GET /api/events?engagementId=`
+   * is the **agency** stream — it takes the engagement from a query parameter,
+   * which is precisely what INV-6 forbids for a client session. The client's is
+   * `GET /api/client/events`, which takes no parameter at all and is already
+   * matched by `/^\/api\/client\//` below.
+   *
+   * This lived in CLIENT_ROUTE_PATTERNS until round 2, which meant a client
+   * page fetching the agency stream would not have tripped the Phase 4 exit
+   * assertion — the classifier would have called the leak legal. Reported by
+   * the back-end.
+   */
+  /^\/api\/events\b/,
   // Auth, but not the client half of it.
   /^\/api\/auth\/(?!client\b)/,
 ];
@@ -42,9 +57,9 @@ export const AGENCY_ROUTE_PATTERNS: readonly RegExp[] = [
 export const CLIENT_ROUTE_PATTERNS: readonly RegExp[] = [
   /^\/e\/[^/]+\/?$/,
   /^\/e\/[^/]+\/(verify|board|queue|export|c)\b/,
+  // Covers `/api/client/events`, the client half of amendment A1's split.
   /^\/api\/client\//,
   /^\/api\/auth\/client\//,
-  /^\/api\/events\b/,
 ];
 
 export function isAgencyRoute(url: string, baseURL: string): boolean {

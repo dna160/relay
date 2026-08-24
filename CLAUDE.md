@@ -71,7 +71,8 @@ edit a test in `tests/invariants/` to make it pass.
 
 ```
 npm run dev            # app + worker
-npm run verify         # typecheck + lint + unit + invariants. Must pass before handover.
+npm run verify         # typecheck + lint + unit + invariants. Fast; run it constantly.
+npm run verify:all     # the above plus `next build`. THIS is the handover gate.
 npm run db:generate    # drizzle migration from schema
 npm run db:migrate
 npm run test:e2e
@@ -83,6 +84,9 @@ npm run test:e2e
 - Every new query function that can be reached by a client contact needs a case
   in `tests/invariants/visibility.spec.ts`. No exceptions.
 - Migrations are forward-only and never edited after commit.
+- `npm run verify` does not prove the build. A `'use server'` file exporting a
+  non-async const typechecks, lints, and fails `next build` at page-data
+  collection — that happened in round 3. Hand over on `npm run verify:all`.
 - Do not add a dependency without an ADR entry.
 - Do not introduce a chat/messaging surface. Discussion attaches to cards and
   versions. This is a product decision, recorded in ADR-011.

@@ -25,8 +25,8 @@ import type { ClientVersion } from '@/lib/types';
 import { clientApi } from '@/lib/api-client.client';
 import { shortHash, versionPip } from '@/lib/format';
 import { useAction } from '@/lib/hooks/use-action';
-import { Button } from '@/components/primitives';
-import { cn, input, mono, muted, surface } from '@/components/style-tokens';
+import { Button, Textarea } from '@/components/primitives';
+import { cn, mono, muted, surface } from '@/components/style-tokens';
 import { ErrorPanel } from './error-panel';
 
 type Mode = 'idle' | 'confirming-approve' | 'requesting-changes';
@@ -132,30 +132,33 @@ export function DecisionBar({
             void send('changes_requested');
           }}
         >
-          <label htmlFor="decision-note" className="text-14 text-ink">
-            What needs to change?
-          </label>
-          <textarea
-            id="decision-note"
+          {/*
+            The `Textarea` primitive rather than the raw `input` class string
+            this used to carry. That string is 14px, and 14px is under the
+            threshold at which iOS Safari zooms the viewport on focus — on the
+            highest-stakes field in the product, reached on a phone, where the
+            note being typed is what a contracted revision round is spent on.
+            `Textarea` is 16px and keeps hint and error in one slot, so the
+            "a note is required" message cannot push the Request changes button
+            out from under a thumb mid-sentence.
+
+            The round count loses its mono face in the hint, because the hint is
+            typed `string`. It is still in mono on the card header directly
+            above, which is where it is a record being cited rather than a
+            sentence being read.
+          */}
+          <Textarea
+            label="What needs to change?"
             required
             rows={4}
             autoFocus
             value={note}
             onChange={(e) => setNote(e.target.value)}
             placeholder="Name the change you want. This note is attached to this version and stays with it."
-            className={cn(input, 'resize-y')}
-            aria-describedby="decision-note-help"
+            hint={`A note is required. This is round ${roundsUsed + 1}${
+              contractedRounds === null ? '' : ` of ${contractedRounds} contracted`
+            }.`}
           />
-          <p id="decision-note-help" className={cn('text-12', muted)}>
-            A note is required. This is round{' '}
-            <span className={mono}>{roundsUsed + 1}</span>
-            {contractedRounds !== null && (
-              <>
-                {' '}of <span className={mono}>{contractedRounds}</span> contracted
-              </>
-            )}
-            .
-          </p>
           <div className="flex flex-wrap gap-2">
             <Button
               type="submit"

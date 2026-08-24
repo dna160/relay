@@ -203,3 +203,70 @@ carry. A discriminated union that grows a case for every writer, rather than for
 every distinct reaction, forces every consumer to handle a distinction that
 changes nothing. Revisit if a surface ever needs to react to a note differently
 from a comment.
+
+### A11 — card-level comments have a reader, and threads are one level deep
+*Round 3. The write shipped in round 2 with no read, so the front-end deleted
+its client thread rather than ship a form letting a client write notes they
+could never read back — the right call, and this is the fix.*
+
+Card-level comments stay. PRD §7 cuts chat rooms; it does not cut discussion.
+Version-threaded revision notes (A8) and card comments do different jobs: a note
+is bound to a deliverable, a comment is about the card.
+
+| Route | Response |
+|---|---|
+| `GET /api/comments?cardId=` | `{ comments: AgencyComment[], cardId }` — includes internal |
+| `POST /api/comments` | `201 { comment: AgencyComment }` — body `{ engagementId, cardId, body, parentId?, internal? }`, `.strict()` |
+| `GET /api/client/comments?cardId=` | `{ comments: ClientComment[], cardId }` |
+
+`ClientComment` emits `side` and `authorName` and **no person identifier** — no
+email, no user id, no contact id.
+
+Both reads return one flat, **thread-ordered** list: roots oldest-first, each
+root immediately followed by its own replies oldest-first. The ordering is part
+of the contract, which is what makes a second request unnecessary. Threads are
+one level deep *by construction*: `postComment()` rejects a parent on another
+card, a parent that is itself a reply, and a client replying to an internal root.
+Before that validation existed, `parent_id` was a bare self-reference and a reply
+could be grafted onto another engagement entirely.
+
+On the write: `engagementId` is carried per A5, and the card's *own* engagement
+is then checked against it — the body names a subject for the authorisation
+check, it does not state a fact to be trusted. `assertWritable` runs before
+anything is written, because A9 was caused by exactly that check being skipped
+and a fresh writer is where it gets skipped again.
+
+**An internal comment publishes no `comment.created` event.** The client stream
+filters a frame on whether the contact can see the *card*, not on whether the
+comment is internal — and an internal comment's card usually is visible. The
+frame carries no body, but its arrival is a signal, and "something was just said
+about your card" is precisely the fact an internal thread exists to withhold.
+Both streams ride one bus, so there is no way to tell the agency and not the
+client. Giving the agency live internal comments would need an audience field on
+`EventEnvelope`; that is a contract change and it has not been made.
+
+**The orphan hazard, and why the client read self-joins.** Filtering
+`internal = false` alone leaves a *public reply under an internal root*, carrying
+a `parentId` the client can never resolve. That is a broken render and, worse, a
+confirmation that a hidden comment exists — the precise thing INV-1 protects.
+The client read therefore drops the whole internal thread, and a reply under an
+internal root is forced internal at write. Two mechanisms, because the read
+defends against rows the write did not create.
+
+### A12 — agency sign-in uses Auth.js's own routes
+*Round 3. `authConfig.pages.signIn` pointed at `/signin`, which did not exist,
+so a signed-out agency member had no route into the product at all.*
+
+No new endpoint was added: the catch-all at `/api/auth` already serves the flow.
+Provider id is `resend`. The recommended call is the server-side `signIn` action
+(`redirect: false`, so a `try/catch` cannot swallow Next's `NEXT_REDIRECT`); the
+plain HTTP path is `GET /api/auth/csrf` then a form POST to
+`/api/auth/signin/resend`. There is no password surface anywhere in this product
+(ADR-005) and none is to be added.
+
+Two fixes came with it. `pages.error` was unset, so an expired link landed on an
+unstyled Auth.js page **outside the product**; it now points at `/signin`.
+And `pendingOnboarding()` closes a redirect loop: a first-time user has no org,
+so `getSession()` returns null — correct, but indistinguishable from signed-out,
+which would have bounced them back to `/signin` forever. It grants no org, no
+role, and nothing an agency route accepts; it only distinguishes the two nulls.

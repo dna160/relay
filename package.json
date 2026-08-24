@@ -20,7 +20,9 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
     "db:up": "docker compose up -d db",
-    "purge:plan": "tsx src/workers/purge-cli.ts --plan"
+    "purge:plan": "tsx src/workers/purge-cli.ts --plan",
+    "verify:build": "next build",
+    "verify:all": "npm run verify && npm run verify:build"
   },
   "dependencies": {
     "@auth/drizzle-adapter": "^1.7.4",

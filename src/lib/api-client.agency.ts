@@ -202,6 +202,36 @@ export interface RevisionNote {
   createdAt: string;
 }
 
+/**
+ * Card-level discussion, backstage. Shape is `AgencyComment` in
+ * `src/db/queries/comments.ts` verbatim.
+ *
+ * Two things the client's `ClientComment` does not have, for the usual reason:
+ *
+ * - **`internal`** — an agency working comment. The client read filters it in
+ *   SQL, root and reply both, so an internal comment is never selected into a
+ *   client response rather than merely omitted from one.
+ * - **author ids** — the agency may correlate a comment to a person; INV-1
+ *   only forbids handing that correlation to a client.
+ *
+ * A comment is about the card. A `RevisionNote` is bound to one immutable
+ * version. PRD §7 cuts chat rooms and says discussion attaches to cards *and*
+ * versions — both, doing different jobs.
+ */
+export interface AgencyComment {
+  id: string;
+  cardId: string;
+  /** Null for a root. One level only: the domain refuses a reply to a reply. */
+  parentId: string | null;
+  body: string;
+  internal: boolean;
+  side: 'agency' | 'client';
+  authorName: string | null;
+  authorUserId: string | null;
+  authorContactId: string | null;
+  createdAt: string;
+}
+
 /* --------------------------------------------------- endpoints not yet built */
 
 /** NOT BUILT — `GET /api/templates`. Phase 7 owns the behaviour. */
@@ -468,6 +498,58 @@ export const agencyApi = {
       `/api/versions/${encodeURIComponent(versionId)}/notes`,
       { ctx },
     ).then((r) => pick(r, (p) => p.notes));
+  },
+
+  /**
+   * GET /api/comments?cardId= — the card's discussion, internal rows included.
+   *
+   * A card id and nothing else: the route resolves the engagement from the card
+   * against the caller's org, so there is no engagement id in the query string
+   * that could disagree with it, and a card on another agency's board is a 404.
+   *
+   * Order is contractual and the renderer relies on it: roots oldest-first,
+   * each root immediately followed by its replies, oldest-first.
+   */
+  comments(cardId: string, ctx?: RequestContext) {
+    return request<{ comments: AgencyComment[]; cardId: string }>(
+      `/api/comments?cardId=${encodeURIComponent(cardId)}`,
+      { ctx },
+    ).then((r) => pick(r, (p) => p.comments));
+  },
+
+  /**
+   * POST /api/comments — add to a card's discussion, backstage.
+   *
+   * `engagementId` is sent explicitly and the client's twin sends none. That
+   * asymmetry is amendment A5 and INV-6, not an inconsistency: an agency
+   * mutation names its subject so the authorisation check has one before a row
+   * is read, and the route then verifies it against the card's own engagement
+   * rather than trusting it. A client contact has exactly one engagement and it
+   * comes from the session.
+   *
+   * `internal` is the agency-only flag, and the client route has no field
+   * through which to reach it. A reply under an internal root is forced
+   * internal by the domain whatever is passed here.
+   *
+   * The response is a full `AgencyComment`, `authorName` included — resolved in
+   * the same transaction that wrote the row, so an optimistic render and the
+   * next read agree.
+   */
+  createComment(
+    body: {
+      engagementId: string;
+      cardId: string;
+      body: string;
+      parentId?: string | null;
+      internal?: boolean;
+    },
+    ctx?: RequestContext,
+  ) {
+    return request<{ comment: AgencyComment }>('/api/comments', {
+      method: 'POST',
+      body,
+      ctx,
+    }).then((r) => pick(r, (p) => p.comment));
   },
 
   /**

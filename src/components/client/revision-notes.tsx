@@ -22,11 +22,11 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Button } from '@/components/primitives';
+import { Button, Textarea } from '@/components/primitives';
 import { type ClientRevisionNote, clientApi } from '@/lib/api-client.client';
 import { formatTimestamp, versionPip } from '@/lib/format';
 import { useAction } from '@/lib/hooks/use-action';
-import { cn, input, mono, muted } from '@/components/style-tokens';
+import { cn, mono, muted } from '@/components/style-tokens';
 import { EmptyState } from './empty-state';
 import { ErrorPanel } from './error-panel';
 
@@ -107,22 +107,21 @@ export function RevisionNotes({
             }
           }}
         >
-          <label htmlFor="revision-note" className="text-14 text-ink">
-            Add a note on <span className={cn(mono, 'text-ink')}>{pip}</span>
-          </label>
-          <textarea
-            id="revision-note"
+          {/*
+            The pip in the label and the hint was set in mono and is now plain:
+            `Field`'s label, hint and error are typed `string`, and widening
+            them to `ReactNode` is the primitives owner's call. The binding is
+            still stated in mono where it is a record rather than a sentence —
+            on the section heading and on every note row above.
+          */}
+          <Textarea
+            label={`Add a note on ${pip}`}
             rows={3}
             value={body}
             onChange={(e) => setBody(e.target.value)}
-            className={cn(input, 'resize-y')}
-            aria-describedby="revision-note-help"
             placeholder="Say what you need. Your agency sees this against this version."
+            hint={`This stays attached to ${pip}. When a newer version is published it will not follow it.`}
           />
-          <p id="revision-note-help" className={cn('text-12', muted)}>
-            This stays attached to <span className={mono}>{pip}</span>. When a newer version is
-            published it will not follow it.
-          </p>
           <div>
             <Button
               type="submit"

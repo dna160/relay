@@ -12,7 +12,7 @@ import type { ReactNode } from 'react';
 import Link from 'next/link';
 import type { AgencyCard } from '@/lib/types';
 import { formatDue, formatRounds, roundsBreached, shortHash, versionPip } from '@/lib/format';
-import { breach, chip, cn, mono, muted } from '@/components/style-tokens';
+import { breach, chip, cn, crossfade, mono, muted } from '@/components/style-tokens';
 import { PossessionEdge, PossessionLabel } from './possession-bar';
 import { StateChip } from './state-chip';
 
@@ -50,7 +50,10 @@ export function CardTile({ card, href, controls, dragging }: CardTileProps) {
         dragging && 'opacity-50',
       )}
     >
-      <PossessionEdge possession={card.possession} />
+      {/* `state` is the fallback holder for a card that has not moved yet:
+          the clock has opened no interval, but the board still knows whose
+          move it is. See `possession-bar.tsx`. */}
+      <PossessionEdge possession={card.possession} state={card.state} />
 
       <div className="flex items-start justify-between gap-2">
         <h3 className="text-14 leading-snug text-ink">{title}</h3>
@@ -82,7 +85,7 @@ export function CardTile({ card, href, controls, dragging }: CardTileProps) {
       </div>
 
       <div className="mt-2 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-        <PossessionLabel possession={card.possession} />
+        <PossessionLabel possession={card.possession} state={card.state} />
         {due && (
           <span
             className={cn(mono, 'text-12', muted, due.overdue && 'font-semibold text-ink')}
@@ -94,7 +97,25 @@ export function CardTile({ card, href, controls, dragging }: CardTileProps) {
       </div>
 
       {controls && (
-        <div className="mt-2 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 motion-reduce:transition-none">
+        /*
+          `crossfade`, not a hand-rolled `transition-opacity` with a call-site
+          `motion-reduce:transition-none`.
+
+          Reduced motion is honoured **at the token** in this product:
+          `duration-chip` resolves to `var(--dur-chip)`, and globals.css sets
+          `--dur-chip: 0ms` under `prefers-reduced-motion`, so one assertion on
+          one custom property covers every transition in the codebase. A
+          call-site `motion-reduce:` is a second mechanism for the same rule —
+          it happened to be correct here, and the next component to copy the
+          pattern is the one that forgets it, with nothing failing to say so.
+          The token cannot be forgotten.
+        */
+        <div
+          className={cn(
+            'mt-2 opacity-0 group-hover:opacity-100 focus-within:opacity-100',
+            crossfade,
+          )}
+        >
           {controls}
         </div>
       )}

@@ -206,12 +206,22 @@ describe('INV-1 at the exported card serialiser', () => {
 
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { clientScopedQueries, queriesImportedByClientRoutes } from './_source';
+import {
+  sourceFiles,
+  clientImportGraph,
+  clientScopedQueries,
+  queriesImportedByClientRoutes,
+  queriesReachableFromClientRoutes,
+} from './_source';
 import {
   CAPTURE_SESSION,
   capture,
   captureScope,
+  captureOnEmpty,
   captureWithResult,
+  captureWithRows,
+  insertedValues,
+  theStatement,
   columnsSelected,
   tablesTouched,
   type CapturedStatement,
@@ -227,6 +237,9 @@ import {
 } from '@/db/queries/client-board';
 import { findContact, loadLinkableEngagement } from '@/db/queries/client-auth';
 import { loadClientVisibleNotes } from '@/db/queries/revision-notes';
+import { loadAgencyComments, loadClientVisibleComments } from '@/db/queries/comments';
+import { postComment } from '@/domain/comment/post-comment';
+import type { Actor } from '@/domain/card/state-machine';
 
 /** This file, read back, so the registry can be checked against real cases. */
 const THIS_SPEC = readFileSync(fileURLToPath(import.meta.url), 'utf8');
@@ -255,6 +268,8 @@ const COVERED_BY: Readonly<Record<string, string>> = {
     'the shelf reads reference files scoped to the engagement and marked client-visible',
   loadClientVisibleNotes:
     'the revision thread carries no identifier and no internal note, and is narrowed by the engagement',
+  loadClientVisibleComments:
+    'the comment thread drops an internal root and every reply beneath it, in SQL',
 };
 
 /**
@@ -320,32 +335,115 @@ describe('INV-1 the query layer is enumerated, not remembered', () => {
   });
 
   /**
-   * The same boundary, computed the other way. A query that takes a plain
-   * `engagementId` because its caller resolved visibility first is invisible to
-   * the signature check above — legitimately so, that is how `loadClientQueue`
-   * is built — but it is still on a path a client contact can reach, and the
-   * import graph sees it whatever its parameters say.
+   * The same boundary, computed by **reachability** rather than by signature.
    *
-   * `loadClientVisibleNotes` is exactly that case, and it is why this check
-   * exists: the signature sweep alone reported full coverage while a
-   * client-reachable read had none.
+   * The signature definition has a hole and the hole was walked through: a
+   * client-reachable read can take a plain `engagementId` because its caller
+   * resolved visibility first. That is good composition — it is how
+   * `loadClientQueue` is built out of `loadClientBoard` — and it means a
+   * parameter type is not the boundary. `loadClientVisibleNotes` is exactly
+   * that case: the signature sweep reported full coverage while a
+   * client-reachable read had no case at all.
+   *
+   * A direct-import check closes that but has its own hole one module deep. So
+   * the guard walks the whole import graph out from every client entry point
+   * (Architect's ruling, round 2): any query symbol that travels along that
+   * graph is client-reachable, whatever its parameters say and however many
+   * modules sit between it and the handler.
    */
-  it('has a registered case for every query a client route actually imports', () => {
-    const reachable = queriesImportedByClientRoutes();
-    expect(reachable.length, 'no client route imports a query — the scan broke').toBeGreaterThan(3);
+  it('has a registered case for every query reachable from a client entry point', () => {
+    const reachable = queriesReachableFromClientRoutes();
+    expect(reachable.length, 'no query is reachable from a client route — the walk broke')
+      .toBeGreaterThan(3);
     const uncovered = reachable
       .filter((fn) => !(fn.name in COVERED_BY) && !(fn.name in COVERED_ELSEWHERE))
-      .map((fn) => `${fn.name} (${fn.file})`);
+      .map((fn) => `${fn.name} (${fn.file}) reached via ${fn.via.join(' -> ')}`);
     expect(
       uncovered,
-      'a query reachable from a client route with no case in visibility.spec.ts. ' +
-        'Taking an engagementId rather than a ClientScope does not put a read ' +
-        'outside INV-1; it only puts it outside the signature check.',
+      'a query reachable from a client entry point with no case in visibility.spec.ts. ' +
+        'Neither the parameter type nor the number of modules in between puts a read ' +
+        'outside INV-1.',
     ).toEqual([]);
   });
 
+  /**
+   * The traversal, tested on its own.
+   *
+   * A reachability guard that silently stops at depth one is indistinguishable
+   * from one that works — until the day something is reached at depth two. So
+   * the walk has to demonstrate that it walked.
+   */
+  it('walks past the entry points rather than stopping at their direct imports', () => {
+    const graph = clientImportGraph();
+    expect(graph.entryPoints.length, 'no client entry points found').toBeGreaterThan(4);
+    expect(graph.modules.size, 'the walk reached nothing beyond its own roots')
+      .toBeGreaterThan(graph.entryPoints.length * 2);
+
+    const indirect = [...graph.modules.entries()].filter(([, chain]) => chain.length > 2);
+    expect(
+      indirect.length,
+      'every module was reached in one hop, so this check proves nothing that the ' +
+        'direct-import check did not already prove',
+    ).toBeGreaterThan(0);
+
+    const deepest = Math.max(...[...graph.modules.values()].map((chain) => chain.length));
+    expect(deepest, 'the graph is one level deep; imports are not being followed')
+      .toBeGreaterThanOrEqual(3);
+  });
+
+  it('resolves both alias and relative imports, since a route uses both', () => {
+    const graph = clientImportGraph();
+    const reached = [...graph.modules.keys()];
+    // `@/db/queries/...` is the alias form; `../../_guards` is the relative one.
+    // Missing either silently halves the graph.
+    expect(
+      reached.some((path) => path.startsWith('src/db/queries/')),
+      'no aliased module was resolved',
+    ).toBe(true);
+    expect(
+      reached.some((path) => /_guards\.tsx?$/.test(path)),
+      'no relatively-imported module was resolved; every route imports its guard that way',
+    ).toBe(true);
+  });
+
+  it('never reaches an agency-only query from a client entry point', () => {
+    /**
+     * The other direction, and the one that would be a live incident: if the
+     * walk ever finds the agency portfolio read, the shelf read, or the agency
+     * board on a client path, INV-1 is broken in production and not merely
+     * uncovered by a test.
+     */
+    const AGENCY_ONLY = [
+      'loadPortfolio',
+      'loadAgencyBoard',
+      'loadShelf',
+      'loadEngagementDetail',
+      'loadActivityRows',
+      'loadAttention',
+      'loadAgencyRevisionNotes',
+      'loadVersionEngagementForOrg',
+    ];
+    const reachable = new Set(queriesReachableFromClientRoutes().map((fn) => fn.name));
+    const leaked = AGENCY_ONLY.filter((name) => reachable.has(name));
+    expect(
+      leaked,
+      'an agency-only read is reachable from a client entry point. This is not a ' +
+        'coverage gap; it is a path a client contact can take to agency data.',
+    ).toEqual([]);
+  });
+
+  it('agrees with the narrower direct-import scan, which must be a subset of it', () => {
+    // If a direct import is not reachable, the walk is broken in a way the
+    // coverage assertions above would not notice.
+    const reachable = new Set(queriesReachableFromClientRoutes().map((fn) => fn.name));
+    const missed = queriesImportedByClientRoutes()
+      .map((fn) => fn.name)
+      .filter((name) => !reachable.has(name));
+    expect(missed, 'the reachability walk missed a direct import').toEqual([]);
+  });
+
   it('justifies every query it excuses from a case of its own', () => {
-    const names = new Set(queriesImportedByClientRoutes().map((fn) => fn.name));
+    const names = new Set(queriesReachableFromClientRoutes().map((fn) => fn.name));
     const stale = Object.keys(COVERED_ELSEWHERE).filter((name) => !names.has(name));
     expect(stale, 'COVERED_ELSEWHERE excuses something no client route imports').toEqual([]);
     for (const [name, why] of Object.entries(COVERED_ELSEWHERE)) {
@@ -356,7 +454,7 @@ describe('INV-1 the query layer is enumerated, not remembered', () => {
   it('carries no stale registry entry for a query that no longer exists', () => {
     const names = new Set([
       ...enumerated.map((fn) => fn.name),
-      ...queriesImportedByClientRoutes().map((fn) => fn.name),
+      ...queriesReachableFromClientRoutes().map((fn) => fn.name),
     ]);
     const stale = Object.keys(COVERED_BY).filter((name) => !names.has(name));
     expect(
@@ -498,6 +596,119 @@ describe('INV-1 at the query layer, against compiled SQL', () => {
     }
   });
 
+  it('the comment thread drops an internal root and every reply beneath it, in SQL', async () => {
+    const { statements, result } = await captureWithResult((exec) =>
+      loadClientVisibleComments(exec, scope.engagementId, 'some-card-id'),
+    );
+    const sql = statements.map((s) => s.sql).join('\n');
+
+    expect(sql).toMatch(/"cards"\."engagement_id"\s*=\s*\$/);
+    expect(sql).toMatch(/"comments"\."card_id"\s*=\s*\$/);
+    expect(sql).toMatch(/"comments"\."internal"\s*=\s*\$/);
+
+    /**
+     * The subtle half, and the reason this needs its own case rather than a
+     * shared one with the revision thread: filtering `comments.internal` alone
+     * leaves a *public reply to an internal root* in the result. The client
+     * then receives a comment whose `parentId` names a row they can never see —
+     * a dangling thread that quotes an internal discussion by implication. The
+     * read self-joins the parent and requires it to be public too.
+     */
+    expect(
+      sql,
+      'no self-join on the parent comment; a public reply under an internal root leaks',
+    ).toMatch(/"comments"\s+"parent_comment"|"parent_comment"/);
+    expect(sql).toMatch(/"parent_comment"\."internal"\s*=\s*\$/);
+    expect(sql).toMatch(/"comments"\."parent_id"\s+is\s+null/i);
+
+    const params = statements.flatMap((s) => [...s.params]);
+    expect(params).toContain(CAPTURE_SESSION.engagementId);
+    expect(params, 'internal comments are not excluded in SQL').toContain(false);
+
+    const emitted = JSON.stringify(result ?? []);
+    for (const key of ['authorUserId', 'authorContactId', 'internal', 'email']) {
+      expect(emitted, `the client comment shape emits ${key}`).not.toContain(key);
+    }
+  });
+
+  it('drops a public reply under an internal root, which is the case a flat internal filter misses', async () => {
+    /**
+     * The failure this prevents, stated exactly: filter `comments.internal`
+     * alone and a **public reply to an internal root** survives. The client
+     * then receives a comment carrying a `parentId` naming a row it can never
+     * resolve — a broken render, and a confirmation that a hidden comment
+     * exists on a card it can otherwise see. That inference is the thing INV-1
+     * exists to prevent, and it arrives as a rendering bug rather than as a
+     * leak, which is how it would survive review.
+     *
+     * Proven by differencing the two reads. The agency and client reads share
+     * one statement builder, so the client read's predicate must be the
+     * agency's plus exactly the terms that exclude an internal thread — and
+     * both halves of the disjunction have to be there, or the clause either
+     * lets the reply through or drops every root comment along with it.
+     */
+    const clientSql = theStatement(
+      await capture((exec) => loadClientVisibleComments(exec, scope.engagementId, 'c')),
+      /select .* from "comments"/is,
+    ).sql;
+    const agencySql = theStatement(
+      await capture((exec) => loadAgencyComments(exec, scope.engagementId, 'c')),
+      /select .* from "comments"/is,
+    ).sql;
+
+    const clientWhere = /\swhere\s([\s\S]+?)(?:\sorder by\s|\slimit\s|$)/i.exec(clientSql)?.[1] ?? '';
+    const agencyWhere = /\swhere\s([\s\S]+?)(?:\sorder by\s|\slimit\s|$)/i.exec(agencySql)?.[1] ?? '';
+
+    expect(clientWhere.length, 'the client comment read has no predicate at all').toBeGreaterThan(0);
+    expect(
+      clientWhere.length,
+      'the client read and the agency read carry the same predicate. One of them is wrong, ' +
+        'and it is not the agency one.',
+    ).toBeGreaterThan(agencyWhere.length);
+
+    // The agency read must NOT carry the internal terms — otherwise the
+    // difference above proves nothing about which read they belong to.
+    expect(agencyWhere, 'the agency read filters internal comments out of its own backstage view')
+      .not.toMatch(/"internal"\s*=\s*\$/);
+
+    // Both halves. `parent_id is null` keeps root comments; the parent's own
+    // flag is what excludes a public reply beneath an internal root.
+    expect(clientWhere).toMatch(/"comments"\."internal"\s*=\s*\$/);
+    expect(
+      clientWhere,
+      'the parent’s internal flag is not consulted; a public reply under an internal root survives',
+    ).toMatch(/"parent_comment"\."internal"\s*=\s*\$/);
+    expect(
+      clientWhere,
+      'no null-parent branch; every root comment would be dropped along with the replies',
+    ).toMatch(/"comments"\."parent_id"\s+is\s+null/i);
+    expect(clientWhere, 'the two parent conditions are ANDed, not ORed').toMatch(/\sor\s/i);
+
+    // And it is a LEFT join, or a root comment has no parent row to match and
+    // disappears regardless of the disjunction.
+    expect(
+      clientSql,
+      'the parent self-join is not a left join; root comments have no parent row to match',
+    ).toMatch(/left join\s+"comments"\s+"parent_comment"/i);
+  });
+
+  it('never reads a comment without the card gate having run first', () => {
+    // The same composition as the revision thread: visibility is decided by
+    // `loadClientVisibleCardId`, and this read only refuses to carry internal
+    // rows. If a route ever reads comments without the gate, the thread becomes
+    // the second, unfiltered path onto the board.
+    const routes = sourceFiles('app/api/client').filter((f) =>
+      f.text.includes('loadClientVisibleComments'),
+    );
+    expect(routes.length, 'no client route reads the comment thread').toBeGreaterThan(0);
+    for (const route of routes) {
+      expect(
+        route.text,
+        `${route.path} reads comments without resolving the card through the board predicate`,
+      ).toContain('loadClientVisibleCardId');
+    }
+  });
+
   /* One sweep over all of them, so a new query gets the floor for free. */
 
   const RUNNERS: ReadonlyArray<[string, (exec: Parameters<typeof loadClientBoard>[0]) => Promise<unknown>]> = [
@@ -511,6 +722,10 @@ describe('INV-1 at the query layer, against compiled SQL', () => {
     [
       'loadClientVisibleNotes',
       (exec) => loadClientVisibleNotes(exec, scope.engagementId, 'v'),
+    ],
+    [
+      'loadClientVisibleComments',
+      (exec) => loadClientVisibleComments(exec, scope.engagementId, 'c'),
     ],
   ];
 
@@ -627,5 +842,344 @@ describe('INV-1 the two reads that happen before a session exists', () => {
     expect(signatures).not.toContain('findContact');
     expect(loadLinkableEngagement.length, 'loadLinkableEngagement(exec, engagementId)').toBe(2);
     expect(findContact.length, 'findContact(exec, engagementId, email)').toBe(3);
+  });
+});
+
+/* ========================================================================== */
+/* The client revision thread.                                                */
+/*                                                                            */
+/* `GET /api/client/versions/:id/notes` is a client-reachable read path built  */
+/* by composition: `loadClientDecidableVersion()` decides visibility, then     */
+/* `loadClientVisibleNotes()` reads the thread narrowed by the engagement.     */
+/* That is good design and it means neither function alone carries the whole   */
+/* guarantee — so the guarantee gets asserted at the path, not at a function.  */
+/*                                                                            */
+/* Requested by the back-end when it declined to introduce a second scoped     */
+/* predicate here. It was right to decline: two predicates that both have to   */
+/* agree with lane visibility, card overrides, draft state and the publish     */
+/* gate will disagree eventually, and the day they do the thread shows         */
+/* something the board does not.                                              */
+/* ========================================================================== */
+
+describe('INV-1 the client revision thread', () => {
+  const scope = captureScope();
+
+  /** The gate the notes route runs before it reads a single note row. */
+  const resolveVersion = (exec: Parameters<typeof loadClientDecidableVersion>[0]) =>
+    loadClientDecidableVersion(exec, scope, 'some-version-id');
+
+  it('refuses an unpublished version, because the predicate requires publication', async () => {
+    const { statements, threw } = await captureOnEmpty(resolveVersion);
+    const sql = statements.map((s) => s.sql).join('\n');
+    expect(
+      sql,
+      'a version not yet published to the client is excluded in SQL, not after the read',
+    ).toMatch(/"published_to_client_at"\s+is\s+not\s+null/i);
+    expect((threw as { code?: string } | undefined)?.code).toBe('NOT_VISIBLE');
+  });
+
+  it('refuses a version on a private lane', async () => {
+    const { statements, threw } = await captureOnEmpty(resolveVersion);
+    const sql = statements.map((s) => s.sql).join('\n');
+    expect(sql).toMatch(/"lanes"\."visibility"\s*=\s*\$/);
+    expect(statements.flatMap((s) => [...s.params])).toContain('published');
+    expect((threw as { code?: string } | undefined)?.code).toBe('NOT_VISIBLE');
+  });
+
+  it('refuses another engagement’s version, with the engagement taken from the session', async () => {
+    const { statements, threw } = await captureOnEmpty(resolveVersion);
+    const sql = statements.map((s) => s.sql).join('\n');
+    expect(sql).toMatch(/"cards"\."engagement_id"\s*=\s*\$/);
+    expect(
+      statements.flatMap((s) => [...s.params]),
+      'the engagement in the predicate did not come from the session',
+    ).toContain(CAPTURE_SESSION.engagementId);
+    expect((threw as { code?: string } | undefined)?.code).toBe('NOT_VISIBLE');
+  });
+
+  it('gives all three refusals the same shape, so the thread cannot be probed for what exists', () => {
+    // One statement, one predicate, one outcome. A caller cannot tell an
+    // unpublished version from a private lane from someone else’s engagement,
+    // which is the point: distinguishing them would confirm the thing exists.
+    const messages = new Set<string>();
+    return Promise.all([resolveVersion, resolveVersion, resolveVersion].map((run) =>
+      captureOnEmpty(run).then(({ threw }) => {
+        messages.add(String((threw as { message?: string } | undefined)?.message ?? ''));
+      }),
+    )).then(() => {
+      expect(messages.size, 'the three refusals are distinguishable').toBe(1);
+      expect([...messages][0]).not.toMatch(/lane|publish|engagement/i);
+    });
+  });
+
+  it('excludes internal notes in SQL, so an internal note never leaves the database', async () => {
+    const statements = await capture((exec) =>
+      loadClientVisibleNotes(exec, scope.engagementId, 'some-version-id'),
+    );
+    const sql = statements.map((s) => s.sql).join('\n');
+    expect(sql).toMatch(/"revision_notes"\."internal"\s*=\s*\$/);
+    expect(
+      statements.flatMap((s) => [...s.params]),
+      'internal notes are filtered somewhere other than the WHERE clause',
+    ).toContain(false);
+  });
+
+  it('cannot be asked for internal notes by omission — the flag has no default', () => {
+    /**
+     * The shared statement takes `includeInternal` and the agency read passes
+     * `true`. A default value on that parameter would mean a future caller
+     * could reach the agency behaviour by forgetting an argument, which is the
+     * one mistake in this file that would be silent.
+     */
+    const source = sourceFiles('db/queries').find((f) => f.path.endsWith('revision-notes.ts'));
+    expect(source, 'src/db/queries/revision-notes.ts not found').toBeTruthy();
+    expect(
+      source?.text ?? '',
+      'includeInternal has a default value; a caller can now reach internal notes by omission',
+    ).not.toMatch(/includeInternal\s*(\?)?\s*:\s*boolean\s*=/);
+  });
+
+  it('emits a thread with no identifier in it, whatever the row carried', async () => {
+    const { result } = await captureWithResult((exec) =>
+      loadClientVisibleNotes(exec, scope.engagementId, 'some-version-id'),
+    );
+    const emitted = JSON.stringify(result ?? []);
+    for (const key of ['authorUserId', 'authorContactId', 'internal', 'email', 'storageKey']) {
+      expect(emitted, `the client note shape emits ${key}`).not.toContain(key);
+    }
+  });
+
+  it('never reads a note without the version gate having run first', () => {
+    /**
+     * The composition is the guarantee, so the composition is what is asserted.
+     * If a route ever reads the thread without resolving the version through
+     * the board’s predicate, the thread becomes the second, unfiltered path.
+     */
+    const routes = sourceFiles('app/api/client').filter((f) =>
+      f.text.includes('loadClientVisibleNotes'),
+    );
+    expect(routes.length, 'no client route reads the revision thread').toBeGreaterThan(0);
+    for (const route of routes) {
+      expect(
+        route.text,
+        `${route.path} reads the revision thread without resolving the version first`,
+      ).toContain('loadClientDecidableVersion');
+      expect(
+        route.text.indexOf('loadClientDecidableVersion'),
+        `${route.path} imports the gate but the read is not behind it`,
+      ).toBeGreaterThan(-1);
+    }
+  });
+});
+
+/* ========================================================================== */
+/* Card-level discussion: the parent-validation and orphan-thread defences.   */
+/*                                                                            */
+/* `parent_id` is a bare self-reference in the schema, so before the back-end */
+/* hardened `postComment()` it accepted **any** comment id in the database. A */
+/* reply could be grafted onto another card, another engagement, or an        */
+/* internal comment its author was never shown — and the reader emits         */
+/* `parentId`, so a graft is not a private mistake. It is a row that renders  */
+/* under a thread it does not belong to.                                      */
+/*                                                                            */
+/* Both defences shipped unprompted and neither had a test, because the       */
+/* back-end does not own `tests/`. These are those tests. The driver is a fake*/
+/* that answers each statement the way the branch under test needs, so what   */
+/* is asserted is the decision the code made, not what a fixture said.        */
+/* ========================================================================== */
+
+describe('INV-1 a reply cannot be grafted onto a thread it does not belong to', () => {
+  const CARD = 'card-under-test';
+  const ENGAGEMENT = 'engagement-under-test';
+  const AGENCY: Actor = { kind: 'agency', userId: 'user-1' };
+  const CLIENT: Actor = { kind: 'client', contactId: 'contact-1' };
+
+  const CARD_LOOKUP = /select "id" from "cards"/i;
+  const PARENT_LOOKUP = /select "id", "parent_id", "internal" from "comments"/i;
+  const INSERT = /insert\s+into\s+"comments"/i;
+
+  /** The columns the parent lookup selects, in order, as drizzle returns them. */
+  const parentRow = (id: string, parentId: string | null, internal: boolean) => [
+    id,
+    parentId,
+    internal,
+  ];
+
+  interface PostOptions {
+    actor?: Actor;
+    parentId?: string | null;
+    internal?: boolean;
+    /** What the parent lookup finds. `null` means no such row on this card. */
+    parent?: unknown[] | null;
+    cardFound?: boolean;
+  }
+
+  async function post(options: PostOptions) {
+    return captureWithRows(
+      (exec) =>
+        postComment(
+          exec as unknown as Parameters<typeof postComment>[0],
+          {
+            cardId: CARD,
+            engagementId: ENGAGEMENT,
+            actor: options.actor ?? AGENCY,
+            body: 'a reply',
+            ...(options.parentId === undefined ? {} : { parentId: options.parentId }),
+            ...(options.internal === undefined ? {} : { internal: options.internal }),
+          },
+          new Date('2026-01-01T00:00:00.000Z'),
+        ),
+      ({ sql }) => {
+        if (CARD_LOOKUP.test(sql)) return options.cardFound === false ? [] : [[CARD]];
+        if (PARENT_LOOKUP.test(sql)) {
+          const parent = options.parent;
+          return parent === null || parent === undefined ? [] : [parent];
+        }
+        return undefined;
+      },
+    );
+  }
+
+  const codeOf = (thrown: unknown): string | undefined =>
+    (thrown as { code?: string } | undefined)?.code;
+
+  it('rejects a reply whose parent lives on a different card', async () => {
+    // The parent lookup is narrowed by `comments.card_id`, so a parent on
+    // another card simply is not there. Asserted twice: that the predicate
+    // carries the card, and that a miss refuses rather than inserting.
+    const { statements, threw } = await post({ parentId: 'parent-on-another-card', parent: null });
+    const lookup = theStatement(statements, PARENT_LOOKUP);
+    expect(lookup.sql).toMatch(/"comments"\."card_id"\s*=\s*\$/);
+    expect(lookup.params, 'the parent lookup is not narrowed by the card being posted to')
+      .toContain(CARD);
+    expect(codeOf(threw)).toBe('NOT_VISIBLE');
+    expect(statements.filter((s) => INSERT.test(s.sql)), 'a rejected reply was written anyway')
+      .toEqual([]);
+  });
+
+  it('rejects a reply whose parent lives in a different engagement', async () => {
+    /**
+     * A parent in another engagement is necessarily on another card, so the
+     * same predicate catches it — and the engagement is never taken from the
+     * request: the card lookup binds it and the card lookup runs first. This is
+     * the case that was possible before the validation existed, and it is
+     * INV-6, not merely a data-integrity nicety.
+     */
+    const { statements, threw } = await post({
+      parentId: 'parent-in-another-engagement',
+      parent: null,
+    });
+    const card = theStatement(statements, CARD_LOOKUP);
+    expect(card.sql).toMatch(/"cards"\."engagement_id"\s*=\s*\$/);
+    expect(card.params).toContain(ENGAGEMENT);
+    expect(statements.indexOf(card), 'the card is not resolved before the parent is looked up')
+      .toBeLessThan(statements.indexOf(theStatement(statements, PARENT_LOOKUP)));
+    expect(codeOf(threw)).toBe('NOT_VISIBLE');
+    expect(statements.filter((s) => INSERT.test(s.sql))).toEqual([]);
+  });
+
+  it('rejects a reply to a reply, because threads are one level deep by construction', async () => {
+    /**
+     * Enforced at the write rather than in the renderer. "The front end can
+     * draw one level of reply from a flat list" is only true if the data cannot
+     * be deeper than that.
+     */
+    const { statements, threw } = await post({
+      parentId: 'a-reply',
+      parent: parentRow('a-reply', 'the-root', false),
+    });
+    expect(codeOf(threw)).toBe('VALIDATION_FAILED');
+    expect(String((threw as { message?: string })?.message ?? '')).toMatch(/one level deep/i);
+    expect(statements.filter((s) => INSERT.test(s.sql)), 'a third-level comment was written')
+      .toEqual([]);
+  });
+
+  it('gives a client a 404, not a 403, for a reply to an internal root', async () => {
+    /**
+     * The distinction is the whole point. A 403 says "this exists and you may
+     * not have it", which confirms a hidden comment exists on a card the client
+     * can otherwise see — the exact inference INV-1 exists to prevent. A 404
+     * says nothing.
+     */
+    const { statements, threw } = await post({
+      actor: CLIENT,
+      parentId: 'internal-root',
+      parent: parentRow('internal-root', null, true),
+    });
+    expect(codeOf(threw), 'a client learned that an internal comment exists').toBe('NOT_VISIBLE');
+    expect(codeOf(threw)).not.toBe('FORBIDDEN');
+    expect(statements.filter((s) => INSERT.test(s.sql))).toEqual([]);
+  });
+
+  it('gives a client the same refusal for an internal parent as for one that does not exist', async () => {
+    const missing = await post({ actor: CLIENT, parentId: 'nope', parent: null });
+    const internal = await post({
+      actor: CLIENT,
+      parentId: 'internal-root',
+      parent: parentRow('internal-root', null, true),
+    });
+    expect(
+      String((internal.threw as { message?: string })?.message ?? ''),
+      'the two refusals are distinguishable, so a client can probe for internal comments',
+    ).toBe(String((missing.threw as { message?: string })?.message ?? ''));
+  });
+
+  it('forces an agency reply under an internal root to be internal, rather than defaulting it', async () => {
+    /**
+     * `internal: false` is passed explicitly here — the caller is asking for a
+     * public reply. It must still be written internal: the client read drops
+     * the whole internal thread in SQL, and letting a reply opt out would put
+     * half an internal conversation on the client's screen with its root
+     * missing.
+     *
+     * Asserted on the *bound insert parameter*, not on the returned row. The
+     * returned row is whatever the fake driver was told to say; the bound
+     * parameter is what the code decided to write.
+     */
+    const { statements, threw } = await post({
+      actor: AGENCY,
+      parentId: 'internal-root',
+      parent: parentRow('internal-root', null, true),
+      internal: false,
+    });
+    expect(codeOf(threw), 'an agency reply under an internal root was refused').toBeUndefined();
+    const written = insertedValues(theStatement(statements, INSERT));
+    expect(
+      written.internal,
+      'a reply under an internal root was written public; its root is invisible to the client ' +
+        'and the reply would appear without one',
+    ).toBe(true);
+    expect(written.parent_id).toBe('internal-root');
+    expect(written.author_user_id, 'an agency comment carries no contact id').toBe('user-1');
+    expect(written.author_contact_id).toBeNull();
+  });
+
+  it('does not make an agency reply under a public root internal by accident', async () => {
+    // The negative control for the case above: the forcing must be caused by
+    // the parent, not applied to every reply.
+    const { statements } = await post({
+      actor: AGENCY,
+      parentId: 'public-root',
+      parent: parentRow('public-root', null, false),
+      internal: false,
+    });
+    expect(insertedValues(theStatement(statements, INSERT)).internal).toBe(false);
+  });
+
+  it('never lets a client write an internal comment, whatever it asks for', async () => {
+    const { statements } = await post({ actor: CLIENT, internal: true });
+    const written = insertedValues(theStatement(statements, INSERT));
+    expect(written.internal, 'a client set the internal flag on its own comment').toBe(false);
+    expect(written.author_user_id, 'a client comment was attributed to an agency user').toBeNull();
+    expect(written.author_contact_id).toBe('contact-1');
+  });
+
+  it('resolves the card against the session engagement before writing anything', async () => {
+    const { statements, threw } = await post({ cardFound: false });
+    expect(codeOf(threw)).toBe('NOT_VISIBLE');
+    expect(
+      statements.filter((s) => INSERT.test(s.sql)),
+      'a comment was written on a card the session does not own',
+    ).toEqual([]);
   });
 });

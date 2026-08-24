@@ -187,3 +187,186 @@ export function queriesImportedByClientRoutes(
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
+
+/* -------------------------------------------------------------------------- */
+/* Client-reachable by transitive reachability.                               */
+/*                                                                            */
+/* Two weaker definitions came first and each was escaped in practice:        */
+/*                                                                            */
+/*   - *by signature* ("takes a `ClientScope`") was escaped by a query that   */
+/*     takes a plain engagement id because its caller resolved visibility     */
+/*     first. Good composition; invisible to the guard.                       */
+/*   - *by direct import* was escaped by a query a client route reaches       */
+/*     through one intermediate module rather than importing itself.          */
+/*                                                                            */
+/* The Architect's ruling in round 2: enumerate by reachability. Any query    */
+/* function transitively reachable from `src/app/api/client/**` is            */
+/* client-reachable and needs a case, whatever its parameters say and however */
+/* many modules sit between it and the handler.                               */
+/* -------------------------------------------------------------------------- */
+
+/** One module's imports: a resolved module path and the symbols taken from it. */
+interface ImportEdge {
+  module: string;
+  symbols: string[];
+  /** True for `import x from`, `import * as x`, or `export * from`. */
+  wholeModule: boolean;
+}
+
+/** Resolves an import specifier to a repo-relative path, or null if external. */
+function resolveModule(fromFile: string, spec: string, known: ReadonlySet<string>): string | null {
+  let base: string;
+  if (spec.startsWith('@/')) {
+    base = `src/${spec.slice(2)}`;
+  } else if (spec.startsWith('./') || spec.startsWith('../')) {
+    const dir = fromFile.split('/').slice(0, -1);
+    for (const part of spec.split('/')) {
+      if (part === '.' || part === '') continue;
+      if (part === '..') dir.pop();
+      else dir.push(part);
+    }
+    base = dir.join('/');
+  } else {
+    return null; // an npm package; the graph stops at the tree's edge
+  }
+
+  for (const candidate of [
+    base,
+    `${base}.ts`,
+    `${base}.tsx`,
+    `${base}/index.ts`,
+    `${base}/index.tsx`,
+  ]) {
+    if (known.has(candidate)) return candidate;
+  }
+  return null;
+}
+
+function importsOf(file: SourceFile, known: ReadonlySet<string>): ImportEdge[] {
+  const edges: ImportEdge[] = [];
+
+  // `import { a, b as c } from 'x'` and `export { a } from 'x'`.
+  for (const match of file.text.matchAll(
+    /(?:import|export)\s+(?:type\s+)?\{([^}]*)\}\s+from\s+['"]([^'"]+)['"]/g,
+  )) {
+    const module = resolveModule(file.path, match[2] ?? '', known);
+    if (module === null) continue;
+    const symbols = (match[1] ?? '')
+      .split(',')
+      .map((clause) => clause.trim())
+      .filter((clause) => clause !== '' && !clause.startsWith('type '))
+      .map((clause) => (clause.split(/\s+as\s+/)[0] ?? '').trim())
+      .filter((name) => name !== '');
+    edges.push({ module, symbols, wholeModule: false });
+  }
+
+  // `import x from 'y'`, `import * as x from 'y'`, `export * from 'y'`,
+  // `import 'y'` — anything that pulls a module in without naming symbols.
+  for (const match of file.text.matchAll(
+    /(?:import\s+(?:[A-Za-z0-9_$]+|\*\s+as\s+[A-Za-z0-9_$]+)\s+from|export\s+\*\s+from|import)\s+['"]([^'"]+)['"]/g,
+  )) {
+    const module = resolveModule(file.path, match[1] ?? '', known);
+    if (module === null) continue;
+    edges.push({ module, symbols: [], wholeModule: true });
+  }
+
+  return edges;
+}
+
+export interface ReachableQuery extends ExportedFunction {
+  /** The module chain from a client route to this function, for the message. */
+  via: readonly string[];
+}
+
+/**
+ * Every query function reachable from a client entry point, with the path taken.
+ *
+ * Symbol-level for `src/db/queries/**` and module-level everywhere else. That
+ * asymmetry is deliberate: `revision-notes.ts` exports an agency-only read
+ * beside a client-visible one, and flagging the whole file because a client
+ * route reaches one of them would demand cases for functions no client contact
+ * can call. What is tracked is which *names* travel along the graph.
+ *
+ * A module reached through `import * as` or a side-effect import contributes
+ * all of its exports, because at that point nothing narrows it.
+ */
+export const CLIENT_ENTRY_POINTS: readonly string[] = [
+  'app/api/client',
+  'app/api/auth/client',
+  'app/(client)',
+];
+
+export interface ClientGraph {
+  /** Every module reachable from an entry point, to the chain that reached it. */
+  modules: Map<string, string[]>;
+  /** Query symbol -> the chain that carried it here. */
+  querySymbols: Map<string, string[]>;
+  /** The entry-point files the walk started from. */
+  entryPoints: readonly string[];
+}
+
+/**
+ * Walks the import graph out from the client entry points.
+ *
+ * Exported so the traversal can be tested on its own. A reachability guard that
+ * silently stops at depth one looks exactly like a reachability guard that
+ * works, right up until the day something is reached at depth two.
+ */
+export function clientImportGraph(
+  roots: readonly string[] = CLIENT_ENTRY_POINTS,
+): ClientGraph {
+  const all = sourceFiles();
+  const byPath = new Map(all.map((f) => [f.path, f]));
+  const known = new Set(byPath.keys());
+
+  const entry = all.filter((f) => roots.some((root) => f.path.startsWith(`src/${root}/`)));
+
+  const modules = new Map<string, string[]>();
+  const querySymbols = new Map<string, string[]>();
+
+  const queue: Array<{ file: SourceFile; chain: string[] }> = entry.map((file) => ({
+    file,
+    chain: [file.path],
+  }));
+  for (const item of queue) modules.set(item.file.path, item.chain);
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current) break;
+
+    for (const edge of importsOf(current.file, known)) {
+      const target = byPath.get(edge.module);
+      if (!target) continue;
+      const chain = [...current.chain, edge.module];
+
+      if (edge.module.startsWith('src/db/queries/')) {
+        const names = edge.wholeModule
+          ? exportedFunctions('db/queries')
+              .filter((fn) => fn.file === edge.module)
+              .map((fn) => fn.name)
+          : edge.symbols;
+        for (const name of names) if (!querySymbols.has(name)) querySymbols.set(name, chain);
+      }
+
+      if (!modules.has(edge.module)) {
+        modules.set(edge.module, chain);
+        queue.push({ file: target, chain });
+      }
+    }
+  }
+
+  return { modules, querySymbols, entryPoints: entry.map((f) => f.path) };
+}
+
+export function queriesReachableFromClientRoutes(
+  roots: readonly string[] = CLIENT_ENTRY_POINTS,
+): ReachableQuery[] {
+  const { querySymbols } = clientImportGraph(roots);
+  const declared = new Map(exportedFunctions('db/queries').map((fn) => [fn.name, fn]));
+  const out: ReachableQuery[] = [];
+  for (const [name, chain] of querySymbols) {
+    const fn = declared.get(name);
+    if (fn) out.push({ ...fn, via: chain });
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name));
+}

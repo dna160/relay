@@ -19,33 +19,46 @@
  */
 
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { auth, getSession } from '@/lib/auth';
-import { cn, display, muted } from '@/components/style-tokens';
+import { getSession, pendingOnboarding } from '@/lib/auth';
+import { buttonClass, cn, display, muted } from '@/components/style-tokens';
 import { OnboardingForm } from '@/components/agency/onboarding-form';
 
 export const metadata: Metadata = { title: 'Set up your agency · Relay' };
 
 export default async function OnboardingPage() {
-  const [session, authSession] = await Promise.all([getSession(), auth()]);
+  const [session, pending] = await Promise.all([getSession(), pendingOnboarding()]);
 
   if (session?.kind === 'agency') redirect('/portfolio');
 
-  if (!authSession?.user?.id) {
+  /**
+   * `pendingOnboarding()` rather than a raw `auth()` check (ADR-017). It answers
+   * the one question this page turns on — signed in, and in no org yet — and it
+   * returns no org, no role, and nothing an agency route would accept. Null
+   * here therefore means genuinely signed out, which is the branch below.
+   */
+  if (!pending) {
     return (
       <div className="flex max-w-prose flex-col gap-3">
         <h1 className={cn(display, 'text-28 text-ink')}>Sign in to continue</h1>
-        {/*
-          No control here, deliberately. `authConfig.pages.signIn` names
-          `/signin` and that route does not exist yet, so a button would be a
-          link to a 404 — worse than a sentence. Raised with the architect; the
-          moment the route lands this becomes a `buttonClass('agency')` link and
-          nothing else on the page changes.
-        */}
         <p className={cn('text-14', muted)}>
           Relay sends a link to your email rather than asking for a password. Open the most recent
           one — it signs you in and brings you straight back here.
         </p>
+        {/*
+          Round 2 left this as a sentence with no control, because
+          `authConfig.pages.signIn` named `/signin` and that route did not
+          exist: a button would have been a link to a 404, which is worse than
+          an honest paragraph. The challenge was upheld and the route now
+          exists, so this is the link it was always meant to be — and nothing
+          else on the page changed, exactly as predicted.
+        */}
+        <div>
+          <Link href="/signin" className={buttonClass('agency')}>
+            Send me a link
+          </Link>
+        </div>
       </div>
     );
   }

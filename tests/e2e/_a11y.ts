@@ -55,33 +55,42 @@ export const PROBE_ROUTE = '/e/a11y-probe/verify';
  * token, and it is why this half cannot be done in Node.
  */
 export async function resolveToken(page: Page, token: string): Promise<string> {
-  return page.evaluate((name) => {
+  const value = await page.evaluate((name) => {
     const probe = document.createElement('span');
-    // `color-mix(in srgb, ...)` forces the result into sRGB before it is
-    // serialised. Without it, a token produced by the white-label clamp comes
-    // back as `oklch(0.388 0.053 180.6)` — the right colour in a form the
-    // contract's own parser rejects. Reported to the design layer; coercing
-    // here keeps the assertion about the *colour* rather than about which
-    // colour space Chromium chose to print it in.
-    probe.style.color = `color-mix(in srgb, var(${name}) 100%, transparent)`;
+    probe.style.color = `var(${name})`;
     probe.style.position = 'absolute';
     probe.style.opacity = '0';
     document.body.appendChild(probe);
-    let value = getComputedStyle(probe).color;
-    if (!/^rgba?\(/.test(value)) {
-      // Older engines may ignore the mix. Canvas normalises anything CSS can
-      // parse into an sRGB literal, and is the last resort rather than the
-      // first because it silently accepts garbage.
-      const ctx = document.createElement('canvas').getContext('2d');
-      if (ctx) {
-        ctx.fillStyle = '#000';
-        ctx.fillStyle = value;
-        value = ctx.fillStyle;
-      }
-    }
+    const computed = getComputedStyle(probe).color;
     probe.remove();
-    return value;
+
+    /**
+     * The computed value is the right colour in whatever space the engine chose
+     * to print it in — and for anything the white-label clamp produced, that is
+     * `oklch(0.388 0.053 180.6)`, which the contract's parser rejects. Neither
+     * `color-mix(in srgb, …)` nor a canvas `fillStyle` round-trip fixes it:
+     * both keep the wider space and serialise as `color(srgb …)`.
+     *
+     * So rasterise. Painting one pixel into an sRGB canvas and reading the byte
+     * values back is the one conversion the browser cannot answer in another
+     * colour space, and it is exactly the number a human eye would receive.
+     */
+    const canvas = document.createElement('canvas');
+    canvas.width = 1;
+    canvas.height = 1;
+    const ctx = canvas.getContext('2d', { colorSpace: 'srgb', willReadFrequently: true });
+    if (!ctx) return computed;
+    ctx.fillStyle = '#000000';
+    ctx.fillStyle = computed;
+    // fillStyle silently keeps its previous value on an unparseable input, so a
+    // colour that really is black is indistinguishable from a rejected one.
+    // Paint it and compare against the same probe painted on white instead.
+    ctx.clearRect(0, 0, 1, 1);
+    ctx.fillRect(0, 0, 1, 1);
+    const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
+    return `rgb(${r}, ${g}, ${b})`;
   }, token);
+  return value;
 }
 
 /**

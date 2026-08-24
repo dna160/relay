@@ -146,6 +146,75 @@ export default defineRailway((ctx) => {
 });
 ```
 
+### The object storage bucket
+
+R2 sits outside Railway and outside every test in this repository, which makes
+it the one piece of infrastructure whose misconfiguration is invisible until
+production. Two settings are load-bearing.
+
+**1. CORS must expose `ETag`.** The browser completes the multipart upload
+itself (ADR-015, INV-10 — the app never sees a byte), which means the browser
+has to read the `ETag` off each part's `PUT` response and send the list back to
+`CompleteMultipartUpload`. A cross-origin response only exposes `ETag` to
+JavaScript if the bucket says so.
+
+```json
+[
+  {
+    "AllowedOrigins": ["https://app.relay.example", "https://staging.relay.example"],
+    "AllowedMethods": ["GET", "HEAD", "PUT"],
+    "AllowedHeaders": ["*"],
+    "ExposeHeaders": ["ETag"],
+    "MaxAgeSeconds": 3600
+  }
+]
+```
+
+**Without `ExposeHeaders: ["ETag"]`, every upload above the multipart
+threshold fails at complete** — and only there. Single-part uploads succeed,
+so small files work and large ones do not; the local dev bucket and every
+same-origin test pass, because the restriction is cross-origin only. The
+symptom an agency reports is "the big file won't upload", at the deadline,
+with a working small file as the counter-example. Found by the front-end while
+building the upload flow (F6).
+
+**2. Lifecycle must abort incomplete multipart uploads.** A browser that is
+closed mid-upload leaves its parts behind. They are invisible in the bucket
+listing and they are billed.
+
+```json
+{
+  "Rules": [
+    {
+      "ID": "abort-incomplete-multipart",
+      "Status": "Enabled",
+      "Filter": { "Prefix": "" },
+      "AbortIncompleteMultipartUpload": { "DaysAfterInitiation": 7 }
+    }
+  ]
+}
+```
+
+Seven days is longer than any legitimate upload and short enough that the
+orphans do not accumulate. This rule also matters for INV-7: a purge deletes
+the objects it can enumerate, and an abandoned multipart upload is not
+enumerable — without this rule, parts of a purged engagement's file could
+outlive its purge certificate.
+
+**3. Staging and production never share a bucket.** `.railway/railway.ts` sets
+`S3_BUCKET` per environment and `tests/unit/railway-topology.spec.ts` asserts
+the two differ. A staging purge against the production bucket destroys real
+client deliverables, and purge is irreversible by design.
+
+**4. No public access.** Every read is a presigned GET and every write a
+presigned PUT. A publicly listable bucket makes the client link redundant.
+
+None of the four is checkable from this repository. They are the first things
+to verify on a new environment and the first things to suspect when uploads
+fail in one environment and not another.
+
+---
+
 ### Migration ordering — the part that must not be got wrong
 
 `railway.json` sets:

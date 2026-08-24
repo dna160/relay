@@ -52,10 +52,58 @@ export const authConfig: NextAuthConfig = {
       from: process.env.EMAIL_FROM ?? 'Relay <no-reply@example.com>',
     }),
   ],
-  pages: { signIn: '/signin', verifyRequest: '/signin/check-email' },
+  /**
+   * All three are Relay pages, because all three are places a person lands in
+   * the middle of trying to sign in.
+   *
+   * `error` was absent and defaulted to `/api/auth/error`, an unstyled Auth.js
+   * HTML page outside the product. That is where an expired or already-used
+   * link puts someone — the single most common failure of a magic-link flow,
+   * and the one moment they most need a "send me another" button rather than a
+   * dead end. Pointing it back at `/signin` costs nothing: the page is public,
+   * so there is no redirect loop (Auth.js guards for one), and the error
+   * arrives as `?error=` for the page to render.
+   *
+   * The codes that reach it: `Verification` (link expired or already used),
+   * `EmailSignInError` (the provider refused to send), `AccessDenied`,
+   * `Configuration` (a server-side misconfiguration — say so generically and
+   * log it, never echo it). Anything else should render the same generic
+   * message rather than the raw code.
+   */
+  pages: { signIn: '/signin', verifyRequest: '/signin/check-email', error: '/signin' },
 };
 
 export const { handlers, auth, signIn, signOut } = NextAuth(authConfig);
+
+/**
+ * Signed in with Auth.js, but not yet a member of any org (ADR-013).
+ *
+ * `getSession()` below returns `null` for this person, deliberately: a null org
+ * reads as "not onboarded" and can only ever deny access. But *only* null is
+ * indistinguishable from signed-out, and a surface that cannot tell the two
+ * apart sends a freshly magic-linked user back to `/signin`, where they sign in
+ * again, and land in the same place. The loop is the whole reason this exists.
+ *
+ * It widens nothing. It answers one question — "is there an Auth.js session
+ * whose user has no org?" — and returns no org, no role, and nothing an agency
+ * route would accept. `POST /api/onboarding/org` is the only thing to do with
+ * the answer.
+ */
+export async function pendingOnboarding(): Promise<{ userId: string; email: string } | null> {
+  const session = await auth();
+  const userId = session?.user?.id;
+  if (!userId) return null;
+
+  const rows = await db
+    .select({ id: users.id, orgId: users.orgId, email: users.email })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+
+  const user = rows[0];
+  if (!user || user.orgId !== null) return null;
+  return { userId: user.id, email: user.email };
+}
 
 /* ------------------------------------------------------------------ client */
 

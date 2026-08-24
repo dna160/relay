@@ -22,6 +22,7 @@ import { TransitionControls } from '@/components/agency/transition-controls';
 import { VersionStack } from '@/components/agency/version-stack';
 import { UploadPanel } from '@/components/agency/upload-panel';
 import { RevisionNotes, type VersionThread } from '@/components/agency/revision-notes';
+import { CommentThread } from '@/components/agency/comment-thread';
 import { agencyApi } from '@/lib/api-client.agency';
 import { serverContext } from '../../../../_lib/server-context';
 import { getBoard, getEngagement } from '../../../../_lib/reads';
@@ -50,18 +51,22 @@ export default async function CardPage({
   // could honour "never floats forward".
   const ctx = await serverContext();
   const latest = [...card.versions].sort((a, b) => b.versionNo - a.versionNo)[0] ?? null;
-  const threads: VersionThread[] = await Promise.all(
-    [...card.versions]
-      .sort((a, b) => b.versionNo - a.versionNo)
-      .map(async (version) => {
-        const notes = await agencyApi.revisionNotes(version.id, ctx);
-        return {
-          versionId: version.id,
-          versionNo: version.versionNo,
-          notes: notes.ok ? notes.data : [],
-        };
-      }),
-  );
+  // The card's discussion goes out with the note reads, not after them.
+  const [threads, discussion] = await Promise.all([
+    Promise.all(
+      [...card.versions]
+        .sort((a, b) => b.versionNo - a.versionNo)
+        .map(async (version) => {
+          const notes = await agencyApi.revisionNotes(version.id, ctx);
+          return {
+            versionId: version.id,
+            versionNo: version.versionNo,
+            notes: notes.ok ? notes.data : [],
+          };
+        }),
+    ) as Promise<VersionThread[]>,
+    agencyApi.comments(card.id, ctx),
+  ]);
 
   return (
     <article className="flex max-w-prose flex-col gap-6">
@@ -72,7 +77,9 @@ export default async function CardPage({
         <h1 className={cn(display, 'text-28 text-ink')}>{card.title}</h1>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <StateChip state={card.state} />
-          <PossessionBar possession={card.possession} />
+          {/* A brand-new card has no transitions, so the clock reports no
+              holder. `state` supplies the one the board already shows. */}
+          <PossessionBar possession={card.possession} state={card.state} />
           <span className={cn(mono, 'text-12', breached ? breach : muted)}>
             rounds {formatRounds(card.roundsUsed, card.contractedRounds)}
           </span>
@@ -129,6 +136,34 @@ export default async function CardPage({
             threads={threads}
             latestVersionId={latest?.id ?? null}
             latestVersionNo={latest?.versionNo ?? null}
+            readOnly={archived}
+          />
+        </div>
+      </section>
+
+      {/*
+        Card-level discussion, the other half of PRD §7. Above Backstage and
+        below the revision notes: the notes are what an approval argument is
+        made of, and this is the conversation around them. Internal rows are in
+        this read and are never in the client's — the filter is in SQL, not in a
+        serialiser.
+
+        A failed read renders the empty state rather than an error panel; the
+        transitions and versions above are what this page is for.
+      */}
+      <section aria-labelledby="card-discussion">
+        <h2 id="card-discussion" className={cn(eyebrow, 'border-b border-ink pb-1')}>
+          Discussion
+        </h2>
+        <p className={cn('mt-2 max-w-prose text-12', muted)}>
+          About the card. A remark about one file belongs in a revision note, where it stays on
+          that version.
+        </p>
+        <div className="mt-3">
+          <CommentThread
+            engagementId={id}
+            cardId={card.id}
+            comments={discussion.ok ? discussion.data : []}
             readOnly={archived}
           />
         </div>
