@@ -1,0 +1,40 @@
+name: verify
+on:
+  push: { branches: [main] }
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: 'npm' }
+      - run: npm ci
+      # Exactly the gate CLAUDE.md names. If this passes, the ten invariants
+      # still hold and the phase may hand over.
+      - run: npm run verify
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: verify
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_USER: relay, POSTGRES_PASSWORD: relay, POSTGRES_DB: relay }
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U relay" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgres://relay:relay@localhost:5432/relay
+      AUTH_SECRET: ci-secret-not-used-in-production
+      CLIENT_LINK_SECRET: ci-secret-not-used-in-production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: 'npm' }
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run db:migrate
+      - run: npm run test:e2e
