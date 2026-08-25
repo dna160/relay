@@ -42,6 +42,7 @@ import {
   MOTION,
   TARGETS,
   REFLOW,
+  UNTENANTED_AGENCY,
 } from '@/styles/a11y-contract';
 
 /**
@@ -321,5 +322,155 @@ describe('the floor the contract states is the floor the contract can state', ()
         expect(() => parseColor(value), `${mode} ${token} = ${value}`).not.toThrow();
       }
     }
+  });
+});
+
+/* ------------------------------ the untenanted default, and why ratios miss it */
+
+describe('the untenanted default is the published colour, not a computed one', () => {
+  /**
+   * ROUND 2 DEFECT, and the sharpest thing this suite learned.
+   *
+   * `--agency` resolves down two paths: the published literal when there is no
+   * tenant, the OKLCH clamp when there is one. The clamp used to swallow the
+   * default too — `var(--brand-agency, #1f4e46)` routed the *default* through
+   * the tenant branch, and in dark mode the chroma lift re-lifted a colour that
+   * had already been lifted. The browser painted rgb(0, 163, 144) while every
+   * document in the repository published #499D8F.
+   *
+   * **Every contrast assertion in this file passed the whole time.** The
+   * painted-but-wrong colour measures 5.690:1; the published one measures
+   * 5.571:1. Both clear 4.5 comfortably. A ratio assertion is structurally
+   * incapable of catching a colour that is wrong but still legible — it is
+   * right about the wrong thing. Only an exact-value assertion catches it, and
+   * only against the *painted* value, which needs a browser.
+   *
+   * What runs here is the half that does not: the two records inside the
+   * contract must agree, and the stylesheet must still read the hook in the one
+   * shape that keeps the default out of the clamp. The painted half is
+   * `a11y-shell.spec.ts`.
+   */
+
+  it('records the same untenanted --agency in both places it is written down', () => {
+    for (const mode of ['light', 'dark'] as const) {
+      expect(
+        UNTENANTED_AGENCY[mode],
+        `UNTENANTED_AGENCY and TOKENS disagree about ${mode} --agency. One of them is what ` +
+          'the browser is asserted against and the other is what every ratio in ' +
+          'ACCESSIBILITY.md was computed from; they cannot differ.',
+      ).toBe(TOKENS[mode]['--agency']);
+    }
+  });
+
+  it('demonstrates why a ratio assertion cannot catch this, so nobody replaces the exact one', () => {
+    // The colour the browser actually painted while the defect was live.
+    const drifted = 'rgb(0, 163, 144)';
+    const published = TOKENS.dark['--agency'];
+    const ground = TOKENS.dark['--paper-2'];
+
+    expect(contrastRatio(drifted, ground), 'the wrong colour was illegible').toBeGreaterThan(4.5);
+    expect(contrastRatio(published, ground)).toBeGreaterThan(4.5);
+    expect(
+      parseColor(drifted),
+      'the drifted and published colours are the same; this case has stopped documenting anything',
+    ).not.toEqual(parseColor(published));
+  });
+
+  it('never reads the tenant hook with a fallback, which is what routed the default through the clamp', () => {
+    /**
+     * The root cause in one line. `var(--brand-agency, #1f4e46)` makes the
+     * clamp valid with no tenant, so the default goes through it. Undeclared,
+     * `var(--brand-agency)` is guaranteed-invalid, `--agency-tenant` is invalid
+     * at computed-value time, and `var(--agency-tenant, <literal>)` falls
+     * through to the published colour untouched.
+     */
+    const reads = [...GLOBALS_CSS.matchAll(/var\(\s*--brand-agency\s*([^)]*)\)/g)];
+    expect(reads.length, 'the tenant hook is never read').toBeGreaterThan(0);
+    for (const read of reads) {
+      expect(
+        (read[1] ?? '').trim(),
+        'the tenant hook is read with a fallback. That fallback makes the clamp valid when ' +
+          'there is no tenant, and the published default is then a computed colour.',
+      ).toBe('');
+    }
+  });
+
+  it('leaves the tenant hook undeclared, so there is nothing for the clamp to consume', () => {
+    expect(
+      GLOBALS_CSS,
+      '--brand-agency is declared in the stylesheet; the untenanted state is now a tenanted one',
+    ).not.toMatch(/^\s*--brand-agency\s*:/m);
+  });
+
+  it('falls through to the published literal in each mode', () => {
+    // `var(--agency-tenant, <literal>)` is the fall-through, and the literal in
+    // it is the value this file records.
+    const fallbacks = [...GLOBALS_CSS.matchAll(/var\(\s*--agency-tenant\s*,\s*(#[0-9a-fA-F]{6})/g)]
+      .map((m) => (m[1] ?? '').toLowerCase());
+    expect(fallbacks.length, 'the tenant value is never given a fall-through').toBeGreaterThan(1);
+    for (const mode of ['light', 'dark'] as const) {
+      expect(
+        fallbacks,
+        `no fall-through to the published ${mode} --agency; an untenanted install would compute one`,
+      ).toContain(UNTENANTED_AGENCY[mode].toLowerCase());
+    }
+  });
+});
+
+describe('an explicit theme choice reaches the element the tokens are read from', () => {
+  /**
+   * THE SECOND ROUND 2 DEFECT, and one no colour assertion could have caught,
+   * because both palettes were internally valid — the *selector* was wrong.
+   *
+   * `data-theme` lives on `<html>`; `data-relay-root` lives on `<body>`. The
+   * dark rules were written `[data-relay-root]:not([data-theme='light'])`,
+   * which is satisfied by any `<body>` — `<body>` never carries `data-theme`.
+   * So a reader on a dark system who explicitly chose **light** still got dark,
+   * and the self-qualified `[data-relay-root][data-theme='dark']` matched
+   * nothing at all.
+   *
+   * Structural here; the painted proof is in `a11y-shell.spec.ts`.
+   */
+
+  /** Every selector in the stylesheet that mentions the tenant root. */
+  const rootSelectors = [...GLOBALS_CSS.matchAll(/^[^{}]*\[data-relay-root\][^{}]*\{/gm)].map(
+    (m) => (m[0] ?? '').replace(/\{$/, '').trim(),
+  );
+
+  it('finds the selectors to check, so an empty sweep is not a pass', () => {
+    expect(rootSelectors.length).toBeGreaterThan(3);
+  });
+
+  it('never qualifies the tenant root with the theme attribute directly', () => {
+    const offenders = rootSelectors.filter((selector) =>
+      /\[data-relay-root\][^\s,>]*\[data-theme/.test(selector),
+    );
+    expect(
+      offenders,
+      'a selector reads data-theme off the same element as data-relay-root. The attribute is ' +
+        'on <html> and the hook is on <body>: this matches nothing, or — with :not() — ' +
+        'everything.',
+    ).toEqual([]);
+  });
+
+  it('scopes every theme-conditional tenant-root rule under the document root', () => {
+    const themed = rootSelectors.filter((selector) => selector.includes('data-theme'));
+    expect(themed.length, 'no theme-conditional rule reaches the tenant root').toBeGreaterThan(0);
+    for (const selector of themed) {
+      for (const part of selector.split(',').map((s) => s.trim()).filter((s) => s.includes('data-relay-root'))) {
+        expect(
+          part,
+          `${part} is not descendant-scoped to :root. The theme lives on <html>; a rule that ` +
+            'does not look there is deciding the theme from the wrong element.',
+        ).toMatch(/^:root[^\s]*\s+\[data-relay-root\]/);
+      }
+    }
+  });
+
+  it('gates the dark palette on the root, in both the media query and the explicit choice', () => {
+    // Both halves must exist: the media query serves the system preference and
+    // :not([data-theme='light']) is what lets an explicit light choice win it.
+    expect(GLOBALS_CSS).toMatch(/:root:not\(\[data-theme='light'\]\)\s+\[data-relay-root\]/);
+    expect(GLOBALS_CSS).toMatch(/:root\[data-theme='dark'\]\s+\[data-relay-root\]/);
   });
 });

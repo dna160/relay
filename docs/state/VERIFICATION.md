@@ -23,7 +23,8 @@
 ## The four commands
 
 ```bash
-npm run verify        # typecheck + lint + unit + invariants. The handover gate.
+npm run verify:all    # verify + next build. THE HANDOVER GATE.
+npm run verify        # typecheck + lint + unit + invariants
 npm run test:e2e      # Playwright, both projects. Needs a running app and a database.
 node .github/scripts/check-invariant-skips.mjs     # the ten specs exist; skips name their phase
 node .github/scripts/check-env-registry.mjs        # env drift: src -> .env.example -> runbook -> .railway/railway.ts
@@ -39,6 +40,8 @@ node .github/scripts/check-env-registry.mjs        # env drift: src -> .env.exam
 | | ↳ at the exported card serialiser | 🟢 live | `visibility.spec.ts > INV-1 at the exported card serialiser` — 5 cases incl. a negative control. The round-1 defect (`toClientCard` exported with no visibility check of its own) was fixed by the Architect; this suite asserts the fix. |
 | | ↳ every client-reachable query has a case | 🟢 **live, and mechanical** | `visibility.spec.ts > INV-1 the query layer is enumerated, not remembered` — 10 cases. The layer is enumerated **by transitive reachability** from every client entry point, not by signature. See §6A. |
 | | ↳ card-level discussion, on the write | 🟢 live | `visibility.spec.ts > INV-1 a reply cannot be grafted onto a thread it does not belong to` — 9 cases. `parent_id` is a bare self-reference, so before the back-end hardened `postComment()` a reply could be grafted onto another card, another engagement, or an internal root. Driven against a programmable fake driver, asserting on the **bound insert parameters** rather than the returned row — what the code decided to write, not what a fixture said. |
+| | ↳ the untenanted default is the published colour | 🟢 live | `a11y-shell.spec.ts > the untenanted default is the published colour` — 4 browser cases (both modes, `--agency` and `--tint-agency`), plus 5 static cases in `a11y-contract.spec.ts`. **The case that proves a ratio assertion is not enough**: the drifted colour measured 5.690:1 and the published one 5.571:1, so every contrast check passed against a colour the product did not paint. |
+| | ↳ an explicit theme choice reaches the body | 🟢 live | Same file — 8 browser cases across both system preferences and both choices, plus `<html>`/`<body>` agreement at three theme states, plus 5 static selector cases. Both palettes were internally valid, so only asking *which palette `<body>` received* could see this. |
 | | ↳ card-level discussion, at the route | 🟢 live | `tests/unit/comment-writer.spec.ts` — 24 cases against the shipped `POST /api/comments`. `@/db/client` and `requireAgency()` are replaced; everything between them is the real handler taking its real branches in its real order. Covers the 404 for another org's card, the engagement/card mismatch that stops a valid card being smuggled under someone else's engagement, and `assertWritable` running **before** the insert (amendment A9). |
 | | ↳ an internal comment announces nothing | 🟢 live | Same file, 4 cases. `publishEvent()` emits `pg_notify` through the same executor, so whether a frame was published is visible in the captured statements — the one assertion that looked like it needed a live bus does not. Includes the case the route cannot decide from its input: a reply forced internal by its root, where the publish gate must read the written row rather than the request. |
 | | ↳ the client revision thread | 🟢 live | `visibility.spec.ts > INV-1 the client revision thread` — 8 cases; the comment thread gets its own, including the parent self-join that stops a public reply under an internal root from leaking. The three 404 paths (unpublished version, private lane, another engagement's version), their indistinguishability from each other, and the internal-note filter. |
@@ -139,11 +142,11 @@ Nine of ten suites now execute. At Phase 0 handover it was four.
 
 | EXIT condition | Proven by |
 |---|---|
-| Deploy and rollback both executed once against staging | ⚠️ **UNPROVEN, and not provable by a test.** Procedure written: `docs/RUNBOOK.md` §3 and §4. It has never been run. **This is the largest open risk in the build** — see §5. |
+| Deploy and rollback both executed once against staging | ⚠️ **UNPROVEN, and not provable by a test.** Procedure written: `docs/RUNBOOK.md` §3 and §4. It has never been run. **This is the largest open risk in the build** — see §5. The topology it depends on is now typechecked and gated. |
 | All ten invariant suites unskipped and green in CI | **CI job `invariant contract`** → `node .github/scripts/check-invariant-skips.mjs`, which fails at Phase ≥ 8 if any `.skip` remains. Verified to fail correctly: `node .github/scripts/check-invariant-skips.mjs --phase 8` exits 1 today and names all five. |
 | Every destructive job is dry-runnable and logs its manifest before acting | CI job `purge --plan smoke test` (see Phase 6). Currently self-skipping. |
 | Full e2e matrix, agency desktop and client mobile | `playwright.config.ts` — two projects, split by directory so a test cannot be written for the wrong audience. 22 tests across 4 files, all **red** pending routes. |
-| Accessibility sweep against the DESIGN-SYSTEM floor | 🟢 **PROVEN, and executed.** Two halves. Node: `tests/unit/a11y-contract.spec.ts` (78 cases) and `tests/unit/a11y-source.spec.ts` (11 cases) run inside `npm run verify` — all 44 contrast pairs on both grounds in both modes, `globals.css` diffed against the contract module so neither drifts, the global `:focus-visible` geometry, the reduced-motion token collapse, `<html lang>`, the `data-relay-root` anchor, no `outline:none`. Browser: `tests/e2e/{agency,client}/a11y-shell.spec.ts`, 37 tests, **run against a live dev server — 33 pass, 4 fail on three real defects** (§5). Visible keyboard focus and `prefers-reduced-motion` both pass against the real components at both viewports, and the white-label OKLCH clamp holds against all seven hostile brand values. These two EXIT conditions are no longer UNPROVEN. |
+| Accessibility sweep against the DESIGN-SYSTEM floor | 🟢 **PROVEN, executed, and green.** Node: `tests/unit/a11y-contract.spec.ts` (87 cases) and `tests/unit/a11y-source.spec.ts` (11 cases) run inside `npm run verify`. Browser: `tests/e2e/{agency,client}/a11y-shell.spec.ts`, **61 tests, all passing** against a live server — visible keyboard focus and `prefers-reduced-motion` at both viewports, the white-label OKLCH clamp against seven hostile brand values, the locked-token wall, exact untenanted token values, and the theme selector. The three defects this suite found in round 2 are all fixed and the suite is green on them. |
 
 ---
 
@@ -151,7 +154,7 @@ Nine of ten suites now execute. At Phase 0 handover it was four.
 
 | Job | Enforces | Blocking now? |
 |---|---|---|
-| `verify (node 22)` / `verify (node 24)` | `npm run verify` — typecheck, lint, unit, invariants | Yes — **green**. 454 live assertions (341 unit, 113 invariant), up from 321 at the end of round 1. |
+| `verify (node 22)` / `verify (node 24)` | `npm run verify:all` — typecheck, lint, unit, invariants, **and `next build`**. The build is in the gate because a `'use server'` file exporting a non-async const passes typecheck and lint and fails page-data collection; only the build caught it. | Yes — **green**. 463 live assertions (350 unit, 113 invariant), up from 321 at the end of round 1. |
 | `invariant contract` | All ten specs exist; every skipped suite names its phase; at Phase 8 none are skipped; nothing removed from `tests/invariants` without the `invariant-change` label | Yes — green |
 | `build` | `next build` succeeds | Yes |
 | `env registry` | Every `process.env` read in `src/` is in `.env.example`; every `.env.example` variable is in the runbook **and is set by `.railway/railway.ts`**; no `E2E_` variable reaches a deployed environment; no real secret is committed | Yes — **red on one line**: `NEXT_PUBLIC_APP_URL` (F7). `PGPOOL_MAX` was fixed by B8. |
@@ -213,51 +216,15 @@ because this is the document that gets audited.
 | 8 | Docs diverge from the code | Architect. Amendments A1–A7. |
 | 9 | `.railway/railway.ts` does not exist and is unowned | QA (Q1). Written and gated by 14 assertions. |
 | 10 | `POST /api/comments` did not exist, so `internal` could only ever be false and every defence around internal threads guarded an empty set | Back-end. Now covered live by `tests/unit/comment-writer.spec.ts` — 24 cases against the shipped handler. |
-| 11 | The audience classifier put `/api/events` on the client side | QA (round 2). Amendment A1 makes it the agency stream; a client page fetching it would not have tripped the Phase 4 exit assertion. Five cases pin the split. |
+| 11 | Dark `--agency` painted rgb(0, 163, 144) while every document published `#499D8F` | UI/UX. `var(--brand-agency, #1f4e46)` routed the *default* through the tenant clamp, and in dark mode the chroma lift re-lifted an already-lifted colour. The hook is now undeclared and the clamp is a tenant-only branch. |
+| 12 | `data-theme="light"` on `<html>` did not reach `<body>`: a reader on a dark system who chose light still got dark | UI/UX. `[data-relay-root]:not([data-theme='light'])` was satisfied by any `<body>`, which never carries the attribute. All four dark selectors are now descendant-scoped to the root's state. |
+| 13 | The client magic-link fields were 38px tall at 14px, below both the 44px target floor and the 16px iOS-zoom floor | Front-end. `access-form.tsx` now uses the `Field` and `Button` primitives instead of the second vocabulary in `style-tokens.ts`. |
+| 14 | `railway/iac` was not a dependency and `.railway/**` was outside tsc and ESLint | Architect, ADR-019. `railway@^3.11.0` added; the topology file is typechecked and linted, verified by planting an error and confirming `tsc` caught it. |
+| 15 | The audience classifier put `/api/events` on the client side | QA (round 2). Amendment A1 makes it the agency stream; a client page fetching it would not have tripped the Phase 4 exit assertion. Five cases pin the split. |
 
 ### Open
 
-1. **The dark-mode `--agency` the product renders is not the one the design
-   system publishes.** `docs/design/ACCESSIBILITY.md` tabulates dark `--agency`
-   as `#499D8F` (rgb 73,157,143) at 5.016:1 on `--paper-2`, and
-   `src/styles/a11y-contract.ts` records the same. The browser renders
-   **rgb(0, 163, 144)** — the `@supports` block's `oklch(from …)` clamp
-   overrides the literal, and in dark mode it does not land on the published
-   value. Light mode does. Contrast still passes (the live-page contrast test is
-   green), so this is a *drift*, not an illegibility: the measured ratios in the
-   accessibility document are for a colour the product does not paint in dark
-   mode. Found by `a11y-shell.spec.ts > every token resolves to its shipped
-   value in dark`, at both viewports. **Owner: UI/UX.** Either publish the
-   clamped value or make the clamp reproduce the published one.
-2. **The client magic-link fields are below two hard floors.**
-   `src/components/client/access-form.tsx` uses the raw `input` token from
-   `src/components/style-tokens.ts` — `text-14 … py-2`, which renders **38px
-   tall at 14px** — rather than the `Field` primitive, whose `CONTROL` is
-   `text-16` and `h-11` (44px) and is correct. So on the acquisition surface, on
-   a phone, the email and code fields miss the 44px client-facing target floor
-   and the 16px floor below which iOS Safari zooms the viewport on focus. This
-   is the unfinished half of F4: a second vocabulary in `style-tokens.ts`
-   competing with the primitive layer, for inputs this time rather than buttons.
-   **Owner: front-end.**
-3. **`NEXT_PUBLIC_APP_URL` is read by `src/lib/api-client.core.ts` and is not in
-   `.env.example`.** One line, and the only thing keeping the `env registry`
-   gate red. **Owner: front-end (F7).**
-4. **`loadClientShelf()` is exported, covered, and reachable from nothing.** The
-   reachability walk finds every other client query from a route; this one has
-   no caller anywhere in `src/`. Either the client shelf surface was never wired
-   or the function is dead. It has a visibility case either way, so this is a
-   product gap rather than a safety one. **Owner: back-end / front-end.**
-5. **`railway/iac` is not a dependency**, so `.railway/railway.ts` describes the
-   topology correctly and nothing can execute it. Adding the `railway` package
-   needs an ADR. The Config-as-Code cutoff is **2026-12-01**. **Owner:
-   Architect.**
-6. **`.railway/**` is outside the toolchain.** `tsc` and `eslint` both skip
-   dot-directories, so a syntax error in the deploy topology would not fail
-   `npm run verify`. `tests/unit/railway-topology.spec.ts` reads it as text and
-   asserts the properties whose violation is an incident — a floor, not a
-   substitute. Fixing it properly means adding `.railway` to `tsconfig.json`'s
-   `include`, which is blocked on defect 5. **Owner: Architect.**
-7. **`src/components/agency/card-tile.tsx` animates outside the motion budget.**
+1. **`src/components/agency/card-tile.tsx` animates outside the motion budget.**
    `transition-opacity` on hover, silenced with `motion-reduce:transition-none`
    at the call site. ACCESSIBILITY.md §7 reduces motion at the token precisely
    so no component has to remember the variant — and the next one will not. Not
@@ -265,15 +232,30 @@ because this is the document that gets audited.
    keeps the controls keyboard-reachable), so it is recorded rather than
    suppressed: `a11y-source.spec.ts` allows this one file by name and fails on
    any second. **Owner: front-end.**
-8. **The 22 data-driven e2e tests have never run.** Not for want of endpoints —
-   B7 shipped them. Docker Hub is unreachable from this environment, so no
-   Postgres exists here. See §4 for the full list of what that leaves unproven.
-   **Owner: CI, on the next push.**
-9. **Deploy and rollback have never been executed.** Phase 8's only EXIT
-   condition a test cannot cover, and the largest open risk in the build. Now
-   also gated on defect 5. **Owner: Architect.**
-10. **Backups are Railway's defaults and no restore has ever been tested.**
-    RUNBOOK §4c depends on one. **Owner: Architect.**
+2. **`loadClientShelf()` is exported, covered, and reachable from nothing.** The
+   reachability walk finds every other client query from a route; this one has
+   no caller anywhere in `src/`. Either the client shelf surface was never wired
+   or the function is dead. It has a visibility case either way, so this is a
+   product gap rather than a safety one. **Owner: back-end / front-end.**
+3. **The 22 data-driven e2e tests have never run.** Not for want of endpoints —
+   B7 shipped them and they are correctly gated. Docker Hub is unreachable from
+   this environment, so no Postgres exists here. See §4 for the full list of
+   what that leaves unproven. **Owner: CI, on the next push.**
+4. **The e2e suite runs against `next dev`, which is not the product.** The dev
+   server injects a Dev Tools launcher — a 32px button, below every target floor
+   this suite asserts — and it cost one false "the client surface misses its
+   44px floor" before it was traced. The sweeps now exclude injected chrome by
+   ancestry (`INJECTED_CHROME` in `tests/e2e/_a11y.ts`), so a genuinely
+   undersized control still fails. The faithful fix is a `webServer` of
+   `next build && next start`, which is slower and is a call for the next round.
+   Worth stating because an accessibility suite that cries wolf gets its floor
+   lowered rather than its bug fixed. **Owner: QA, next round.**
+5. **Deploy and rollback have never been executed.** Phase 8's only EXIT
+   condition a test cannot cover, and the largest open risk in the build. No
+   longer blocked on tooling: `railway@^3.11.0` is a devDependency under
+   ADR-019 and `.railway/**` is inside tsc and ESLint. **Owner: Architect.**
+6. **Backups are Railway's defaults and no restore has ever been tested.**
+   RUNBOOK §4c depends on one. **Owner: Architect.**
 
 ### Still UNPROVEN in this document
 
@@ -287,7 +269,8 @@ Four rows, down from nine at the end of round 1:
 - **PHASE-7** — stamping a template twice produces structurally identical
   graphs. `applyTemplate()` does not exist.
 - **PHASE-8** — deploy and rollback executed once against staging. Not provable
-  by a test, and now also blocked on defect 5.
+  by a test. No longer blocked on tooling: `railway@^3.11.0` is a devDependency
+  under ADR-019 and `.railway/**` is inside tsc and ESLint.
 
 ---
 
@@ -369,7 +352,7 @@ tests/
 │   ├── _query-capture.ts  runs a query or a write against a fake driver; compiled
 │   │                      SQL, bound insert parameters, and empty-result 404 paths
 │   └── _sql.ts
-├── unit/              341 live, 20 skipped, across 12 specs
+├── unit/              350 live, 20 skipped, across 12 specs
 │   ├── a11y-contract.spec.ts     78 — the contrast floor, and globals.css against it
 │   ├── a11y-source.spec.ts       11 — focus ring, motion budget, app shell
 │   ├── railway-topology.spec.ts  14 — the deploy topology nothing else checks
@@ -378,10 +361,10 @@ tests/
 │                                   with no database: order of operations, the
 │                                   423 gate, and the events an internal
 │                                   comment must not publish
-└── e2e/               59 tests, 6 specs, 2 projects + routes.ts + _a11y.ts
-                    37 accessibility (33 pass, executed); 22 data-driven (never run, §4)
+└── e2e/               83 tests, 6 specs, 2 projects + routes.ts + _a11y.ts
+                    61 accessibility (all pass, executed); 22 data-driven (never run, §4)
 ```
 
-Live totals: **454 passing, 36 skipped**. `npm run verify` is green.
+Live totals: **463 passing, 36 skipped**. `npm run verify` is green.
 Every skipped block names the phase that unskips it; the `invariant contract`
 job fails if one does not. At the end of round 1 the same line read 255.

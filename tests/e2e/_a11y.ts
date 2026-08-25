@@ -38,6 +38,7 @@ import {
   REFLOW,
   TARGETS,
   TOKENS,
+  UNTENANTED_AGENCY,
   contrastRatio,
   parseColor,
   type Mode,
@@ -46,6 +47,21 @@ import {
 
 /** A token, a shell, and no data behind it. */
 export const PROBE_ROUTE = '/e/a11y-probe/verify';
+
+/**
+ * Chrome the dev server injects, which is not the product.
+ *
+ * `next dev` mounts a Dev Tools launcher into the page — a 32px button, below
+ * every target floor this suite asserts. It cost a false "the client surface
+ * misses its 44px floor" before it was noticed, which is the worse failure
+ * mode: an accessibility suite that cries wolf gets its floor lowered rather
+ * than its bug fixed.
+ *
+ * Excluded by ancestry rather than by size, so a genuinely undersized control
+ * still fails. The whole sweep would be more faithful against `next build &&
+ * next start`, where none of this exists — noted in `docs/state/VERIFICATION.md`.
+ */
+export const INJECTED_CHROME = 'nextjs-portal, [data-nextjs-dialog], [data-nextjs-toast], #__next-build-watcher';
 
 /**
  * Custom properties resolve to their *declared text* in `getComputedStyle`, so
@@ -106,6 +122,139 @@ export function durationMs(value: string): number {
   if (trimmed.endsWith('ms')) return Number.parseFloat(trimmed);
   if (trimmed.endsWith('s')) return Number.parseFloat(trimmed) * 1000;
   return Number.parseFloat(trimmed);
+}
+
+/**
+ * The same probe, but hosted inside a named element.
+ *
+ * `resolveToken` reads at `<body>`, which is the right default — it is where
+ * the tenant hook lives and where every component sits. This variant exists to
+ * read the *same* token at `<html>` and compare, because the round-2 theme
+ * defect was exactly a disagreement between those two elements: `data-theme`
+ * lives on `<html>`, `data-relay-root` on `<body>`, and a rule that reads the
+ * attribute off the wrong one decides the theme from the wrong element.
+ */
+export async function resolveTokenIn(
+  page: Page,
+  token: string,
+  host: 'html' | 'body',
+): Promise<string> {
+  return page.evaluate(
+    ([name, where]) => {
+      const parent = where === 'html' ? document.documentElement : document.body;
+      const probe = document.createElement('span');
+      probe.style.color = `var(${name})`;
+      probe.style.position = 'absolute';
+      probe.style.opacity = '0';
+      parent.appendChild(probe);
+      const computed = getComputedStyle(probe).color;
+      probe.remove();
+      const canvas = document.createElement('canvas');
+      canvas.width = 1;
+      canvas.height = 1;
+      const ctx = canvas.getContext('2d', { colorSpace: 'srgb', willReadFrequently: true });
+      if (!ctx) return computed;
+      ctx.fillStyle = '#000000';
+      ctx.fillStyle = computed;
+      ctx.clearRect(0, 0, 1, 1);
+      ctx.fillRect(0, 0, 1, 1);
+      const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
+      return `rgb(${r}, ${g}, ${b})`;
+    },
+    [token, host] as const,
+  );
+}
+
+/** Sets, or clears, the explicit theme choice. It lives on `<html>`. */
+export async function setTheme(page: Page, choice: Mode | null): Promise<void> {
+  await page.evaluate((value) => {
+    if (value === null) document.documentElement.removeAttribute('data-theme');
+    else document.documentElement.setAttribute('data-theme', value);
+  }, choice);
+}
+
+/**
+ * The untenanted `--agency` is the **published** colour, exactly.
+ *
+ * A ratio assertion cannot make this claim. When the clamp swallowed the
+ * default, dark `--agency` painted rgb(0, 163, 144) against a published
+ * #499D8F — 5.690:1 versus 5.571:1, both comfortably over 4.5, and every
+ * contrast check in this suite passed against a colour the product did not
+ * paint. Exact value or nothing.
+ */
+export async function assertUntenantedAgency(page: Page, mode: Mode): Promise<void> {
+  await setTheme(page, mode);
+
+  const hook = await page.evaluate(
+    (selector) => {
+      const root = document.querySelector(selector);
+      return root instanceof HTMLElement
+        ? getComputedStyle(root).getPropertyValue('--brand-agency').trim()
+        : 'NO ROOT';
+    },
+    BRAND_ROOT_SELECTOR,
+  );
+  expect(
+    hook,
+    'a tenant hook is declared on the shipped stylesheet, so this is not the untenanted state ' +
+      'and the assertion below would be measuring a tenanted colour',
+  ).toBe('');
+
+  const painted = await resolveToken(page, '--agency');
+  expect(
+    parseColor(painted),
+    `the default --agency is computed rather than published. The contract records ` +
+      `${UNTENANTED_AGENCY[mode]} for ${mode}; the browser paints ${painted}. Check that ` +
+      '--brand-agency is still undeclared and that the clamp only reaches --agency-tenant.',
+  ).toEqual(parseColor(UNTENANTED_AGENCY[mode]));
+}
+
+/**
+ * The same trap one layer down: the tints are `color-mix()` of `--agency`, so a
+ * drifted hue drifts them too and every recorded tint hex becomes fiction.
+ */
+export async function assertUntenantedTint(page: Page, mode: Mode): Promise<void> {
+  await setTheme(page, mode);
+  const painted = await resolveToken(page, '--tint-agency');
+  expect(parseColor(painted), `--tint-agency in ${mode} is mixed from a computed --agency`).toEqual(
+    parseColor(TOKENS[mode]['--tint-agency']),
+  );
+}
+
+/**
+ * An explicit choice beats the system preference — read at `<body>`.
+ *
+ * This is the round-2 defect stated as a test. A reader on a dark system who
+ * chose light was still served dark, because the dark rule was satisfied by any
+ * element without `data-theme` and `<body>` never has it. Both palettes were
+ * internally valid, so no colour assertion could see it; only asking "which
+ * palette did <body> actually get, given a choice that disagrees with the
+ * system" can.
+ */
+export async function assertExplicitThemeWins(page: Page, choice: Mode): Promise<void> {
+  await setTheme(page, choice);
+  for (const token of ['--ink', '--paper', '--paper-2'] as const) {
+    const painted = await resolveTokenIn(page, token, 'body');
+    expect(
+      parseColor(painted),
+      `${token} at <body> with data-theme="${choice}" on <html>. The reader made a choice and ` +
+        'the element their content is rendered in did not receive it.',
+    ).toEqual(parseColor(TOKENS[choice][token]));
+  }
+}
+
+/** `<html>` and `<body>` must resolve the same palette, whatever the theme. */
+export async function assertRootAndBodyAgree(page: Page, choice: Mode | null): Promise<void> {
+  await setTheme(page, choice);
+  for (const token of ['--ink', '--paper', '--paper-2', '--agency'] as const) {
+    const atRoot = await resolveTokenIn(page, token, 'html');
+    const atBody = await resolveTokenIn(page, token, 'body');
+    expect(
+      parseColor(atBody),
+      `${token} resolves differently at <html> and at <body> (data-theme=${choice ?? 'unset'}). ` +
+        'One of the two theme selectors is reading the attribute off the wrong element.',
+    ).toEqual(parseColor(atRoot));
+  }
 }
 
 export async function assertShellLoaded(page: Page): Promise<void> {
@@ -200,7 +349,13 @@ interface Ring {
 async function ringOf(page: Page, index: number): Promise<Ring | null> {
   return page.evaluate(
     ([selector, i]) => {
-      const el = document.querySelectorAll<HTMLElement>(selector)[i];
+      const all = Array.from(document.querySelectorAll<HTMLElement>(selector)).filter(
+        (candidate) =>
+          !candidate.closest(
+            'nextjs-portal, [data-nextjs-dialog], [data-nextjs-toast], #__next-build-watcher',
+          ),
+      );
+      const el = all[i];
       if (!el) return null;
       el.focus();
       const s = getComputedStyle(el);
@@ -232,7 +387,9 @@ export async function assertEveryControlShowsARing(page: Page): Promise<void> {
   // .focus() alone can leave the pseudo-class unmatched in Chromium.
   await page.keyboard.press('Tab');
 
-  const count = await page.locator(FOCUSABLE_SELECTOR).count();
+  const count = await page
+    .locator(FOCUSABLE_SELECTOR)
+    .evaluateAll((els, chrome) => els.filter((el) => !el.closest(chrome)).length, INJECTED_CHROME);
   expect(
     count,
     'no interactive elements on the probe route — the page did not render, and a ' +
@@ -259,7 +416,11 @@ export async function assertEveryControlShowsARing(page: Page): Promise<void> {
 export async function assertNoPositiveTabindex(page: Page): Promise<void> {
   const positive = await page
     .locator('[tabindex]')
-    .evaluateAll((els) => els.filter((el) => (el as HTMLElement).tabIndex > 0).length);
+    .evaluateAll(
+      (els, chrome) =>
+        els.filter((el) => !el.closest(chrome) && (el as HTMLElement).tabIndex > 0).length,
+      INJECTED_CHROME,
+    );
   expect(positive, 'ACCESSIBILITY.md §4: no tabindex above 0 exists in this codebase').toBe(0);
 }
 
@@ -288,8 +449,9 @@ export async function durationToken(page: Page): Promise<string> {
 }
 
 export async function assertNothingMoves(page: Page): Promise<void> {
-  const moving = await page.evaluate(() =>
+  const moving = await page.evaluate((chrome) =>
     Array.from(document.querySelectorAll<HTMLElement>('*'))
+      .filter((el) => !el.closest(chrome))
       .map((el) => {
         const s = getComputedStyle(el);
         const parse = (v: string) => v.split(',').map((x) => Number.parseFloat(x) || 0);
@@ -297,29 +459,34 @@ export async function assertNothingMoves(page: Page): Promise<void> {
         return worst > 0 ? `${el.tagName.toLowerCase()}.${el.className}` : null;
       })
       .filter((x): x is string => x !== null),
-  );
+  INJECTED_CHROME);
   expect(moving, 'these still animate under prefers-reduced-motion').toEqual([]);
 }
 
 export async function assertNoInfiniteAnimation(page: Page): Promise<void> {
   const infinite = await page.evaluate(
-    () =>
-      Array.from(document.querySelectorAll<HTMLElement>('*')).filter((el) =>
-        getComputedStyle(el).animationIterationCount.includes('infinite'),
+    (chrome) =>
+      Array.from(document.querySelectorAll<HTMLElement>('*')).filter(
+        (el) =>
+          !el.closest(chrome) &&
+          getComputedStyle(el).animationIterationCount.includes('infinite'),
       ).length,
+    INJECTED_CHROME,
   );
   expect(infinite, 'spinners, shimmer and pulsing dots do not exist in this product').toBe(0);
 }
 
 export async function assertOnlySanctionedKeyframes(page: Page): Promise<void> {
-  const names = await page.evaluate(() =>
-    Array.from(
-      new Set(
-        Array.from(document.querySelectorAll<HTMLElement>('*')).flatMap((el) =>
-          getComputedStyle(el).animationName.split(',').map((n) => n.trim()),
+  const names = await page.evaluate(
+    (chrome) =>
+      Array.from(
+        new Set(
+          Array.from(document.querySelectorAll<HTMLElement>('*'))
+            .filter((el) => !el.closest(chrome))
+            .flatMap((el) => getComputedStyle(el).animationName.split(',').map((n) => n.trim())),
         ),
       ),
-    ),
+    INJECTED_CHROME,
   );
   for (const name of names) {
     expect(ALLOWED_ANIMATION_NAMES, `unexpected animation: ${name}`).toContain(name);
@@ -329,11 +496,19 @@ export async function assertOnlySanctionedKeyframes(page: Page): Promise<void> {
 export async function assertTargetsMeetTheFloor(page: Page, floorPx: number): Promise<void> {
   const boxes = await page
     .locator('button, a[href], input:not([type="hidden"]), [role="radio"]')
-    .evaluateAll((els) =>
-      els.map((el) => {
-        const r = el.getBoundingClientRect();
-        return { w: r.width, h: r.height, name: (el.textContent || el.tagName).trim().slice(0, 40) };
-      }),
+    .evaluateAll(
+      (els, chrome) =>
+        els
+          .filter((el) => !el.closest(chrome))
+          .map((el) => {
+            const r = el.getBoundingClientRect();
+            return {
+              w: r.width,
+              h: r.height,
+              name: (el.textContent || el.tagName).trim().slice(0, 40),
+            };
+          }),
+      INJECTED_CHROME,
     );
   const visible = boxes.filter((b) => b.w > 0 && b.h > 0);
   expect(visible.length, 'no visible controls to measure').toBeGreaterThan(0);
@@ -346,7 +521,13 @@ export async function assertTargetsMeetTheFloor(page: Page, floorPx: number): Pr
 export async function assertInputsAreNotZoomBait(page: Page): Promise<void> {
   const sizes = await page
     .locator('input:not([type="hidden"]), textarea')
-    .evaluateAll((els) => els.map((el) => Number.parseFloat(getComputedStyle(el).fontSize)));
+    .evaluateAll(
+      (els, chrome) =>
+        els
+          .filter((el) => !el.closest(chrome))
+          .map((el) => Number.parseFloat(getComputedStyle(el).fontSize)),
+      INJECTED_CHROME,
+    );
   for (const size of sizes) {
     expect(
       size,
