@@ -54,6 +54,38 @@ edit a test in `tests/invariants/` to make it pass.
 - **INV-10** File bytes never traverse the app server. Uploads and downloads are
   presigned direct to object storage.
 
+## The platform layer (v1.1) — four more, not yet live
+
+Introduced by `docs/PRD.md` v2.0 and `docs/adr/ADR-021-identity-and-tenancy.md`,
+which **supersedes ADR-005** and narrows INV-6 to reviewer sessions. None of
+these are enforcing yet; each names the phase that makes it so.
+
+- **INV-11** All access decisions come from `resolveAccess()`. Deny by default.
+  No route, component, or query compares an account id to a membership row.
+  *Phase 9.*
+- **INV-12** An invite token never establishes a session. Membership is written
+  only after independent verification of the invited address. *Phase 10.*
+- **INV-13** Ingestion never writes a project graph. It emits a template
+  definition that a human confirms; only `applyTemplate()` creates lanes and
+  cards. *Phase 12.*
+- **INV-14** No inferred assignment triggers an outbound email. Invites are
+  always an explicit human action on a named address. *Phase 12.*
+
+**INV-6 is narrowed, not retired.** A *reviewer* session is still scoped to one
+project. What changes is that an agency-side person is now an account with a
+membership graph, which is the thing ADR-005 said would double the tenancy
+surface — it does, and v1.1 accepts that cost deliberately.
+
+## Vocabulary drift you will hit immediately
+
+The v1 code says **`engagement`**; the v2.0 PRD says **`project`**. They are the
+same object. The v1.1 handover is explicit that renaming mid-migration is a
+Phase 11 tidy at the earliest, and only if it is free. Read `engagement` in code
+as `project` in the PRD and do not start a rename.
+
+Likewise **`client contact`** in code is **`reviewer`** in the PRD, and
+`(client)` is the reviewer bundle.
+
 ## Vocabulary (use these words in code and UI)
 
 | Term | Means |

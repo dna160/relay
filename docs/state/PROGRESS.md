@@ -19,6 +19,12 @@
 | 6 | Ephemerality | ⬜ not started |
 | 7 | Templates, white-label, plan gates | 🟡 partial — white-label lock shipped; `applyTemplate()` does not exist |
 | 8 | Hardening & deploy | ⬜ not started |
+| — | *v1.1 platform layer below — specified, not started* | |
+| 9 | Identity and tenancy migration | 🔴 blocked on D3 |
+| 10 | Auth and invites | ⬜ not started |
+| 11 | Multi-org navigation and teams | ⬜ not started |
+| 12 | Document ingestion | 🔴 blocked on D4, D5 |
+| 13 | Deployment and retention hardening | 🔴 blocked on D1, D2 |
 
 Phases 5 and 7 are partial because Round 2 pulled work forward deliberately:
 `GET /api/attention` because the portfolio is the agency home screen and shipping
@@ -76,6 +82,17 @@ Recorded because it is the argument for the harness existing:
   control. Documented on the token itself.
 - `POST /api/client/comments` could return `authorName` now that it is resolved
   in the write transaction. One line, whenever the front-end wants it.
+
+## v1.1 note
+
+`docs/PRD.md` is now v2.0 and supersedes v1, which is preserved as
+`docs/PRD-v1.md`. `docs/DELIVERY-PLAN.md` carries the platform-layer blueprint.
+Phase files exist for 9 and 12 only — **10, 11 and 13 are named but unwritten**,
+and must be written before those phases start.
+
+Phases 9–13 are blocked on product decisions D1–D5, below. Phase 9 in particular
+cannot begin: `resolveAccess()`'s core expression and every test case built on it
+depend on D3.
 
 ## Open product decisions
 
