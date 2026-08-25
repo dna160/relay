@@ -29,7 +29,23 @@ import { ErrorPanel } from './error-panel';
 /** One step tighter than `size="sm"`: four of these sit inside a 280px card. */
 const moveButton = 'h-6 px-1.5';
 
-function LaneVisibilityToggle({ engagementId, lane }: { engagementId: string; lane: AgencyLane }) {
+/**
+ * What a closed control says on an archived engagement. Stated at the control,
+ * not only in the notice above the lanes — a disabled affordance with no reason
+ * on it reads as a bug, and this one decides what a client can see.
+ */
+const ARCHIVED_REASON =
+  'This engagement is archived and read-only. Lane visibility is fixed; everything in it is still here to read and to export.';
+
+function LaneVisibilityToggle({
+  engagementId,
+  lane,
+  archived,
+}: {
+  engagementId: string;
+  lane: AgencyLane;
+  archived: boolean;
+}) {
   const router = useRouter();
   const update = useAction(agencyApi.updateLane);
   const nextVisibility = lane.visibility === 'private' ? 'published' : 'private';
@@ -39,11 +55,14 @@ function LaneVisibilityToggle({ engagementId, lane }: { engagementId: string; la
       size="sm"
       loading={update.pending}
       loadingLabel="Updating"
+      disabled={archived}
       className={moveButton}
       title={
-        nextVisibility === 'private'
-          ? 'Hide this lane and its cards from the client'
-          : 'Publish this lane to the client'
+        archived
+          ? ARCHIVED_REASON
+          : nextVisibility === 'private'
+            ? 'Hide this lane and its cards from the client'
+            : 'Publish this lane to the client'
       }
       onClick={async () => {
         const r = await update.run('Updated', lane.id, { engagementId, visibility: nextVisibility });
@@ -51,6 +70,7 @@ function LaneVisibilityToggle({ engagementId, lane }: { engagementId: string; la
       }}
     >
       {nextVisibility === 'private' ? 'Make private' : 'Publish lane'}
+      {archived && <span className="sr-only"> — {ARCHIVED_REASON}</span>}
     </Button>
   );
 }
@@ -84,9 +104,11 @@ export function Board({ engagementId, lanes: serverLanes, archived }: BoardProps
     return (
       <div className="flex flex-col gap-4">
         <p className={cn('text-14', muted)}>
-          No lanes yet. Add the first one to start the board.
+          {archived
+            ? 'This engagement was archived with no lanes on it. Nothing can be added now.'
+            : 'No lanes yet. Add the first one to start the board.'}
         </p>
-        <AddLaneForm engagementId={engagementId} />
+        <AddLaneForm engagementId={engagementId} disabled={archived} />
       </div>
     );
   }
@@ -131,7 +153,13 @@ export function Board({ engagementId, lanes: serverLanes, archived }: BoardProps
             <LaneColumn
               key={lane.id}
               lane={lane}
-              header={archived ? null : <LaneVisibilityToggle engagementId={engagementId} lane={lane} />}
+              header={
+                <LaneVisibilityToggle
+                  engagementId={engagementId}
+                  lane={lane}
+                  archived={archived}
+                />
+              }
               isDropTarget={dropAt?.laneId === lane.id}
               onDragOver={(e) => {
                 if (!dragCardId || archived) return;
@@ -186,7 +214,17 @@ export function Board({ engagementId, lanes: serverLanes, archived }: BoardProps
                       href={`/w/${engagementId}/c/${card.id}`}
                       dragging={dragCardId === card.id}
                       controls={
-                        archived ? null : (
+                        archived ? (
+                          /*
+                           * Replaced by a stated reason, not left as four dead
+                           * arrows. The board's `ReadOnlyNotice` carries the full
+                           * sentence and the export; this is the same fact at the
+                           * place the reader's hand was going.
+                           */
+                          <p className={cn(mono, 'text-12', muted)}>
+                            read-only · archived, so nothing moves
+                          </p>
+                        ) : (
                           <div className="flex flex-col gap-2">
                             <div
                               className="flex flex-wrap items-center gap-1"
@@ -249,17 +287,15 @@ export function Board({ engagementId, lanes: serverLanes, archived }: BoardProps
                 );
               })}
 
-              {!archived && <AddCardForm engagementId={engagementId} laneId={lane.id} />}
+              <AddCardForm engagementId={engagementId} laneId={lane.id} disabled={archived} />
             </LaneColumn>
           );
         })}
 
-        {!archived && <AddLaneForm engagementId={engagementId} />}
+        <AddLaneForm engagementId={engagementId} disabled={archived} />
       </div>
 
-      {archived && (
-        <p className={cn(chip, mono)}>READ-ONLY · ARCHIVED</p>
-      )}
+      {archived && <p className={cn(chip, mono)}>READ-ONLY · ARCHIVED</p>}
     </div>
   );
 }

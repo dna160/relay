@@ -16,11 +16,40 @@ import { useAction } from '@/lib/hooks/use-action';
 import { Button } from '@/components/primitives';
 import { cn, input, mono, muted } from '@/components/style-tokens';
 
-export function AddCardForm({ engagementId, laneId }: { engagementId: string; laneId: string }) {
+/**
+ * The reason an archived engagement gives for a closed control.
+ *
+ * Stated on the control itself rather than only in the notice at the top of the
+ * board: a disabled affordance with no explanation reads as a bug, and the
+ * reader who reaches for it is not necessarily the reader who scrolled past the
+ * notice.
+ */
+const ARCHIVED_REASON =
+  'This engagement is archived and read-only. Nothing new can be added to it; everything in it is still here to read and to export.';
+
+export function AddCardForm({
+  engagementId,
+  laneId,
+  disabled = false,
+}: {
+  engagementId: string;
+  laneId: string;
+  /** An archived engagement returns 423 on every write (ENGAGEMENT_ARCHIVED). */
+  disabled?: boolean;
+}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState('');
   const create = useAction(agencyApi.createCard);
+
+  if (disabled) {
+    return (
+      <Button tone="ghost" block disabled title={ARCHIVED_REASON}>
+        Add a deliverable
+        <span className="sr-only"> — {ARCHIVED_REASON}</span>
+      </Button>
+    );
+  }
 
   if (!open) {
     return (
@@ -78,12 +107,32 @@ export function AddCardForm({ engagementId, laneId }: { engagementId: string; la
   );
 }
 
-export function AddLaneForm({ engagementId }: { engagementId: string }) {
+export function AddLaneForm({
+  engagementId,
+  disabled = false,
+}: {
+  engagementId: string;
+  disabled?: boolean;
+}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
   const [isPrivate, setPrivate] = useState(false);
   const create = useAction(agencyApi.createLane);
+
+  if (disabled) {
+    return (
+      <Button
+        tone="ghost"
+        className="w-card shrink-0 justify-start"
+        disabled
+        title={ARCHIVED_REASON}
+      >
+        Add a lane
+        <span className="sr-only"> — {ARCHIVED_REASON}</span>
+      </Button>
+    );
+  }
 
   if (!open) {
     return (

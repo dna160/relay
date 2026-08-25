@@ -267,9 +267,10 @@ export function CommentThread({
         </form>
       )}
 
-      {readOnly && threads.length > 0 && (
+      {readOnly && (
         <p className={cn('text-14', muted)}>
-          This workspace is read-only. Every comment is still here to read.
+          This workspace is read-only, so no new comments can be posted. Every comment is still here
+          to read, and the export still works.
         </p>
       )}
     </section>

@@ -15,17 +15,31 @@
  *    `last_activity_at + 30d`, `purge_at` is `last_activity_at + 60d`, and the
  *    four warnings fall at archive, +14d, +23d, +29d (DATA-MODEL retention
  *    timeline). A retaining plan nulls both dates out rather than moving them.
+ *
+ * 3. **Every instant here is on the live clock, not the frozen one.** These
+ *    rows are seeded into a real Postgres and then read by `countActive`,
+ *    the archive sweep and the wrap slate, all of which call `new Date()`.
+ *    Offsets are fixed (`now - 5 days`, `now - 39 days`); the calendar date
+ *    they hang off is not. `clock.ts` explains what happened the one time it
+ *    was, and `tests/unit/fixtures.spec.ts` holds the guard against a relapse.
  */
 
 import { CONTACT, ENGAGEMENT, ORG, USER } from './ids';
-import { days, iso, T0 } from './clock';
+import { days, liveIso, LIVE_ORIGIN, LIVE_SPAN_DAYS } from './clock';
 
 /**
- * The instant every expectation in this file is evaluated at: T0 + 100 days.
- * A test that needs "now" for an engagement question uses this and never
- * `new Date()`.
+ * The instant every expectation in this file is evaluated at: 100 days into the
+ * live timeline, which by construction is the instant `clock.ts` was loaded.
+ * A test that needs "now" for an engagement question uses this rather than
+ * `new Date()`, so that a suite which takes a minute to run still evaluates
+ * every expectation against one instant.
+ *
+ * It is deliberately *not* frozen to a calendar date. Every row below is
+ * inserted into a real Postgres by `src/db/test-support.ts` and read back by
+ * code that calls `new Date()`; a fixture anchored to an absolute origin is
+ * correct for a few weeks and then silently wrong forever. See `clock.ts`.
  */
-export const EVAL_NOW = new Date(T0.getTime() + days(100));
+export const EVAL_NOW = new Date(LIVE_ORIGIN.getTime() + days(LIVE_SPAN_DAYS));
 
 /** PRD §5.6 — the activity window that makes an engagement active. */
 export const ACTIVE_WINDOW_DAYS = 30;
@@ -58,22 +72,41 @@ export interface EngagementRow {
   createdAt: string;
 }
 
+/**
+ * The retention arithmetic, expressed against an *instant* rather than an
+ * offset from a named origin.
+ *
+ * These used to take "milliseconds after T0", which quietly assumed that every
+ * caller shared one frozen origin. They no longer do: the rows below live on
+ * the live timeline and `tests/unit/retention-dates.spec.ts` checks the same
+ * arithmetic against `T0`. Taking the instant makes the helper origin-agnostic
+ * and makes a caller that mixes the two clocks impossible to write by accident.
+ */
+
 /** `archive_at` for a free-plan engagement with this last activity. */
-export function archiveAtFor(lastActivityMs: number): string {
-  return iso(lastActivityMs + days(RETENTION.archiveDays));
+export function archiveAtFor(lastActivity: Date): string {
+  return new Date(lastActivity.getTime() + days(RETENTION.archiveDays)).toISOString();
 }
 
 /** `purge_at` for a free-plan engagement with this last activity. */
-export function purgeAtFor(lastActivityMs: number): string {
-  return iso(lastActivityMs + days(RETENTION.purgeDays));
+export function purgeAtFor(lastActivity: Date): string {
+  return new Date(lastActivity.getTime() + days(RETENTION.purgeDays)).toISOString();
 }
 
 /** The four warning instants for a free-plan engagement, in order. */
-export function warningsFor(lastActivityMs: number): string[] {
-  const archive = lastActivityMs + days(RETENTION.archiveDays);
-  return RETENTION.warningOffsetDays.map((d) => iso(archive + days(d)));
+export function warningsFor(lastActivity: Date): string[] {
+  const archive = lastActivity.getTime() + days(RETENTION.archiveDays);
+  return RETENTION.warningOffsetDays.map((d) => new Date(archive + days(d)).toISOString());
 }
 
+/**
+ * Last activity for each engagement, as a fixed offset into the live timeline.
+ *
+ * Read these against `EVAL_NOW`, which sits at day 100. `active` is 5 days ago
+ * and inside the window; `stale` is 39 days ago and outside it. Those two
+ * numbers are the fixture's whole argument about INV-8 and they are stated as
+ * durations, never as dates.
+ */
 const LAST_ACTIVITY = {
   draft: days(99),
   active: days(95),
@@ -85,6 +118,11 @@ const LAST_ACTIVITY = {
   retained: days(85),
 } as const;
 
+/** The instant `LAST_ACTIVITY.x` names, on the live timeline. */
+function lastActivity(offsetMs: number): Date {
+  return new Date(LIVE_ORIGIN.getTime() + offsetMs);
+}
+
 export const engagements: readonly EngagementRow[] = [
   {
     id: ENGAGEMENT.draft,
@@ -95,11 +133,11 @@ export const engagements: readonly EngagementRow[] = [
     templateId: null,
     startedAt: null,
     wrappedAt: null,
-    lastActivityAt: iso(LAST_ACTIVITY.draft),
-    archiveAt: archiveAtFor(LAST_ACTIVITY.draft),
-    purgeAt: purgeAtFor(LAST_ACTIVITY.draft),
+    lastActivityAt: liveIso(LAST_ACTIVITY.draft),
+    archiveAt: archiveAtFor(lastActivity(LAST_ACTIVITY.draft)),
+    purgeAt: purgeAtFor(lastActivity(LAST_ACTIVITY.draft)),
     contractedRoundsDefault: 2,
-    createdAt: iso(days(99)),
+    createdAt: liveIso(days(99)),
   },
   {
     id: ENGAGEMENT.active,
@@ -108,13 +146,13 @@ export const engagements: readonly EngagementRow[] = [
     title: 'Spring campaign',
     status: 'active',
     templateId: null,
-    startedAt: iso(0),
+    startedAt: liveIso(0),
     wrappedAt: null,
-    lastActivityAt: iso(LAST_ACTIVITY.active),
-    archiveAt: archiveAtFor(LAST_ACTIVITY.active),
-    purgeAt: purgeAtFor(LAST_ACTIVITY.active),
+    lastActivityAt: liveIso(LAST_ACTIVITY.active),
+    archiveAt: archiveAtFor(lastActivity(LAST_ACTIVITY.active)),
+    purgeAt: purgeAtFor(lastActivity(LAST_ACTIVITY.active)),
     contractedRoundsDefault: 2,
-    createdAt: iso(0),
+    createdAt: liveIso(0),
   },
   {
     id: ENGAGEMENT.activeSecond,
@@ -123,13 +161,13 @@ export const engagements: readonly EngagementRow[] = [
     title: 'Packaging refresh',
     status: 'active',
     templateId: null,
-    startedAt: iso(days(30)),
+    startedAt: liveIso(days(30)),
     wrappedAt: null,
-    lastActivityAt: iso(LAST_ACTIVITY.activeSecond),
-    archiveAt: archiveAtFor(LAST_ACTIVITY.activeSecond),
-    purgeAt: purgeAtFor(LAST_ACTIVITY.activeSecond),
+    lastActivityAt: liveIso(LAST_ACTIVITY.activeSecond),
+    archiveAt: archiveAtFor(lastActivity(LAST_ACTIVITY.activeSecond)),
+    purgeAt: purgeAtFor(lastActivity(LAST_ACTIVITY.activeSecond)),
     contractedRoundsDefault: 3,
-    createdAt: iso(days(30)),
+    createdAt: liveIso(days(30)),
   },
   {
     // Wrapped means delivered and counting down. It is still `active` and it
@@ -140,13 +178,13 @@ export const engagements: readonly EngagementRow[] = [
     title: 'Site build',
     status: 'active',
     templateId: null,
-    startedAt: iso(days(10)),
-    wrappedAt: iso(LAST_ACTIVITY.wrapped),
-    lastActivityAt: iso(LAST_ACTIVITY.wrapped),
-    archiveAt: archiveAtFor(LAST_ACTIVITY.wrapped),
-    purgeAt: purgeAtFor(LAST_ACTIVITY.wrapped),
+    startedAt: liveIso(days(10)),
+    wrappedAt: liveIso(LAST_ACTIVITY.wrapped),
+    lastActivityAt: liveIso(LAST_ACTIVITY.wrapped),
+    archiveAt: archiveAtFor(lastActivity(LAST_ACTIVITY.wrapped)),
+    purgeAt: purgeAtFor(lastActivity(LAST_ACTIVITY.wrapped)),
     contractedRoundsDefault: 2,
-    createdAt: iso(days(10)),
+    createdAt: liveIso(days(10)),
   },
   {
     // 39 days idle. `status` says active; the counter must say otherwise, and
@@ -157,30 +195,32 @@ export const engagements: readonly EngagementRow[] = [
     title: 'Pitch deck',
     status: 'active',
     templateId: null,
-    startedAt: iso(days(40)),
+    startedAt: liveIso(days(40)),
     wrappedAt: null,
-    lastActivityAt: iso(LAST_ACTIVITY.stale),
-    archiveAt: archiveAtFor(LAST_ACTIVITY.stale),
-    purgeAt: purgeAtFor(LAST_ACTIVITY.stale),
+    lastActivityAt: liveIso(LAST_ACTIVITY.stale),
+    archiveAt: archiveAtFor(lastActivity(LAST_ACTIVITY.stale)),
+    purgeAt: purgeAtFor(lastActivity(LAST_ACTIVITY.stale)),
     contractedRoundsDefault: 2,
-    createdAt: iso(days(40)),
+    createdAt: liveIso(days(40)),
   },
   {
     // Read-only. Any mutation must return 423 ENGAGEMENT_ARCHIVED.
-    // Warnings fall at T0+75d, +89d, +98d, +104d; three are due at EVAL_NOW.
+    // Last activity is day 45, so archive fell on day 75 and purge falls on
+    // day 105 — five days after EVAL_NOW, which is what the wrap slate counts
+    // down. Warnings fall at day 75, 89, 98 and 104; three are due by now.
     id: ENGAGEMENT.archived,
     orgId: ORG.free,
     clientOrgName: 'Fennwick & Co',
     title: 'Annual report',
     status: 'archived',
     templateId: null,
-    startedAt: iso(days(5)),
-    wrappedAt: iso(days(44)),
-    lastActivityAt: iso(LAST_ACTIVITY.archived),
-    archiveAt: archiveAtFor(LAST_ACTIVITY.archived),
-    purgeAt: purgeAtFor(LAST_ACTIVITY.archived),
+    startedAt: liveIso(days(5)),
+    wrappedAt: liveIso(days(44)),
+    lastActivityAt: liveIso(LAST_ACTIVITY.archived),
+    archiveAt: archiveAtFor(lastActivity(LAST_ACTIVITY.archived)),
+    purgeAt: purgeAtFor(lastActivity(LAST_ACTIVITY.archived)),
     contractedRoundsDefault: 2,
-    createdAt: iso(days(5)),
+    createdAt: liveIso(days(5)),
   },
   {
     // Gone. Reads return 410 ENGAGEMENT_PURGED and point at the certificate.
@@ -190,13 +230,13 @@ export const engagements: readonly EngagementRow[] = [
     title: 'Cover artwork',
     status: 'purged',
     templateId: null,
-    startedAt: iso(0),
-    wrappedAt: iso(days(15)),
-    lastActivityAt: iso(LAST_ACTIVITY.purged),
-    archiveAt: archiveAtFor(LAST_ACTIVITY.purged),
-    purgeAt: purgeAtFor(LAST_ACTIVITY.purged),
+    startedAt: liveIso(0),
+    wrappedAt: liveIso(days(15)),
+    lastActivityAt: liveIso(LAST_ACTIVITY.purged),
+    archiveAt: archiveAtFor(lastActivity(LAST_ACTIVITY.purged)),
+    purgeAt: purgeAtFor(lastActivity(LAST_ACTIVITY.purged)),
     contractedRoundsDefault: 2,
-    createdAt: iso(0),
+    createdAt: liveIso(0),
   },
   {
     // Pro org. A retaining plan nulls the countdown out; it does not push it.
@@ -206,13 +246,13 @@ export const engagements: readonly EngagementRow[] = [
     title: 'Brand system',
     status: 'active',
     templateId: null,
-    startedAt: iso(days(20)),
+    startedAt: liveIso(days(20)),
     wrappedAt: null,
-    lastActivityAt: iso(LAST_ACTIVITY.retained),
+    lastActivityAt: liveIso(LAST_ACTIVITY.retained),
     archiveAt: null,
     purgeAt: null,
     contractedRoundsDefault: 4,
-    createdAt: iso(days(20)),
+    createdAt: liveIso(days(20)),
   },
 ];
 
@@ -257,20 +297,20 @@ export const clientContacts: readonly ClientContactRow[] = [
     engagementId: ENGAGEMENT.active,
     email: 'rowan@bellweather.test',
     name: 'Rowan Vance',
-    verifiedAt: iso(days(2)),
-    lastSeenAt: iso(days(94)),
+    verifiedAt: liveIso(days(2)),
+    lastSeenAt: liveIso(days(94)),
     invitedBy: USER.freeAdmin,
-    createdAt: iso(days(1)),
+    createdAt: liveIso(days(1)),
   },
   {
     id: CONTACT.activeSecond,
     engagementId: ENGAGEMENT.activeSecond,
     email: 'rowan@bellweather.test',
     name: 'Rowan Vance',
-    verifiedAt: iso(days(31)),
-    lastSeenAt: iso(days(79)),
+    verifiedAt: liveIso(days(31)),
+    lastSeenAt: liveIso(days(79)),
     invitedBy: USER.freeAdmin,
-    createdAt: iso(days(30)),
+    createdAt: liveIso(days(30)),
   },
   {
     id: CONTACT.unverified,
@@ -280,7 +320,7 @@ export const clientContacts: readonly ClientContactRow[] = [
     verifiedAt: null,
     lastSeenAt: null,
     invitedBy: USER.freeAdmin,
-    createdAt: iso(days(90)),
+    createdAt: liveIso(days(90)),
   },
 ];
 

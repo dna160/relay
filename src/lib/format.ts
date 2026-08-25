@@ -143,6 +143,136 @@ export function formatPurgeCountdown(daysToPurge: number | null): string | null 
   return `PURGE IN ${Math.max(0, daysToPurge)}d`;
 }
 
+/* ------------------------------------------------------------- retention */
+
+/**
+ * The escalation band a purge countdown is in.
+ *
+ * COMPONENTS.md §6 escalates the `WrapSlate` **by weight and surface area,
+ * never by hue**, across exactly four bands, and FLOWS.md §3 attaches an
+ * additional surface to each. Both documents describe the same four thresholds,
+ * so they are computed once here rather than restated as two sets of magic
+ * numbers on two surfaces that would drift apart the first time one is edited.
+ *
+ * `retained` is not a fifth step on the same ladder — it is the absence of the
+ * ladder. A retaining plan has no countdown at all, and the strip says so with
+ * a badge rather than disappearing.
+ *
+ * **No band is ever `--breach`.** A scheduled deletion the user was warned
+ * about four times is the contract working, not a breached commitment, and
+ * `--breach` is exhaustively `roundsUsed > contractedRounds` (see
+ * `roundsBreached` above). Spending the red here would spend it everywhere.
+ */
+export type PurgeBand = 'retained' | 'distant' | 'near' | 'imminent' | 'today';
+
+export function purgeBand(daysToPurge: number | null): PurgeBand {
+  if (daysToPurge === null) return 'retained';
+  if (daysToPurge <= 0) return 'today';
+  if (daysToPurge <= 7) return 'imminent';
+  if (daysToPurge <= 14) return 'near';
+  return 'distant';
+}
+
+/**
+ * True from 14 days out, which is where FLOWS.md §3 adds the board strip to the
+ * slate. Before that the slate alone carries it; a strip that is always on
+ * screen is a strip nobody reads on the day it matters.
+ */
+export function purgeWarningIsDue(daysToPurge: number | null): boolean {
+  const band = purgeBand(daysToPurge);
+  return band === 'near' || band === 'imminent' || band === 'today';
+}
+
+/**
+ * The absolute date the countdown lands on — `12 May 2026`.
+ *
+ * FLOWS.md §3's first fact: "absolute, never 'in 14 days' alone. A relative
+ * countdown alone is unactionable in a calendar." The year is always printed,
+ * unlike `formatDate`, because a retention date is a diary entry and a bare
+ * `12 May` in December is read as five months ago.
+ *
+ * Derived from `daysToPurge` because that is what the contract carries. If
+ * `GET /api/engagements/:id` ever gains `purgeAt` this takes the row instead of
+ * computing it, in one place.
+ */
+export function formatPurgeDate(daysToPurge: number | null, now: number = Date.now()): string | null {
+  const iso = purgeDateISO(daysToPurge, now);
+  if (!iso) return null;
+  const d = new Date(`${iso}T00:00:00Z`);
+  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()] ?? ''} ${d.getUTCFullYear()}`;
+}
+
+/** `2026-05-12`, for a `<time dateTime>`. Null on a retaining plan. */
+export function purgeDateISO(daysToPurge: number | null, now: number = Date.now()): string | null {
+  if (daysToPurge === null) return null;
+  const d = new Date(now + Math.max(0, daysToPurge) * MS_DAY);
+  if (Number.isNaN(d.getTime())) return null;
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+}
+
+/**
+ * The volume that goes with the date. FLOWS.md §3's second fact: "Volume is
+ * what converts an abstract deletion into a felt one."
+ */
+export interface RetentionCounts {
+  files: number;
+  cards: number;
+  approvals: number;
+}
+
+/** `41 files, 12 cards and 3 approvals` — a sentence, for prose. */
+export function formatRetentionCounts(c: RetentionCounts): string {
+  return `${plural(c.files, 'file', 'files')}, ${plural(c.cards, 'card', 'cards')} and ${plural(
+    c.approvals,
+    'approval',
+    'approvals',
+  )}`;
+}
+
+/**
+ * `12 May 2026 14:02 UTC` — the destruction timestamp on a purge certificate.
+ *
+ * Spelled out and zoned, unlike `formatTimestamp`'s `2026-05-12 14:02`, because
+ * this one is read off a page and quoted into an email to a legal team. `UTC` is
+ * printed rather than implied: a bare wall-clock time on a compliance artifact
+ * is ambiguous by exactly the number of hours nobody will think to ask about.
+ */
+export function formatCertificateStamp(iso: string): string | null {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()] ?? ''} ${d.getUTCFullYear()} ${pad(
+    d.getUTCHours(),
+  )}:${pad(d.getUTCMinutes())} UTC`;
+}
+
+/** `41 files · 12 cards · 3 approvals` — a record, for mono. */
+export function formatRetentionCountsRecord(c: RetentionCounts): string {
+  return `${plural(c.files, 'file', 'files')} · ${plural(c.cards, 'card', 'cards')} · ${plural(
+    c.approvals,
+    'approval',
+    'approvals',
+  )}`;
+}
+
+/**
+ * The same record line, built only from the counts a purge certificate actually
+ * carried — `null` when it carried none.
+ *
+ * Separate from `formatRetentionCountsRecord` rather than a widened version of
+ * it, because the two have opposite obligations. A *warning* states all three
+ * facts or it is a bug; a *certificate* states exactly what was signed and not
+ * one number more. `purge_certificates` currently stores an object count and a
+ * byte total and no card or approval count, and filling those in from anywhere
+ * else would be a fabricated line on a compliance artifact.
+ */
+export function formatDestroyedCounts(c: Partial<RetentionCounts>): string | null {
+  const parts: string[] = [];
+  if (c.files !== undefined) parts.push(plural(c.files, 'file', 'files'));
+  if (c.cards !== undefined) parts.push(plural(c.cards, 'card', 'cards'));
+  if (c.approvals !== undefined) parts.push(plural(c.approvals, 'approval', 'approvals'));
+  return parts.length > 0 ? parts.join(' · ') : null;
+}
+
 /** `WRAP +12d`. Days since the engagement was wrapped. */
 export function formatWrapAge(wrappedAt: string | null, now: number = Date.now()): string | null {
   if (!wrappedAt) return null;

@@ -95,6 +95,20 @@ export const auditLog = pgTable(
   },
   (t) => ({
     byEngagement: index('audit_log_engagement_idx').on(t.engagementId, t.occurredAt),
+    /**
+     * The four retention warnings live here rather than in a table of their own
+     * — RUNBOOK §6 triages them with `action = 'retention.warned'` and the
+     * runbook is the contract. What an append-only log does not give on its own
+     * is idempotency, and the purge guard counts these rows: a sweep that ran
+     * twice must not be able to make three warnings look like four.
+     *
+     * `subject_type` carries the offset (`retention_warning:14`), so one notice
+     * per offset per engagement is a database property. Partial, so it
+     * constrains nothing else written to this table.
+     */
+    oneWarningPerOffset: uniqueIndex('audit_log_retention_warning_key')
+      .on(t.engagementId, t.subjectType)
+      .where(sql`action = 'retention.warned'`),
   }),
 );
 

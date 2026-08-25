@@ -40,11 +40,19 @@ export function TransitionControls({
   cardId,
   state,
   compact,
+  readOnly = false,
 }: {
   engagementId: string;
   cardId: string;
   state: CardState;
   compact?: boolean;
+  /**
+   * An archived engagement refuses every transition with 423. Predicted from
+   * the engagement's `status` rather than discovered on submit — a state move is
+   * the single most consequential control on this surface, and finding out it
+   * was closed *after* pressing it is how someone concludes the board is broken.
+   */
+  readOnly?: boolean;
 }) {
   const router = useRouter();
   const move = useAction(agencyApi.transitionCard);
@@ -53,6 +61,19 @@ export function TransitionControls({
   const pending = move.pending || publish.pending;
   const failure = move.failure ?? publish.failure;
   const done = move.done ?? publish.done;
+
+  if (readOnly) {
+    /*
+     * The moves are named and shown closed, rather than removed. A reader who
+     * knows this card should be publishable needs to see that the product agrees
+     * with them and that the reason is the engagement, not the card.
+     */
+    return (
+      <p className={cn(mono, 'text-12', muted)}>
+        read-only · archived, so no card moves
+      </p>
+    );
+  }
 
   if (state === 'awaiting_client') {
     return (

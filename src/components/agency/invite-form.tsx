@@ -45,9 +45,15 @@ export function InviteForm({ engagementId, disabled }: { engagementId: string; d
         onChange={(e) => setEmail(e.target.value)}
         placeholder="name@client.com"
       />
+      {/*
+        The reason is on the control, not only in the notice at the top of the
+        page. A disabled field with no explanation reads as a bug, and the
+        423 this predicts would otherwise arrive after someone typed an address.
+      */}
       <p className={cn('text-12', muted)}>
-        They get a link to this workspace only. Their verified email is what an approval is recorded
-        against.
+        {disabled
+          ? 'This engagement is archived and read-only, so no new contacts can be invited. The contacts who already have the link can still read everything and export it.'
+          : 'They get a link to this workspace only. Their verified email is what an approval is recorded against.'}
       </p>
       <div>
         {/* `client`: the link is the handover. Once it is sent, the next move

@@ -10,6 +10,7 @@ import { cn, display, muted } from '@/components/style-tokens';
 import { CardTile } from '@/components/client/card-tile';
 import { EmptyState } from '@/components/client/empty-state';
 import { ErrorPanel } from '@/components/client/error-panel';
+import { PurgedReceipt } from '@/components/client/purged-receipt';
 import { getClientQueue } from '../../../_lib/reads';
 
 export default async function ClientQueuePage({
@@ -20,7 +21,11 @@ export default async function ClientQueuePage({
   const { token } = await params;
   const queue = await getClientQueue();
 
-  if (!queue.ok) return <ErrorPanel failure={queue} />;
+  if (!queue.ok) {
+    // A purged workspace is a receipt, not an error. See the layout.
+    if (queue.code === 'ENGAGEMENT_PURGED') return <PurgedReceipt failure={queue} />;
+    return <ErrorPanel failure={queue} />;
+  }
 
   return (
     <section className="flex flex-col gap-3">

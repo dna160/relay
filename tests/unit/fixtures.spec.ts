@@ -16,6 +16,8 @@
  * its own expected answers.
  */
 
+
+
 import { describe, expect, it } from 'vitest';
 import {
   POSSESSION,
@@ -35,7 +37,6 @@ import {
   PLAN_LIMITS,
   POSSESSION_TOLERANCE_MS,
   RETENTION,
-  T0,
   approvals,
   cards,
   clientContacts,
@@ -262,7 +263,7 @@ describe('the engagement fixture', () => {
   it('schedules four warnings, strictly increasing, the last one before the purge', () => {
     for (const e of engagements) {
       if (e.purgeAt === null) continue;
-      const warnings = warningsFor(Date.parse(e.lastActivityAt) - T0.getTime()).map(Date.parse);
+      const warnings = warningsFor(new Date(e.lastActivityAt)).map(Date.parse);
       expect(warnings).toHaveLength(4);
       expect(warnings[0], 'the first warning fires at archive').toBe(Date.parse(e.archiveAt!));
       for (let i = 1; i < warnings.length; i++) {

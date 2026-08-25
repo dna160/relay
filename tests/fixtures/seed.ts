@@ -21,9 +21,18 @@
  *
  * ## Determinism
  *
- * No `Date.now()`, no `crypto.randomUUID()`, no faker. Ids come from `./ids`,
- * instants from `./clock`. Two runs of the seed produce byte-identical rows,
- * which is what makes a diff on a snapshot meaningful.
+ * No `crypto.randomUUID()`, no faker, no locale, no timezone. Ids come from
+ * `./ids` and instants from `./clock`, and every offset in this graph is a
+ * hard-coded integer.
+ *
+ * One thing is deliberately *not* fixed: the calendar date the engagement
+ * timeline hangs off. Those rows are read back by code that calls `new Date()`,
+ * so they are anchored to seed time rather than to an absolute origin — a
+ * fixture pinned to January is correct in January and quietly wrong in August,
+ * which is exactly what happened. See the long note in `./clock.ts`. Ids,
+ * ordering, row counts, card states, round counts and every *interval* are
+ * still byte-identical between runs; the timestamp columns on `engagements`
+ * and `client_contacts` are not, and that is the trade.
  */
 
 import type { CardState } from '@/domain/card/state-machine';

@@ -103,7 +103,12 @@ export default async function CardPage({
           Move this on
         </h2>
         <div className="mt-3">
-          <TransitionControls engagementId={id} cardId={card.id} state={card.state} />
+          <TransitionControls
+            engagementId={id}
+            cardId={card.id}
+            state={card.state}
+            readOnly={archived}
+          />
         </div>
       </section>
 

@@ -158,6 +158,76 @@ export async function request<T>(
   };
 }
 
+/* -------------------------------------------------------------- 410 details */
+
+/**
+ * What a 410 `ENGAGEMENT_PURGED` points at.
+ *
+ * API-CONTRACT.md says the 410 "points at the certificate", and the certificate
+ * is the compliance artifact an agency forwards to its client's legal team —
+ * so the page that renders the 410 has to be able to state what was destroyed,
+ * when, and that the certificate exists. The columns are DATA-MODEL.md's
+ * `purge_certificates`.
+ *
+ * **Every field is optional and nothing here is invented.** The domain's
+ * `engagementPurged()` currently carries no `details` at all, and a receipt
+ * that filled in a plausible object count would be a fabricated compliance
+ * record — the single worst thing this page could do. So the parser reads what
+ * is actually present, and the surfaces render only the lines they were given.
+ */
+export interface PurgeCertificateRef {
+  certificateId?: string;
+  purgedAt?: string;
+  objectCount?: number;
+  cardCount?: number;
+  approvalCount?: number;
+  totalBytes?: number;
+  manifestSha256?: string;
+  /** Where the signed manifest can be fetched. Followed, never parsed (INV-10). */
+  certificateUrl?: string;
+}
+
+function str(source: Record<string, unknown>, key: string): string | undefined {
+  const value = source[key];
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function num(source: Record<string, unknown>, key: string): number | undefined {
+  const value = source[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+/**
+ * Reads a certificate reference out of an `ApiFailure`'s `details`, tolerating
+ * every shape it is not.
+ *
+ * `details` is typed `unknown` in the contract and is written by a worker this
+ * module has never seen run. A receipt page that threw on an unexpected shape
+ * would replace the last thing a client ever sees of the workspace with a stack
+ * trace, so this returns `null` rather than throwing and the surfaces degrade to
+ * the facts they can state without it.
+ */
+export function purgeCertificateFrom(details: unknown): PurgeCertificateRef | null {
+  if (typeof details !== 'object' || details === null) return null;
+  const source = details as Record<string, unknown>;
+  const nested = source['certificate'];
+  const row =
+    typeof nested === 'object' && nested !== null ? (nested as Record<string, unknown>) : source;
+
+  const ref: PurgeCertificateRef = {
+    certificateId: str(row, 'certificateId') ?? str(row, 'id'),
+    purgedAt: str(row, 'purgedAt'),
+    objectCount: num(row, 'objectCount'),
+    cardCount: num(row, 'cardCount'),
+    approvalCount: num(row, 'approvalCount'),
+    totalBytes: num(row, 'totalBytes'),
+    manifestSha256: str(row, 'manifestSha256'),
+    certificateUrl: str(row, 'certificateUrl'),
+  };
+
+  return Object.values(ref).some((v) => v !== undefined) ? ref : null;
+}
+
 /* ----------------------------------------------------------------- envelopes */
 
 /**

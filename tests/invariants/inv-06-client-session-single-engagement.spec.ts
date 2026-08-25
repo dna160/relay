@@ -14,7 +14,7 @@
 
 import { describe, expect, it, expectTypeOf } from 'vitest';
 import { isClientSession, type Session } from '@/lib/types';
-import { linesMatching, sourceFiles } from './_source';
+import { except, linesMatching, sourceFiles } from './_source';
 import { allMigrationSql, createTableBody, hasMigrations } from './_sql';
 import { CONTACT, clientContacts } from '@tests/fixtures';
 
@@ -36,14 +36,39 @@ describe('INV-6 a client session sees exactly one engagement', () => {
     expect(JSON.stringify(client)).not.toContain('orgId');
   });
 
+  /**
+   * The retention sweeps are definitionally multi-engagement: archiving,
+   * warning and purging all run over every engagement that is due. They carry
+   * no session at all — they are cron work, not a request.
+   *
+   * They are excluded from the list scan below, and that exclusion is paid for
+   * by the test immediately after it, which asserts they cannot reach a session
+   * or a client scope. Excluding them without that second assertion would turn
+   * this invariant into a loophole shaped exactly like the thing it forbids.
+   */
+  const SWEEPS = ['src/db/queries/retention.ts', 'src/workers/retention.ts', 'src/workers/purge.ts'];
+
   it('no session type anywhere in the tree holds a list of engagements', () => {
     const offenders: string[] = [];
-    for (const file of sourceFiles()) {
+    for (const file of except(sourceFiles(), ...SWEEPS)) {
       for (const line of linesMatching(file, /engagementIds\s*[?:]|engagements\s*:\s*(string\[\]|Array<)/)) {
         offenders.push(`${file.path}: ${line}`);
       }
     }
     expect(offenders, 'a session widened to several engagements').toEqual([]);
+  });
+
+  it('the multi-engagement sweeps cannot reach a session or a client scope', () => {
+    // This is what buys the exclusion above. A sweep that could build a client
+    // scope could serve one engagement's content under another's session.
+    const offenders: string[] = [];
+    for (const file of sourceFiles()) {
+      if (!SWEEPS.includes(file.path)) continue;
+      for (const re of [/clientScope/, /requireClient/, /\bSession\b/, /getSession/]) {
+        for (const line of linesMatching(file, re)) offenders.push(`${file.path}: ${line}`);
+      }
+    }
+    expect(offenders, 'a retention sweep reached for a session').toEqual([]);
   });
 
   it('no client route reads an engagement id from params, query, or body', () => {

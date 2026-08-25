@@ -244,9 +244,26 @@ export interface TemplateSummary {
   updatedAt: string;
 }
 
-/** NOT BUILT — `POST /api/engagements/:id/export` "queues a zip; returns a job id". */
+/**
+ * `POST /api/engagements/:id/export` — "queues a zip; returns a job id".
+ *
+ * `jobId` is what the contract promises and the only field the surface requires.
+ * The rest are optional and read defensively, because the queue is allowed to
+ * finish before the request returns: pg-boss can complete a small engagement's
+ * archive in the time the round trip takes, and a control that told someone to
+ * wait for an email about a file already sitting in storage would be lying to
+ * them. When `url` is absent the surface renders the queued state and says an
+ * email is coming, which is the contract's own promise.
+ *
+ * `url` is followed by the browser, never fetched: the archive is presigned and
+ * its bytes do not pass through the app (INV-10).
+ */
 export interface ExportJob {
   jobId: string;
+  status?: 'queued' | 'ready';
+  /** Present only when the archive already exists. Presigned. */
+  url?: string;
+  readyAt?: string;
 }
 
 /* ---------------------------------------------------------------- agency api */
@@ -342,7 +359,7 @@ export const agencyApi = {
     ).then((r) => pick(r, (p) => p.engagement));
   },
 
-  /** POST /api/engagements/:id/export — NOT BUILT. */
+  /** POST /api/engagements/:id/export — queues a zip and returns its job id. */
   requestExport(id: string, ctx?: RequestContext) {
     return request<ExportJob>(`/api/engagements/${encodeURIComponent(id)}/export`, {
       method: 'POST',

@@ -295,9 +295,13 @@ export function CommentThread({
         </form>
       )}
 
-      {readOnly && threads.length > 0 && (
+      {/* Stated whether or not there is a thread. `threads.length > 0` made the
+          reason disappear on exactly the card where the absence of a compose box
+          is most confusing: an empty discussion on an archived engagement. */}
+      {readOnly && (
         <p className={cn('text-14', muted)}>
-          This engagement is read-only. Every comment is still here to read.
+          This engagement is archived and read-only, so no new comments can be posted. Every comment
+          is still here to read and to export.
         </p>
       )}
     </section>

@@ -43,8 +43,8 @@ describe('the documented timeline', () => {
     expect(DEFAULT_RETENTION).toEqual({ archiveDays: 30, purgeDays: 60 });
 
     const window = retentionWindow('free', T0);
-    expect(window.archiveAt?.toISOString()).toBe(archiveAtFor(0));
-    expect(window.purgeAt?.toISOString()).toBe(purgeAtFor(0));
+    expect(window.archiveAt?.toISOString()).toBe(archiveAtFor(T0));
+    expect(window.purgeAt?.toISOString()).toBe(purgeAtFor(T0));
   });
 
   it('agrees with the fixture table the rest of the suite asserts against', () => {
@@ -62,7 +62,7 @@ describe('the documented timeline', () => {
     const window = retentionWindow('free', T0);
     const offsets = warningDates(window.archiveAt!).map((d) => (d.getTime() - T0.getTime()) / DAY);
     expect(offsets).toEqual([30, 44, 53, 59]);
-    expect(warningDates(window.archiveAt!).map((d) => d.toISOString())).toEqual(warningsFor(0));
+    expect(warningDates(window.archiveAt!).map((d) => d.toISOString())).toEqual(warningsFor(T0));
   });
 
   it('closes the gaps as the deadline approaches, rather than spacing them evenly', () => {

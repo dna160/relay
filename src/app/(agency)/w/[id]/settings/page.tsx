@@ -11,10 +11,11 @@
  */
 
 import { agencyApi } from '@/lib/api-client.agency';
-import { formatDate, formatPurgeCountdown, plural } from '@/lib/format';
+import { formatDate, formatPurgeCountdown, formatPurgeDate, purgeDateISO, plural } from '@/lib/format';
 import { chip, cn, eyebrow, mono, muted, surface } from '@/components/style-tokens';
 import { EmptyState } from '@/components/agency/empty-state';
 import { ErrorPanel } from '@/components/agency/error-panel';
+import { ExportControl } from '@/components/agency/export-control';
 import { InviteForm } from '@/components/agency/invite-form';
 import { serverContext } from '../../../_lib/server-context';
 
@@ -30,7 +31,10 @@ export default async function SettingsPage({ params }: { params: Promise<{ id: s
   const e = engagement.data.engagement;
   const clientLink = `/e/${engagement.data.clientLinkToken}`;
   const archived = e.status !== 'active';
+  const nowMs = Date.now();
   const purge = formatPurgeCountdown(e.daysToPurge);
+  const purgeOn = formatPurgeDate(e.daysToPurge, nowMs);
+  const purgeOnISO = purgeDateISO(e.daysToPurge, nowMs);
 
   return (
     <div className="flex max-w-prose flex-col gap-10">
@@ -99,12 +103,54 @@ export default async function SettingsPage({ params }: { params: Promise<{ id: s
             <dt className={cn('text-14', muted)}>Purge</dt>
             <dd className={cn(mono, 'text-14 text-ink')}>{purge ?? 'not scheduled'}</dd>
           </div>
+          {purgeOn && (
+            <div className="flex justify-between gap-3 px-3 py-2">
+              <dt className={cn('text-14', muted)}>Destroyed on</dt>
+              <dd className={cn(mono, 'text-14 text-ink')}>
+                <time dateTime={purgeOnISO ?? undefined}>{purgeOn}</time>
+              </dd>
+            </div>
+          )}
+          <div className="flex justify-between gap-3 px-3 py-2">
+            <dt className={cn('text-14', muted)}>Plan</dt>
+            <dd className={cn(mono, 'text-14 text-ink')}>{e.plan}</dd>
+          </div>
         </dl>
+
+        {/*
+          The two actions, and the difference between them stated in one
+          sentence. Conflating them is the most expensive copy mistake available
+          on this page: an export takes a copy, only a retaining plan stops the
+          destruction, and an agency that believes it has retained something by
+          exporting it will discover otherwise on the day the certificate
+          arrives.
+        */}
         <p className={cn('mt-2 max-w-prose text-14', muted)}>
-          {purge
-            ? 'Files and content are destroyed on that date and a deletion certificate is sent to both parties. Exporting or moving to a retaining plan is what prevents it.'
-            : 'This plan retains the workspace indefinitely. Nothing here is scheduled for destruction.'}
+          {purgeOn
+            ? `Every file, card, version and approval in this engagement is destroyed on ${purgeOn}, and a signed deletion certificate goes to your organisation and to the client contact. Exporting takes a copy; it does not stop the destruction. A retaining plan does — it clears the date entirely rather than pushing it out.`
+            : 'This plan retains the workspace indefinitely. There is no purge date on this engagement, and nothing in it is scheduled for destruction. Moving down to a plan that does not retain recomputes the dates and warns immediately — a downgrade never purges silently.'}
         </p>
+
+        <div className="mt-3 flex flex-wrap items-start gap-x-3 gap-y-2">
+          {purgeOn && (
+            /*
+             * The agency's one action, and it has no endpoint yet: plan changes
+             * are Phase 7 and the reactivation paywall is behind an unresolved
+             * product decision (PRD §9). So the control states what it will do
+             * and what it does not do yet, rather than being a button that
+             * silently fails or a promise the product cannot keep. This is the
+             * destination the purge-warning strip's "Keep this workspace" links
+             * to, which is why it lives under a stable anchor.
+             */
+            <p className={cn('max-w-prose text-14', muted)}>
+              <span className="font-semibold text-ink">To keep this workspace:</span> move this
+              organisation to a retaining plan. Billing is not wired up in this build, so the change
+              is made by contacting us — the retention dates clear as soon as it lands, and the
+              engagement stops counting down the same day.
+            </p>
+          )}
+          <ExportControl engagementId={e.id} tone="quiet" size="md" label="Export everything" />
+        </div>
       </section>
 
       <section aria-labelledby="settings-later">

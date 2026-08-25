@@ -23,6 +23,8 @@ import { DecisionBar } from '@/components/client/decision-bar';
 import { RevisionNotes, type VersionThread } from '@/components/client/revision-notes';
 import { CommentThread } from '@/components/client/comment-thread';
 import { ErrorPanel } from '@/components/client/error-panel';
+import { PurgedReceipt } from '@/components/client/purged-receipt';
+import { ReadOnlyNotice } from '@/components/client/read-only-notice';
 import { getClientBoard } from '../../../../_lib/reads';
 import { serverContext } from '../../../../_lib/server-context';
 
@@ -33,7 +35,11 @@ export default async function ClientCardPage({
 }) {
   const { token, cardId } = await params;
   const board = await getClientBoard();
-  if (!board.ok) return <ErrorPanel failure={board} />;
+  if (!board.ok) {
+    // A purged workspace is a receipt, not an error. See the layout.
+    if (board.code === 'ENGAGEMENT_PURGED') return <PurgedReceipt failure={board} />;
+    return <ErrorPanel failure={board} />;
+  }
 
   const lane = board.data.lanes.find((l) => l.cards.some((c) => c.id === cardId));
   const card = lane?.cards.find((c) => c.id === cardId);
@@ -55,6 +61,7 @@ export default async function ClientCardPage({
    * succeed.
    */
   const readOnly = board.data.engagement.status !== 'active';
+  const nowMs = Date.now();
 
   /**
    * One read per version, issued together. PRD §5.3's guarantee is that a note
@@ -108,6 +115,20 @@ export default async function ClientCardPage({
         <p className="whitespace-pre-wrap text-16 text-ink">{card.description}</p>
       )}
 
+      {/*
+        Stated above the decision, not discovered underneath it. A contact who
+        arrives from an email to approve something needs to learn that approvals
+        are closed *before* they scroll looking for the buttons — and the notice
+        carries the export, which is the one thing they can still do here.
+      */}
+      {readOnly && (
+        <ReadOnlyNotice
+          daysToPurge={board.data.engagement.daysToPurge}
+          agencyName={board.data.engagement.agencyName}
+          nowMs={nowMs}
+        />
+      )}
+
       {card.awaitingYou && latest && !readOnly && (
         <DecisionBar
           version={latest}
@@ -121,7 +142,13 @@ export default async function ClientCardPage({
           Files
         </h2>
         <div className="mt-3">
-          <VersionStack versions={card.versions} selectedId={latest?.id} />
+          <VersionStack
+            versions={card.versions}
+            selectedId={latest?.id}
+            archived={readOnly}
+            daysToPurge={board.data.engagement.daysToPurge}
+            nowMs={nowMs}
+          />
         </div>
       </section>
 

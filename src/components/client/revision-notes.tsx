@@ -139,7 +139,8 @@ export function RevisionNotes({
 
       {readOnly && (
         <p className={cn('text-14', muted)}>
-          This workspace is read-only. Every note is still here to read.
+          This workspace is read-only, so no new notes can be added. Every note is still here to
+          read, and the export still works.
         </p>
       )}
     </section>

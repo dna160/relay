@@ -180,7 +180,15 @@ export async function presignUpload(input: {
 export async function presignDownload(input: {
   key: string;
   filename: string;
+  /**
+   * Defaults to five minutes, which is right for a link the browser follows
+   * immediately. The export bundle is the exception: it is a file an agency
+   * downloads once and works through, and every link inside it has to still
+   * work an hour later (Phase 6).
+   */
+  expiresIn?: number;
 }): Promise<{ url: string; expiresIn: number }> {
+  const expiresIn = input.expiresIn ?? GET_EXPIRY_SECONDS;
   const url = await getSignedUrl(
     storageClient(),
     new GetObjectCommand({
@@ -188,9 +196,9 @@ export async function presignDownload(input: {
       Key: input.key,
       ResponseContentDisposition: `attachment; filename="${safeFilename(input.filename)}"`,
     }),
-    { expiresIn: GET_EXPIRY_SECONDS },
+    { expiresIn },
   );
-  return { url, expiresIn: GET_EXPIRY_SECONDS };
+  return { url, expiresIn };
 }
 
 /** Used by the purge worker (Phase 6). Listed here so the prefix rule lives

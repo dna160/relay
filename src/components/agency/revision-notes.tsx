@@ -144,6 +144,19 @@ export function RevisionNotes({
           {post.failure && <ErrorPanel failure={post.failure} />}
         </form>
       )}
+
+      {/*
+        Said whether or not there are notes to read. The client twin has carried
+        this line since Phase 4 and the agency side had only the absence of a
+        form, which is not a reason — a writer who finds no textarea concludes
+        the page failed to load it.
+      */}
+      {readOnly && (
+        <p className={cn('text-14', muted)}>
+          This engagement is archived and read-only, so no new notes can be written. Every note is
+          still here to read and to export.
+        </p>
+      )}
     </section>
   );
 }
