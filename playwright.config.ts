@@ -16,12 +16,25 @@ import { defineConfig, devices } from '@playwright/test';
  */
 export default defineConfig({
   testDir: './tests/e2e',
-  fullyParallel: true,
+  /**
+   * Serial, deliberately.
+   *
+   * `POST /api/test/seed` TRUNCATEs every content table and reseeds fixed uuids.
+   * Two specs running at once therefore destroy each other's rows mid-flight —
+   * which surfaces as `VALIDATION_FAILED · 400, that code is not valid or has
+   * expired` on a code that was valid when it was read, i.e. as flake rather
+   * than as the shared-database collision it is. Flake gets "fixed" with
+   * retries, and retries hide it for good.
+   *
+   * One database, one writer. If this suite ever needs to be faster, the fix is
+   * a database per worker, not more workers against one.
+   */
+  fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   // One worker in CI: the suite shares one Postgres and the plan-gate and
   // archive tests both assert on counts that a parallel run would move.
-  workers: process.env.CI ? 1 : undefined,
+  workers: 1,
   reporter: process.env.CI
     ? [['github'], ['html', { open: 'never' }], ['junit', { outputFile: 'playwright-report/junit.xml' }]]
     : 'list',

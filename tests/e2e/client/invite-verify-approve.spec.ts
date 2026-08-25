@@ -34,11 +34,21 @@ test.describe('the client completes a decision without agency chrome', () => {
 
     // 2. Verify. Email in, code back, session scoped to one engagement (INV-6).
     await page.getByLabel(/email/i).fill(CONTACT_EMAIL);
-    await page.getByRole('button', { name: /continue|send|verify/i }).click();
+    await page.getByRole('button', { name: /send me a code/i }).click();
+
+    // Wait for the form to reach the code step before reading the code out of
+    // band. `click()` resolves when the click dispatches, not when the request
+    // it fires resolves — reading the capture immediately is a race the suite
+    // loses roughly always.
+    await expect(page.getByLabel(/code/i)).toBeVisible();
 
     const code = await latestClientCode(request, seed.engagementToken, CONTACT_EMAIL);
     await page.getByLabel(/code/i).fill(code);
-    await page.getByRole('button', { name: /verify|continue/i }).click();
+    await page.getByRole('button', { name: /open the workspace/i }).click();
+    // Verify hands off to a client-side `router.replace` to the board. Waiting
+    // on the URL rather than on the first thing the board happens to render
+    // keeps the assertions below about the board, not about the navigation.
+    await page.waitForURL(/\/board$/);
 
     // 3. The board. Published lanes only — the private lane must not be here,
     //    and neither must the draft card or the unpublished third version.
@@ -48,7 +58,7 @@ test.describe('the client completes a decision without agency chrome', () => {
     await expect(page.getByText('key-art-v3-WIP-DO-NOT-SEND.png')).toHaveCount(0);
 
     // 4. The decision queue, then the decision itself.
-    await page.getByRole('link', { name: /awaiting you|queue/i }).click();
+    await page.getByRole('link', { name: /your decisions/i }).click();
     await page.getByRole('button', { name: /^approve$/i }).click();
 
     // 5. The card is approved and no longer awaits the client.
@@ -68,16 +78,31 @@ test.describe('the client completes a decision without agency chrome', () => {
   }) => {
     await page.goto(`/e/${seed.engagementToken}`);
     await page.getByLabel(/email/i).fill(CONTACT_EMAIL);
-    await page.getByRole('button', { name: /continue|send|verify/i }).click();
+    await page.getByRole('button', { name: /send me a code/i }).click();
+    await expect(page.getByLabel(/code/i)).toBeVisible();
     const code = await latestClientCode(request, seed.engagementToken, CONTACT_EMAIL);
     await page.getByLabel(/code/i).fill(code);
-    await page.getByRole('button', { name: /verify|continue/i }).click();
+    await page.getByRole('button', { name: /open the workspace/i }).click();
+    // Verify hands off to a client-side `router.replace` to the board. Waiting
+    // on the URL rather than on the first thing the board happens to render
+    // keeps the assertions below about the board, not about the navigation.
+    await page.waitForURL(/\/board$/);
 
-    await page.getByRole('button', { name: /request changes/i }).click();
+    // The decision bar lives on the queue, not on the board.
+    await page.getByRole('link', { name: /your decisions/i }).click();
+
+    // Scoped to the labelled region. "Request changes" deliberately names both
+    // the control that opens the form and the one that submits it — the design
+    // system's rule is that an action keeps its name through the flow — so an
+    // unscoped match is ambiguous by design, not by accident.
+    const decision = page.getByRole('region', { name: 'Decision' }).first();
+    await decision.getByRole('button', { name: /^request changes$/i }).click();
+
     // DESIGN-SYSTEM: "disabled until the note has content".
-    await expect(page.getByRole('button', { name: /send|submit|request/i })).toBeDisabled();
-    await page.getByRole('textbox', { name: /note|what.*change/i }).fill('The logo reads too small.');
-    await expect(page.getByRole('button', { name: /send|submit|request/i })).toBeEnabled();
+    const submit = decision.getByRole('button', { name: /^request changes$/i });
+    await expect(submit).toBeDisabled();
+    await decision.getByRole('textbox', { name: /what needs to change/i }).fill('The logo reads too small.');
+    await expect(submit).toBeEnabled();
   });
 
   test('a client session for one engagement cannot reach another (INV-6)', async ({
@@ -87,10 +112,15 @@ test.describe('the client completes a decision without agency chrome', () => {
   }) => {
     await page.goto(`/e/${seed.engagementToken}`);
     await page.getByLabel(/email/i).fill(CONTACT_EMAIL);
-    await page.getByRole('button', { name: /continue|send|verify/i }).click();
+    await page.getByRole('button', { name: /send me a code/i }).click();
+    await expect(page.getByLabel(/code/i)).toBeVisible();
     const code = await latestClientCode(request, seed.engagementToken, CONTACT_EMAIL);
     await page.getByLabel(/code/i).fill(code);
-    await page.getByRole('button', { name: /verify|continue/i }).click();
+    await page.getByRole('button', { name: /open the workspace/i }).click();
+    // Verify hands off to a client-side `router.replace` to the board. Waiting
+    // on the URL rather than on the first thing the board happens to render
+    // keeps the assertions below about the board, not about the navigation.
+    await page.waitForURL(/\/board$/);
 
     // The same person, a different engagement, and a session that must not widen.
     const response = await page.request.get(`${baseURL}/e/${seed.otherEngagementToken}`, {
@@ -111,10 +141,15 @@ test.describe('the client completes a decision without agency chrome', () => {
     // thing that makes the purge safe to ship.
     await page.goto(`/e/${seed.engagementToken}`);
     await page.getByLabel(/email/i).fill(CONTACT_EMAIL);
-    await page.getByRole('button', { name: /continue|send|verify/i }).click();
+    await page.getByRole('button', { name: /send me a code/i }).click();
+    await expect(page.getByLabel(/code/i)).toBeVisible();
     const code = await latestClientCode(request, seed.engagementToken, CONTACT_EMAIL);
     await page.getByLabel(/code/i).fill(code);
-    await page.getByRole('button', { name: /verify|continue/i }).click();
+    await page.getByRole('button', { name: /open the workspace/i }).click();
+    // Verify hands off to a client-side `router.replace` to the board. Waiting
+    // on the URL rather than on the first thing the board happens to render
+    // keeps the assertions below about the board, not about the navigation.
+    await page.waitForURL(/\/board$/);
 
     const exportLink = page.getByRole('link', { name: /export/i });
     await expect(exportLink).toBeVisible();
