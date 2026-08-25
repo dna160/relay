@@ -33,6 +33,7 @@ import {
   revisionNotes,
   stateTransitions,
 } from '@/db/schema';
+import { countProjectAccessRows } from '../access/purge-project-access';
 import { sha256Hex } from './certificate';
 
 /**
@@ -56,6 +57,32 @@ export type TableDisposition = 'content' | 'tombstone' | 'retained' | 'partial' 
 export const TABLE_DISPOSITION: Readonly<Record<string, TableDisposition>> = {
   /* Destroyed. */
   approvals: 'content',
+  /**
+   * Phase 9. DELIVERY-PLAN §IV: "`project_memberships` rows are deleted;
+   * `accounts` are not — the person outlasts the project." Membership in a
+   * project that no longer exists is not a fact about a person worth keeping,
+   * and leaving the rows would mean the purge left behind a list of exactly who
+   * had access to the workspace it claims to have destroyed.
+   */
+  project_memberships: 'content',
+  /**
+   * Phase 9's shadow harness ledger, and the one disposition here that was a
+   * judgement rather than a transcription.
+   *
+   * It is `content` because of what a row actually holds: `project_id`,
+   * `account_id`, `legacy_user_id`, `legacy_org_id`, and a `jsonb` copy of the
+   * full decision input carrying the same ids. That is a per-project record of
+   * who tried to reach what, which is engagement-scoped personal data by any
+   * reading — and a table that survives a purge holding the ids of a purged
+   * project is precisely the thing ADR-022's certificate should never have to
+   * explain. Diagnostics do not get an exemption from a deletion promise.
+   *
+   * The counts the dashboard needs survive anyway: a purged project's rows are
+   * gone, and so is any disagreement they represented. If the streak needs to
+   * be provable across a purge later, that is an aggregate to write down, not a
+   * reason to keep the identifiers.
+   */
+  access_shadow_disagreements: 'content',
   asset_versions: 'content',
   cards: 'content',
   client_contacts: 'content',
@@ -84,6 +111,20 @@ export const TABLE_DISPOSITION: Readonly<Record<string, TableDisposition>> = {
 
   /* Not engagement-scoped; a purge has no business here. */
   auth_accounts: 'unscoped',
+  /**
+   * Phase 9's identity graph. The person outlasts the project (ADR-021 §1):
+   * an account is never owned by an organization, let alone by one engagement,
+   * and destroying it would take with it every *other* project that person is
+   * still working on. `identities` and `org_memberships` follow the account for
+   * the same reason, and `teams`/`team_members` belong to the organization —
+   * a team survives the projects it was granted to, and the grants themselves
+   * are `project_memberships` rows, which do not.
+   */
+  accounts: 'unscoped',
+  identities: 'unscoped',
+  org_memberships: 'unscoped',
+  teams: 'unscoped',
+  team_members: 'unscoped',
   auth_sessions: 'unscoped',
   organizations: 'unscoped',
   templates: 'unscoped',
@@ -291,6 +332,9 @@ async function contentRowCounts(
   versionIds: readonly string[],
 ): Promise<ManifestRowCount[]> {
   const n = sql<number>`count(*)::int`;
+  // Counted through the access domain: INV-11 reserves every membership table
+  // for `src/domain/access/`, and a manifest is a reader like any other.
+  const graph = await countProjectAccessRows(exec, engagementId);
   const none = cardIds.length === 0;
   const noVersions = versionIds.length === 0;
 
@@ -372,6 +416,8 @@ async function contentRowCounts(
           .where(eq(clientContacts.engagementId, engagementId)),
       ),
     },
+    { table: 'project_memberships', rows: graph.projectMemberships },
+    { table: 'access_shadow_disagreements', rows: graph.accessShadowDisagreements },
     {
       table: 'audit_log',
       rows: await countOf(

@@ -686,3 +686,99 @@ of a jank regression on the surface with the FCP budget.
 > was `readonly string[]` and is now `readonly { what, why }[]`. Nothing in
 > `tests/` referenced it at the time of writing, but a consumer that did would
 > need updating.
+
+---
+
+## 10. Nothing animates on first paint (round 3, new)
+
+The one entry in `MOTION.md` §5 that a component can violate silently, and one
+did: `Chip` carried `animate-chip-in` on its current label unconditionally, so
+every state chip on a server-rendered board faded in during the initial paint.
+§5 forbids "the initial board render" by name and §8 Claim 1 rests the whole
+FCP argument on it. Both were prose. Prose cannot fail CI.
+
+The honest check is the bytes the server sent, not the components that produced
+them. Every animation in `MOTION.md` §6 is triggered by a change, and a change
+is by definition something that happened after the document was sent. So the
+whole assertion is:
+
+> **The server-rendered HTML of any route contains no `animate-` utility.**
+
+No browser, no clock, no hydration — which is the point. Data:
+`FIRST_PAINT` in `src/styles/a11y-contract.ts` §9.
+
+```ts
+import { FIRST_PAINT } from '@/styles/a11y-contract';
+
+for (const path of ['/board', '/portfolio', '/c/<token>']) {
+  test(`nothing animates on the first paint of ${path}`, async ({ request }) => {
+    const html = await (await request.get(path)).text();
+    const hits = html.match(new RegExp(FIRST_PAINT.utilityPattern, 'g')) ?? [];
+    expect(
+      hits,
+      'MOTION.md §5: the initial board render does not animate, and §8 Claim 1 ' +
+        'prices the FCP budget on that. An entrance in the server markup runs ' +
+        'before hydration, on the acquisition surface, for every reader.',
+    ).toEqual([]);
+  });
+}
+```
+
+The unit-test form is the same assertion one layer down, and is worth having as
+well because it names the offending primitive rather than the route:
+`renderToStaticMarkup` each primitive in its default, non-transitioning state
+and match the same pattern. A primitive that cannot be rendered without an
+entrance has misunderstood the system — make the element *new* when the event
+happens, and the animation runs from zero on an element that did not exist at
+first paint.
+
+`FIRST_PAINT.allowedInServerMarkup` is empty and should stay empty. An entry
+there is a component claiming an entrance on a document nobody has interacted
+with yet.
+
+## 11. The machine-readable mark (round 3, new)
+
+`Barcode` filled its bars with `currentColor`, so in dark mode it rendered
+light bars on a dark ground. The symbol still *encoded* correctly and could not
+be *scanned*: an inverted Code 39 is, to most laser and CCD readers and to
+plenty of camera decoders, not a symbol. It sits on the purge certificate — the
+one document in this product meant to be scanned, and the one that goes to a
+client's legal team.
+
+Bar/space polarity and the quiet zone are part of the encoding, not the
+styling, so the barcode carries its own substrate and does not follow the
+theme. Data: `BARCODE` in `src/styles/a11y-contract.ts` §8.
+
+Three assertions, and the third is the one that matters:
+
+**(a) The plate is black on white.** Read the computed `fill` of the bar
+`<path>` and of the substrate `<rect>` and assert they are `BARCODE.bar` and
+`BARCODE.substrate`. `contrastRatio` of the pair is `BARCODE.minContrast` —
+21:1, the maximum, because scan margin is the entire point.
+
+**(b) A tenant cannot invert it.** Both tokens are `!important` in
+`globals.css` §5. Write `--barcode-bar: #ffffff` into the inline style of
+`[data-relay-root]` — the same shape as the `LOCKED_TOKENS` test — and assert
+the computed fill is unchanged.
+
+**(c) The colours are IDENTICAL in light and in dark.** This is the regression
+under test. Every other colour assertion in this document is per-mode and would
+have passed happily against an inverted barcode; only comparing the two modes
+to each other catches it.
+
+```ts
+const read = async (mode: Mode) => {
+  await setTheme(page, mode);
+  return page.$eval('svg path', (el) => getComputedStyle(el).fill);
+};
+expect(await read('dark'), 'a barcode whose bars moved with the theme').toBe(
+  await read('light'),
+);
+```
+
+**And the encoding itself, without a browser.** `code39Path()` is exported so a
+vitest spec can decode the path back to element widths — five bars and four
+spaces per character, three of the nine wide — and assert it returns the input,
+with `BARCODE.quietModules` narrow modules of substrate each side. That test
+does not exist yet and should: it is the difference between "the bars are the
+right colour" and "the bars say what the line beneath them says".

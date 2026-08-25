@@ -36,6 +36,7 @@ import { notVisible } from '@/domain/errors';
 import { toErrorResponse } from '@/lib/errors';
 import { publishEvent } from '@/lib/sse';
 import { requireAgency } from '../_guards';
+import { shadowed, shadowedByCard } from '../_shadow';
 
 const querySchema = z.object({ cardId: z.string().uuid() });
 
@@ -45,7 +46,9 @@ export async function GET(request: Request): Promise<NextResponse> {
     const { searchParams } = new URL(request.url);
     const { cardId } = querySchema.parse({ cardId: searchParams.get('cardId') ?? undefined });
 
-    const target = await loadCardEngagementForOrg(db, session.orgId, cardId);
+    const target = await shadowedByCard('GET /api/comments', session, cardId, () =>
+      loadCardEngagementForOrg(db, session.orgId, cardId),
+    );
     const comments = await loadAgencyComments(db, target.engagementId, target.cardId);
 
     return NextResponse.json(
@@ -80,12 +83,20 @@ export async function POST(request: Request): Promise<NextResponse> {
     const input = schema.parse(await request.json());
     const now = new Date();
 
-    const engagement = await loadEngagementDetail(db, input.engagementId, session.orgId, now);
+    const engagement = await shadowed('POST /api/comments', session, input.engagementId, () =>
+      loadEngagementDetail(db, input.engagementId, session.orgId, now),
+    );
     // 423 before the write. Round 2 found both client mutations missing this
     // (amendment A9); a new writer is exactly where it gets forgotten again.
     assertWritable(engagement);
 
-    const target = await loadCardEngagementForOrg(db, session.orgId, input.cardId);
+    const target = await shadowedByCard(
+      'POST /api/comments',
+      session,
+      input.cardId,
+      () => loadCardEngagementForOrg(db, session.orgId, input.cardId),
+      'card-belongs-to-engagement',
+    );
     if (target.engagementId !== engagement.id) throw notVisible('Card not found');
 
     const comment = await postComment(

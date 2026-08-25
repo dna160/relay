@@ -14,6 +14,7 @@ import { createLane } from '@/domain/lane/mutate';
 import { assertWritable } from '@/domain/engagement/lifecycle';
 import { toErrorResponse } from '@/lib/errors';
 import { requireAgency } from '../_guards';
+import { shadowed } from '../_shadow';
 
 const schema = z.object({
   engagementId: z.string().uuid(),
@@ -28,7 +29,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     const body = schema.parse(await request.json());
     const now = new Date();
 
-    const engagement = await loadEngagementDetail(db, body.engagementId, session.orgId, now);
+    const engagement = await shadowed('POST /api/lanes', session, body.engagementId, () =>
+      loadEngagementDetail(db, body.engagementId, session.orgId, now),
+    );
     assertWritable(engagement);
 
     const lane = await createLane(

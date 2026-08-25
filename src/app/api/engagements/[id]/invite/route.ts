@@ -14,6 +14,7 @@ import { engagementToken } from '@/lib/auth';
 import { sendClientInvite } from '@/lib/email';
 import { toErrorResponse } from '@/lib/errors';
 import { requireAgency, type RouteContext } from '../../../_guards';
+import { shadowed } from '../../../_shadow';
 
 const schema = z.object({
   email: z.string().email(),
@@ -31,7 +32,9 @@ export async function POST(
     const now = new Date();
 
     // Scoped load first: a wrong-org id is a 404 before anything is written.
-    const engagement = await loadEngagementDetail(db, id, session.orgId, now);
+    const engagement = await shadowed('POST /api/engagements/[id]/invite', session, id, () =>
+      loadEngagementDetail(db, id, session.orgId, now),
+    );
 
     const { contact, created } = await inviteContact(
       db,

@@ -20,6 +20,7 @@ import { assertWritable } from '@/domain/engagement/lifecycle';
 import { validationFailed } from '@/domain/errors';
 import { toErrorResponse } from '@/lib/errors';
 import { requireAgency, type RouteContext } from '../../_guards';
+import { shadowed } from '../../_shadow';
 
 const schema = z
   .object({
@@ -60,7 +61,9 @@ export async function PATCH(
     const body = schema.parse(raw);
     const now = new Date();
 
-    const engagement = await loadEngagementDetail(db, body.engagementId, session.orgId, now);
+    const engagement = await shadowed('PATCH /api/cards/[id]', session, body.engagementId, () =>
+      loadEngagementDetail(db, body.engagementId, session.orgId, now),
+    );
     assertWritable(engagement);
 
     const { engagementId: _engagementId, laneId, position, ...patch } = body;

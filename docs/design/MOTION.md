@@ -217,6 +217,44 @@ this is a `scaleY` and not an `opacity`: a fade says "this value was replaced",
 a wipe says "this mark was applied". The product's central event deserves the
 second reading.
 
+**Printed over WHAT — and the defect that made this paragraph a lie.**
+
+`animate-bar-draw` runs with `both` fill, and `both` includes `backwards`: for
+the two beats of the delay the element is held at the *from* state, which is
+`scaleY(0)`, which is no bar. §4c below then told the front-end to change the
+element's `key` so React would remount it — which destroyed the outgoing bar in
+the same frame. So for 120ms, during the product's signature event, the leading
+edge of the card was **blank**. Nothing was being printed over anything; a wipe
+was playing over the card ground.
+
+That is not a wording problem. "Printed over" is a claim about how possession
+reads — the old mark is still there until the new one covers it, the way a
+second pass of ink works — and a blink says the opposite, that possession is
+briefly *unknown*. It was reconsidered on those terms and kept, because the
+claim is right and the implementation was wrong.
+
+So the bar is **two layers**, and the primitive `ColourBar`
+(`src/components/primitives/ColourBar.tsx`) is the form:
+
+```
+        under-layer            over-layer
+t=0     outgoing hue, static   incoming hue, scaleY(0)   ← the strike is in flight
+t=120   outgoing hue, static   incoming hue, drawing     ← the strike lands
+t=300   (covered, then         incoming hue, scaleY(1)
+         removed)
+```
+
+During the strike the card still shows the old possession, which is *true* —
+possession has not landed yet. On the beat the label seats, the new ink starts
+covering it. One `bar-draw`, no new keyframe, no cross-fade anywhere.
+
+The outgoing hue has to be remembered by something and CSS cannot remember one.
+That is the entire reason this is a primitive rather than two class names at a
+call site: the memory belongs with the mark. It is also why `ColourBar` does
+not animate on first mount — a server-rendered board has no outgoing hue, so
+there is no under-layer, no animation class, and nothing in the markup for the
+first paint to run (§5, §8 Claim 1).
+
 ### 4c. What the front-end has to do
 
 The animation is entirely CSS; there is no JS timeline, no library, and no
@@ -226,10 +264,19 @@ the moment possession changes so the animation runs:
 1. On the state chip, pass `attach` to the `Chip` primitive when the transition
    being rendered is a possession change. The primitive keys the incoming label
    and swaps `animate-chip-in` for `animate-label-attach`. That is one prop.
-2. On `PossessionBar`, add `animate-bar-draw origin-head` to the filled bar and
-   change its `key` when possession changes, so React remounts it and the
-   animation runs from 0. Paint the *new* hue immediately; do not transition
-   the colour.
+2. On `PossessionBar`, render the filled bar as the `ColourBar` primitive and
+   pass the current possession fill. That is the whole change — the primitive
+   owns the two layers, the memory of the outgoing hue, the remount and the
+   first-mount suppression:
+
+   ```tsx
+   <ColourBar fill={fill} className="absolute inset-y-0 left-0 w-bar" />
+   ```
+
+   Do **not** hand-roll this with `animate-bar-draw origin-head` and a changing
+   `key` on a single element. That was this document's instruction until §4b
+   above was corrected, and it is what produced the 120ms blank bar: one element
+   cannot be both the ink being laid down and the ink being covered.
 3. Do not animate the card, the lane, the counter, or anything else in the same
    frame (rule R1).
 
@@ -267,7 +314,7 @@ Eight keyframes. A ninth name appearing on a rendered page is a spec violation;
 |---|---|---|---|---|
 | `chip-in` / `chip-out` | `animate-chip-in` / `-out` | 2 beats | a state chip's label changes | `Chip` (primitive) |
 | `label-attach` | `animate-label-attach` | 5 beats | **possession changes hands** | `Chip attach` / possession plate |
-| `bar-draw` | `animate-bar-draw origin-head` | 3 beats, delayed 2 | **possession changes hands** | `PossessionBar` fill |
+| `bar-draw` | `animate-bar-draw origin-head` | 3 beats, delayed 2 | **possession changes hands** | the over-layer inside `ColourBar` (primitive) |
 | `stamp` | `animate-stamp` | 2 beats | a version is published; a decision is recorded; a round is consumed | the version pip, the decision timestamp, the rounds counter |
 | `seat` | `animate-seat` | 3 beats | a record is appended to a list | a `VersionStack` row, a new comment |
 | `sheet-in` | `animate-sheet-in` | 3 beats | a dialog opens | `Dialog` (primitive) |
@@ -318,7 +365,7 @@ mid-flight, nothing is left invisible, nothing is left rotated.
 | Entry | Under reduce |
 |---|---|
 | `label-attach` | the plate is in place, square, at scale, opaque |
-| `bar-draw` | the bar is drawn full height in the new hue |
+| `bar-draw` | the bar is drawn full height in the new hue; the covered layer is never seen |
 | `stamp` | the mark is there |
 | `seat` | the row is in the list |
 | `sheet-in` / `scrim-in` | the dialog is open on its scrim |
@@ -340,11 +387,12 @@ There is no `motion-reduce:` variant anywhere in this codebase and there must
 never be one. That pattern was removed once already; it is a component opting
 in by hand, which means the next component can forget, and nothing catches it.
 
-*(One known exception is on record and is not mine to fix:
-`src/components/agency/card-tile.tsx` carries `motion-reduce:transition-none`.
-It is allowlisted in `tests/unit/a11y-source.spec.ts` as a round-2 defect. With
-this system in place the fix is a one-liner — delete the variant and let the
-token do it — and it belongs to the front-end.)*
+*(The one known exception is now closed. `src/components/agency/card-tile.tsx`
+carried `motion-reduce:transition-none` as a round-2 defect; the front-end has
+deleted it and the token does the work. The allowlist entry in
+`tests/unit/a11y-source.spec.ts` is therefore stale and should come out —
+`KNOWN_CALL_SITE_OFFENDERS` should be empty, and an empty allowlist is a
+stronger assertion than a subset check with one name in it.)*
 
 ## 8. Cost, and how the 1.5s FCP budget survives
 
@@ -429,6 +477,15 @@ gzip -c /tmp/old-built.css | wc -c ; gzip -c /tmp/new-built.css | wc -c
 | round 3, motion system only | 25,205 B | **6,331 B** | **+524 B** |
 | round 3, motion + label chrome | 25,938 B | **6,493 B** | **+686 B** |
 
+**Round 3 corrections** (barcode substrate, `--tint-neutral`, the `Plate`
+strip breakpoint) add **+41 B gzipped** on top of that, measured the same way
+against `ae7128e`: 6,835 B → 6,876 B. The absolute figures no longer match the
+table above because the content globs now scan more source than they did when
+it was taken; the delta is the number that means anything, and it is two thirds
+of a TCP segment's rounding error. The two barcode tokens and one tint are
+declarations in a block that already exists, and the `Plate` change trades a
+`divide-x` for a `border-r` plus a handful of `xs:` variants.
+
 **+686 bytes gzipped, for the entire round.** 524 of those are the motion
 system — nineteen custom properties, five `@keyframes` blocks and their
 utilities — and 162 are the five label-chrome classes.
@@ -472,11 +529,32 @@ Everything in this document that can be asserted is data in
   `string[]` needs updating. Nothing in `tests/` referenced it at the time of
   writing.
 
-Two assertions worth adding that do not exist yet:
+- `FIRST_PAINT` — the check for §5's "the initial board render" entry. See
+  below; this one is new and it is the important one.
 
-1. **Every keyframe's 100% is the resting state.** Read the `100%` stop of each
+Three assertions worth adding, one of which now has its data:
+
+1. **Nothing animates on first paint.** *(§9 of `a11y-contract.ts`.)* This entry
+   used to be prose in §5 and prose in §8, and the `Chip` primitive contradicted
+   both: `animate-chip-in` sat on the current label unconditionally, so every
+   state chip on a server-rendered board faded in during the initial paint. No
+   prop could suppress it and nothing was looking.
+
+   The honest check is the bytes, not the components. Every animation in §6 is
+   triggered by a change, and a change is by definition something that happened
+   after the document was sent, so:
+
+   > **The server-rendered HTML of any route contains no `animate-` utility.**
+
+   One assertion, no browser, no clock, no hydration — fetch the route with
+   Playwright's `request.get` (or `renderToStaticMarkup` a primitive in a unit
+   test) and match `FIRST_PAINT.utilityPattern` against the body. It is worth
+   more than the two fixes it would have caught, because it is the only entry
+   in the restraint list that a component can violate silently.
+
+2. **Every keyframe's 100% is the resting state.** Read the `100%` stop of each
    sanctioned animation and assert `transform` resolves to the identity and
    `opacity` to `1`. This is the property the entire reduced-motion story rests
    on, and it is currently guaranteed by review alone.
-2. **No literal duration in `globals.css`.** Grep for `\d+ms` outside the
+3. **No literal duration in `globals.css`.** Grep for `\d+ms` outside the
    `--dur-beat` declaration. A literal is how the single-switch guarantee dies.

@@ -125,9 +125,12 @@ export function statements(file: SourceFile): string[] {
     // Depth is closed, but the statement may still be mid-chain. `await db`
     // followed by `.update(cards)` is one statement wearing two lines, and
     // splitting it here would rebuild the exact hole this function exists to
-    // close. So a line that *starts* like a continuation joins the previous one.
+    // close. So a line that *starts* like a continuation joins the previous
+    // one — and so does a line that *ends* dangling, which is the same hole
+    // approached from the other side.
     const next = lines[index + 1]?.trim() ?? '';
     if (CONTINUATION.test(next)) continue;
+    if (DANGLING.test(current)) continue;
 
     flush();
   }
@@ -137,6 +140,37 @@ export function statements(file: SourceFile): string[] {
 
 /** Line openers that mean "this is the rest of the statement above". */
 const CONTINUATION = /^(\.|\?\.|\)|\]|\}|,|:|\?\?|&&|\|\||=>|\+|=(?!=))/;
+
+/**
+ * Statement enders that mean "the rest of this is on the next line".
+ *
+ * `CONTINUATION` catches the wrap when the *operator leads* the second line:
+ *
+ *     const owns = project.ownerId
+ *       === session.accountId;        <- starts with an operator, joined
+ *
+ * Prettier writes the other one far more often — it breaks *after* the
+ * operator, which leaves the first line dangling and the second line starting
+ * with an ordinary identifier or a string:
+ *
+ *     const effective =
+ *       strongest(projectRole, derived) ??
+ *       'reviewer';                   <- neither line starts like a continuation
+ *
+ * That is three statements to the splitter and one statement to the compiler,
+ * and any bounded "must not contain" pattern spanning the break — `?? 'role'`,
+ * `accountId ===` and its right-hand side — sees neither half. Exactly the
+ * shape of DEFECT-3, found by INV-11's planted violations before it could be
+ * found by a leak.
+ *
+ * Deliberately conservative. `>` and `<` are absent because a `.tsx` line
+ * ending in `>` is a JSX tag, and joining every element to the next would merge
+ * whole components into one statement — which for a bounded pattern is a false
+ * positive, and a guard that cries wolf gets relaxed rather than obeyed.
+ * Merging is otherwise the safe direction: it can only widen what a
+ * "must not contain" scan sees.
+ */
+const DANGLING = /(?:=>|\?\?|&&|\|\||[+\-=])\s*$/;
 
 /**
  * `linesMatching`, but immune to where the formatter chose to wrap.

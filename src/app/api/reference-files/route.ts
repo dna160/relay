@@ -17,6 +17,7 @@ import { assertWritable } from '@/domain/engagement/lifecycle';
 import { addReferenceFile } from '@/domain/reference/add-file';
 import { toErrorResponse } from '@/lib/errors';
 import { requireAgency } from '../_guards';
+import { shadowed } from '../_shadow';
 
 const schema = z
   .object({
@@ -36,7 +37,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     const body = schema.parse(await request.json());
     const now = new Date();
 
-    const engagement = await loadEngagementDetail(db, body.engagementId, session.orgId, now);
+    const engagement = await shadowed('POST /api/reference-files', session, body.engagementId, () =>
+      loadEngagementDetail(db, body.engagementId, session.orgId, now),
+    );
     assertWritable(engagement);
 
     const file = await addReferenceFile(

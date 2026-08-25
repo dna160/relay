@@ -23,6 +23,7 @@ const COLORS = [
   'tint-agency',
   'tint-client',
   'tint-breach',
+  'tint-neutral',
   'agency-hover',
   'client-hover',
   'paper-hover',

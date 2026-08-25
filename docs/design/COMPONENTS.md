@@ -1036,8 +1036,27 @@ is exactly how the old `--muted` shipped at 4.14:1.
 
 ### 360
 
-`layout="stack"` is the fallback: `strip` wraps, and below `xs` a strip of more
-than three pairs should be rendered as a stack instead.
+`layout="stack"` is the fallback, and the primitive now does it rather than
+leaving it to the call site: **a `strip` of more than three pairs renders as a
+`stack` below `xs`.** Two or three pairs fit on one line at the 360px floor;
+four do not, and a strip that wraps at the floor is a stack that has not
+admitted it.
+
+Above `xs` a strip can still wrap in a narrow container, so the divider also
+changed: it is a **trailing** hairline on every pair but the last, not a leading
+one on every pair but the first. `divide-x` put the rule at the head of each
+item, which meant a wrapped line opened with a rule that divided nothing — the
+first pair on line two separated from the edge of the plate. A trailing rule
+ends line one *between* the pair it belongs to and the pair that follows it on
+the next line, and line two starts flush.
+
+Be honest about what the breakpoint can and cannot do. `xs` is a viewport
+query, and whether a strip fits depends on the container and on how long the
+values are — five pairs want roughly 660px, four want roughly 510px, and no
+single breakpoint serves both. So **above `xs`, a long strip still wraps**; it
+now wraps *well*, which is the difference between a component with a rough edge
+and a component with a bug. A strip that wraps in practice is the call site
+telling you it wanted `layout="stack"`.
 
 ## 11. `Barcode`
 
@@ -1065,6 +1084,31 @@ The `<svg>` is `aria-hidden` and `focusable="false"`. The accessible content is
 the `Mono` line beneath it, named by `label`. A reader who heard both would
 hear the same hash twice.
 
+### Polarity — the one element in the product that does not follow the theme
+
+The bars are `--barcode-bar` on a `--barcode-substrate` plate: **black on
+white, in light, in dark and in print.** Not `currentColor`.
+
+Round 3 shipped it in `currentColor`, which in dark mode is light bars on a
+dark ground. The symbol still encoded correctly and could not be scanned — an
+inverted Code 39 is, to most laser and CCD readers and to plenty of camera
+decoders, not a symbol at all. On the purge certificate: the one document in
+this product meant to be scanned, and the one that goes to a client's legal
+team.
+
+Bar/space polarity and the quiet zone are part of the **encoding**, not part of
+the styling, so they are not the theme's to move. The plate covers the quiet
+zone as well as the bars, plus four narrow modules above and below, because a
+quiet zone painted in whatever ground the page happens to have is a quiet zone
+that inverts. Both tokens are `!important` in `globals.css` §5, so a tenant
+cannot invert a machine-readable mark either.
+
+The right reading is not "an element that ignores dark mode". It is a printed
+label stuck to the page, which is exactly what a barcode on a certificate is.
+The human-readable line beneath the bars is **not** part of the plate: it is
+text, it is `--ink` on the page ground, and it follows the theme like every
+other record.
+
 ## 12. `RegistrationMark`
 
 A printer's crosshair marking where a document was *issued*. One per document:
@@ -1090,9 +1134,9 @@ front-end's whole job is to make the right element *new* at the right moment.
 | Component | Add | When |
 |---|---|---|
 | `CardTile` | `dieline` class on the card | always |
-| `PossessionBar` | `colour-bar` class on the filled bar | always |
-| `PossessionBar` | `animate-bar-draw origin-head`, and change the element's `key` | **possession changes hands.** Paint the new hue immediately; do not transition the colour — the new bar is printed *over* the old one, not faded into it |
-| `StateChip` → `Chip` | pass `attach` | **possession changes hands**, and only then |
+| `PossessionBar` | render the filled bar as the `ColourBar` primitive, passing the possession fill | always. The primitive carries `.colour-bar`, both ink layers, the memory of the outgoing hue, the remount and the first-mount suppression |
+| `PossessionBar` | nothing further | **possession changes hands.** Do not hand-roll `animate-bar-draw origin-head` on a single re-keyed element: one element cannot be both the ink being laid down and the ink being covered, and doing it that way left the card with no bar for 120ms. `MOTION.md` §4b |
+| `StateChip` → `Chip` | pass `attach` | **possession changes hands**, and only then. The primitive suppresses its own entrance on first mount, so nothing has to be passed to keep the server-rendered board still |
 | `VersionStack` row | `animate-stamp` on the version pip | a version is published |
 | `VersionStack` | `animate-seat stagger` + `style={{ '--stagger-index': i }}` on rows | the stack *gains* rows. Not on first render |
 | `DecisionBar` | `animate-stamp` on the decision timestamp | a decision is recorded |
@@ -1107,12 +1151,21 @@ possession change animates the bar and the chip. It does not also animate the
 card, the lane, the counter or the board. If a reader's eye has to choose where
 to look, the motion has failed at the thing it was for.
 
-### Two things to delete while you are in there
+### Things to delete while you are in there
 
-- `src/components/agency/card-tile.tsx` carries
-  `motion-reduce:transition-none`, allowlisted in
-  `tests/unit/a11y-source.spec.ts` as a round-2 defect. With the token system in
-  place the fix is to delete the variant; `--dur-beat` already does it.
+- `src/components/agency/card-tile.tsx` passes `className="bg-paper"` to
+  `StateChip` to give a neutral quiet chip a boundary on a card. **Delete it.**
+  The chip's neutral ground is now `--tint-neutral` — the same 12% construction
+  as the three possession tints, mixed from `--ink` — so it keeps a ground of
+  its own on `--paper` and `--paper-2` alike and no call site has to know which
+  one it is standing on. The override still wins while it is there, so the chip
+  will look wrong (unrecessed) until it goes.
 - `src/components/style-tokens.ts` and the same file's comments still refer to
   `--dur-chip`, which no longer exists. The Tailwind key `duration-chip` is
   unchanged and still correct — only the prose and the CSS variable name moved.
+
+*(`src/components/agency/card-tile.tsx` no longer carries
+`motion-reduce:transition-none`; that round-2 defect is closed. The allowlist
+entry for it in `tests/unit/a11y-source.spec.ts` is now stale — QA's file, QA's
+call, but an empty `KNOWN_CALL_SITE_OFFENDERS` asserts more than a subset check
+with one dead name in it.)*

@@ -28,7 +28,38 @@ import { cn } from './cn';
  * sets the label in `--ink` (13.3:1 light, 11.3:1 dark). The solid variant
  * fills with the hue and sets the label in `--on-hue`. Neither asks a reader to
  * resolve coloured text against a coloured ground.
+ *
+ * NEUTRAL HAS A TINT OF ITS OWN, and that is the fix for a real defect: it
+ * used to be painted `--paper-2`, which IS a card's ground, so a neutral chip
+ * on a card had no boundary at all and `CardTile` had to override the
+ * primitive with `bg-paper` to get one back. `--tint-neutral` is the same 12%
+ * construction as the other three, mixed from `--ink`, so the chip keeps a
+ * ground on `--paper` and on `--paper-2` alike and no call site has to know
+ * which one it is standing on. A `ground` prop was the obvious alternative and
+ * was rejected: it is a call-site opt-in, the same shape as a `motion-reduce:`
+ * variant, and the next call site forgets it.
+ *
+ * NOTHING HERE ANIMATES ON FIRST MOUNT. `animate-chip-in` used to sit on the
+ * current label unconditionally, so every state chip on a server-rendered
+ * board faded in during the initial paint — which MOTION.md §5 forbids by name
+ * and §8 Claim 1 rests the FCP argument on. There is no prop to suppress it,
+ * because a prop would be the same call-site opt-in and the same forgetting.
+ * Instead the entrance is *earned*: a label animates when it is replacing
+ * another label, and on first mount there is nothing to replace.
+ *
+ * The mechanism is a state adjustment during render rather than an effect, and
+ * that detail is load-bearing. An effect runs after the commit, so the new
+ * label would paint once at rest and only then jump back to opacity 0 — a
+ * visible flash. Adjusting state during render makes React re-run this
+ * component before the browser paints, so the incoming label mounts already
+ * carrying its animation class.
  */
+/** A label and the identity that decides whether it replaced another one. */
+interface Label {
+  key: string;
+  node: ReactNode;
+}
+
 export type ChipTone = 'agency' | 'client' | 'breach' | 'neutral';
 export type ChipVariant = 'quiet' | 'solid';
 
@@ -59,7 +90,7 @@ const QUIET: Record<ChipTone, string> = {
   agency: 'bg-tint-agency text-ink border-l-agency',
   client: 'bg-tint-client text-ink border-l-client',
   breach: 'bg-tint-breach text-ink border-l-breach',
-  neutral: 'bg-paper-2 text-ink border-l-rule-strong',
+  neutral: 'bg-tint-neutral text-ink border-l-rule-strong',
 };
 
 const SOLID: Record<ChipTone, string> = {
@@ -79,30 +110,43 @@ export function Chip({
   className,
 }: ChipProps): React.JSX.Element {
   const key = transitionKey ?? String(children);
-  const [outgoing, setOutgoing] = useState<{
-    key: string;
-    node: ReactNode;
-  } | null>(null);
-  const previous = useRef<{ key: string; node: ReactNode }>({
+
+  /**
+   * `replacing` is false for the label this chip was born with and true for
+   * every label that arrives afterwards. It is the entrance gate, and it is
+   * state rather than a ref so that it survives the re-render the adjustment
+   * below triggers.
+   */
+  const [shown, setShown] = useState<{ key: string; replacing: boolean }>({
     key,
-    node: children,
+    replacing: false,
+  });
+  const [outgoing, setOutgoing] = useState<Label | null>(null);
+  /** The label as of the last commit — what a new label would be replacing. */
+  const previous = useRef<Label>({ key, node: children });
+
+  if (shown.key !== key) {
+    // Adjusting state during render. React discards this pass and re-runs the
+    // component immediately, before the browser paints, so the incoming label
+    // mounts with its animation class already on it. Doing this in an effect
+    // would be one frame late and the label would flash at rest first.
+    setOutgoing(previous.current);
+    setShown({ key, replacing: true });
+  }
+
+  useEffect(() => {
+    previous.current = { key, node: children };
   });
 
   useEffect(() => {
-    if (previous.current.key === key) {
-      previous.current = { key, node: children };
-      return;
-    }
-    const leaving = previous.current;
-    previous.current = { key, node: children };
-    setOutgoing(leaving);
+    if (outgoing === null) return;
     // Longer than the longest incoming animation (five beats = 300ms) so the
     // outgoing label is never removed while the incoming one is still moving.
     // A constant rather than a token read: this is a cleanup deadline, not a
     // duration a reader perceives, and it is correct at every beat value.
     const t = window.setTimeout(() => setOutgoing(null), 400);
     return () => window.clearTimeout(t);
-  }, [key, children]);
+  }, [outgoing]);
 
   return (
     <span
@@ -122,7 +166,9 @@ export function Chip({
         key={key}
         className={cn(
           'col-start-1 row-start-1',
-          attach ? 'animate-label-attach' : 'animate-chip-in',
+          // No entrance on first mount: a label animates only when it is
+          // replacing one. MOTION.md §5, "the initial board render".
+          shown.replacing && (attach ? 'animate-label-attach' : 'animate-chip-in'),
         )}
       >
         {children}

@@ -7,10 +7,13 @@
     "node": ">=22"
   },
   "scripts": {
+    "access:shadow": "tsx src/workers/access-shadow-cli.ts",
+    "backfill:identity": "tsx src/workers/backfill-cli.ts",
     "build": "next build",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
-    "db:up": "docker compose up -d db",
+    "db:up": "docker compose up -d",
+    "storage:check": "node .github/scripts/ensure-object-storage.mjs",
     "dev": "next dev --turbopack",
     "dev:worker": "tsx watch src/workers/index.ts",
     "lint": "eslint .",

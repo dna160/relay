@@ -138,6 +138,33 @@ per bar, but an 8-character prefix is still ~50 subpaths, and that is cheap
 once per document and indefensible forty times on the surface with a 1.5s FCP
 budget. `CardTile` gets a `Plate`, which is text.
 
+**Polarity is part of the encoding, so the barcode does not follow the theme.**
+The bars are `--barcode-bar` on a `--barcode-substrate` plate — black on white,
+in light, in dark and in print — and the plate covers the quiet zone as well as
+the bars.
+
+This is the same argument as the one above, one step later. A barcode that
+encodes nothing is decoration wearing a record's clothes. A barcode that
+encodes correctly and *cannot be scanned* is the same failure with the evidence
+hidden: it looks like a machine-readable mark, it passes every review, and the
+one time it matters a reader points a scanner at it and gets nothing. Round 3
+filled the bars with `currentColor`, which in dark mode is light bars on a dark
+ground, and an inverted Code 39 is — to most laser and CCD readers and to
+plenty of camera decoders — not a symbol at all. On the purge certificate.
+
+Bar/space polarity and the quiet zone are properties of the symbology, not
+choices the palette gets to make, and treating them as styling was the mistake.
+The right reading of a barcode that stays black-on-white in dark mode is not
+"an element that ignores the theme" but "a printed label stuck to the page",
+which is exactly what it is. The human-readable line beneath the bars is *not*
+part of the plate: it is text, it is `--ink` on the page ground, and it follows
+the theme like every other record in the product.
+
+Both tokens are declared `!important` in `globals.css` §5 for the same reason
+the palette literals are — they are literals rather than `var()`s of a locked
+token, so they do not inherit the white-label protection, and a tenant must not
+be able to invert a machine-readable mark.
+
 The bars are `aria-hidden`; the human-readable value beneath them in `Mono` is
 the accessible content. They are a second, machine-facing rendering of text
 that is already on the page, and a reader who heard both would hear the same

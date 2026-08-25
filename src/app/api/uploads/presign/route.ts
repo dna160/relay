@@ -27,6 +27,7 @@ import {
   versionKey,
 } from '@/lib/storage';
 import { requireAgency } from '../../_guards';
+import { shadowed } from '../../_shadow';
 
 const schema = z
   .object({
@@ -51,7 +52,9 @@ export async function POST(request: Request): Promise<NextResponse> {
       });
     }
 
-    const engagement = await loadEngagementDetail(db, body.engagementId, session.orgId, now);
+    const engagement = await shadowed('POST /api/uploads/presign', session, body.engagementId, () =>
+      loadEngagementDetail(db, body.engagementId, session.orgId, now),
+    );
     assertWritable(engagement);
 
     if (body.cardId && !(await cardBelongsToEngagement(db, body.cardId, engagement.id))) {

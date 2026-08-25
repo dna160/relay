@@ -27,7 +27,7 @@ import { isRunning } from './count-active';
 import type { Plan } from '@/lib/types';
 import { planLimitReached, validationFailed } from '../errors';
 import { assertCanOpenEngagement } from '../plan/gate';
-import type { ActivityRow } from './count-active';
+import type { OrgScopedActivityRow } from './count-active';
 import { retentionWindow, type RetentionPolicy, DEFAULT_RETENTION } from '../retention/schedule';
 import { assertWritable, loadForOrg, type EngagementRow } from './lifecycle';
 
@@ -43,7 +43,7 @@ export interface ReactivateInput {
   readonly orgId: string;
   readonly plan: Plan;
   /** For the plan gate. The same rows the billing gate reads (INV-8). */
-  readonly activityRows: readonly ActivityRow[];
+  readonly activityRows: readonly OrgScopedActivityRow[];
   readonly actor: string;
 }
 
@@ -83,7 +83,8 @@ export async function reactivateEngagement(
 
   // Reactivating consumes a slot from the moment it happens, so the gate the
   // caller would have passed to create it applies here too.
-  assertCanOpenEngagement(input.plan, input.activityRows, now);
+  // Org-scoped (ADR-021). Reactivation is the same billing question as opening.
+  assertCanOpenEngagement(input.orgId, input.plan, input.activityRows, now);
 
   const { archiveAt, purgeAt } = retentionWindow(input.plan, now, policy);
 

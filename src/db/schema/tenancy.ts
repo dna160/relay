@@ -7,9 +7,18 @@
  */
 
 import { relations } from 'drizzle-orm';
-import { index, integer, jsonb, pgTable, primaryKey, text, uuid } from 'drizzle-orm/pg-core';
+import {
+  boolean,
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  primaryKey,
+  text,
+  uuid,
+} from 'drizzle-orm/pg-core';
 import { citext, primaryId, tstz, tstzNow } from './_shared';
-import { AGENCY_ROLES, PLANS } from './enums';
+import { AGENCY_ROLES, ORG_KINDS, PLANS } from './enums';
 
 export const organizations = pgTable('organizations', {
   id: primaryId(),
@@ -19,6 +28,28 @@ export const organizations = pgTable('organizations', {
   brandLogoKey: text('brand_logo_key'),
   brandPrimary: text('brand_primary'),
   brandDomain: text('brand_domain'),
+  /**
+   * Phase 9 (ADR-021 §2). Every account gets a `personal` org at signup; every
+   * organization that existed before the migration is a `team`. There is no
+   * orgless project, so no query anywhere needs a nullable-org branch.
+   */
+  kind: text('kind', { enum: ORG_KINDS }).notNull().default('team'),
+  /**
+   * D3's escape hatch (ADR-022). When true — the default, and the decision the
+   * product owner made — `owner` and `admin` derive access to every project in
+   * the organization. A Studio-tier tenant that needs a Chinese wall between
+   * competing clients turns it off, and org role then derives **nothing**.
+   *
+   * It is `NOT NULL DEFAULT true` rather than a nullable tri-state on purpose:
+   * a null here would have to mean something, and the only two candidates are
+   * "grant" and "deny". A column that cannot be null cannot quietly become the
+   * first one.
+   */
+  orgRolesDeriveProjectAccess: boolean('org_roles_derive_project_access')
+    .notNull()
+    .default(true),
+  /** Set by the Phase 9 backfill on the personal orgs it creates. */
+  backfilledAt: tstz('backfilled_at'),
   createdAt: tstzNow('created_at'),
 });
 

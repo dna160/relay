@@ -35,3 +35,21 @@ export const DECISIONS = ['approved', 'changes_requested'] as const;
  * there is no reason they must forever.
  */
 export const DECIDER_SIDES = ['client', 'agency'] as const;
+
+/* --------------------------------------------------- v1.1 permission graph */
+
+/**
+ * ADR-021's three org roles. `owner` and `admin` derive project access (D3,
+ * ADR-022); `member` derives nothing and must have a `project_memberships` row
+ * to see anything at all.
+ */
+export const ORG_ROLES = ['owner', 'admin', 'member'] as const;
+
+/** ADR-021's three project roles, strongest first. Order is load-bearing. */
+export const PROJECT_ROLES = ['lead', 'contributor', 'reviewer'] as const;
+
+/**
+ * Every account gets a `personal` org at signup (ADR-021 §2). There is no
+ * orgless project, so there is no nullable `org_id` branch in any query.
+ */
+export const ORG_KINDS = ['personal', 'team'] as const;

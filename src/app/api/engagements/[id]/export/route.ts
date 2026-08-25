@@ -17,6 +17,7 @@ import { validationFailed } from '@/domain/errors';
 import { QUEUES, getBoss } from '@/workers/queue';
 import type { ExportJobData } from '@/workers/export';
 import { requireAgency, type RouteContext } from '../../../_guards';
+import { shadowed } from '../../../_shadow';
 
 /** No body today. `.strict()` so a future field cannot be silently ignored. */
 const bodySchema = z.object({}).strict();
@@ -35,7 +36,9 @@ export async function POST(
 
     // Org-scoped: another org's engagement is 404, never 403 (INV-1's rule
     // applied to tenancy — a 403 would confirm the engagement exists).
-    const engagement = await loadEngagementDetail(db, id, session.orgId, new Date());
+    const engagement = await shadowed('POST /api/engagements/[id]/export', session, id, () =>
+      loadEngagementDetail(db, id, session.orgId, new Date()),
+    );
 
     const data: ExportJobData = {
       engagementId: engagement.id,

@@ -239,11 +239,18 @@ painted, not only as the colour declared — see ACCESSIBILITY.md §2.
 ### Derived (all functions of the above)
 
 `--on-hue` (text on a possession fill; equals `--paper` in both modes),
-`--tint-agency` / `--tint-client` / `--tint-breach` (12% hue over `--paper-2`,
-the quiet chip grounds), `--agency-hover` / `--client-hover` / `--paper-hover`
+`--tint-agency` / `--tint-client` / `--tint-breach` / `--tint-neutral` (12%
+over `--paper-2` — the possession hue, or `--ink` for the tone that carries no
+possession; the four quiet chip grounds), `--agency-hover` / `--client-hover` / `--paper-hover`
 (mixed 88–94% toward `--ink`, which moves away from the ground in both modes),
 `--field`, `--scrim`, `--focus` (= `--ink`), `--radius-1` 2px, `--radius-2` 3px,
 `--bar-width` 3px, `--hairline` 1px.
+
+Two tokens are deliberately **not** derived and deliberately do not follow the
+theme: `--barcode-substrate` (#FFFFFF) and `--barcode-bar` (#000000). A Code 39
+symbol's bar/space polarity is part of its encoding, not part of its styling,
+and a barcode that inverts in dark mode cannot be scanned. See
+`docs/design/LABEL-SYSTEM.md` §3b.
 
 Motion (round 3, full specification in `docs/design/MOTION.md`): one duration
 token `--dur-beat` 60ms — 0ms under `prefers-reduced-motion` — and a ladder of

@@ -26,6 +26,7 @@ import { assertWritable } from '@/domain/engagement/lifecycle';
 import { notVisible } from '@/domain/errors';
 import { toErrorResponse } from '@/lib/errors';
 import { requireAgency, type RouteContext } from '../../../_guards';
+import { shadowed, shadowedByVersion } from '../../../_shadow';
 
 export async function GET(
   _request: Request,
@@ -37,7 +38,9 @@ export async function GET(
 
     // Org-scoped in the predicate: a version on another agency's board is
     // NOT_VISIBLE, and no note row is read before that is settled.
-    const target = await loadVersionEngagementForOrg(db, session.orgId, id);
+    const target = await shadowedByVersion('GET /api/versions/[id]/notes', session, id, () =>
+      loadVersionEngagementForOrg(db, session.orgId, id),
+    );
     const notes = await loadAgencyRevisionNotes(db, target.engagementId, id);
 
     return NextResponse.json({ notes, cardId: target.cardId });
@@ -70,10 +73,21 @@ export async function POST(
     const input = schema.parse(await request.json());
     const now = new Date();
 
-    const engagement = await loadEngagementDetail(db, input.engagementId, session.orgId, now);
+    const engagement = await shadowed(
+      'POST /api/versions/[id]/notes',
+      session,
+      input.engagementId,
+      () => loadEngagementDetail(db, input.engagementId, session.orgId, now),
+    );
     assertWritable(engagement);
 
-    const target = await loadVersionEngagementForOrg(db, session.orgId, id);
+    const target = await shadowedByVersion(
+      'POST /api/versions/[id]/notes',
+      session,
+      id,
+      () => loadVersionEngagementForOrg(db, session.orgId, id),
+      'version-belongs-to-engagement',
+    );
     if (target.engagementId !== engagement.id) throw notVisible('Version not found');
 
     const note = await addRevisionNote(

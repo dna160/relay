@@ -12,5 +12,40 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  # Object storage, so INV-10's byte path can actually be exercised.
+  #
+  # Until this existed, no local run and no CI run had an S3 endpoint. The
+  # presign route 500s without one, so no PUT was ever made — and the e2e
+  # assertion "no PUT reached the app server" was being made against a run
+  # containing no PUT at all. A green light for an absent byte path.
+  #
+  # MinIO is S3-compatible and `src/lib/storage.ts` already sets
+  # `forcePathStyle: true`, which is what makes a localhost endpoint work
+  # without wildcard DNS. Nothing in the product changes to accommodate it.
+  #
+  # No healthcheck here on purpose: `node .github/scripts/ensure-object-storage.mjs`
+  # is the real gate, and it proves more than a healthcheck can — it creates the
+  # bucket, then puts, gets, compares and deletes an object. "The port is open"
+  # is the same standard as "the URL answered", which is what let a 500-ing
+  # stale server be adopted for a whole Playwright run (DEFECT-9).
+  storage:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      # Development credentials, matching `.env.example` exactly — a mismatch
+      # here is a 403 that surfaces six minutes later inside a browser test.
+      # Spelled `change-me-*` because `.env.example` is committed and the env
+      # registry gate requires anything credential-shaped in it to be visibly a
+      # placeholder. MinIO's 8-character password floor is the only reason
+      # these are not shorter.
+      MINIO_ROOT_USER: change-me-minio
+      MINIO_ROOT_PASSWORD: change-me-minio-local
+    ports:
+      - '9000:9000'
+      - '9001:9001' # the console, for looking at what a purge actually deleted
+    volumes: ['relay-objects:/data']
+
 volumes:
   relay-pgdata:
+  relay-objects:

@@ -100,18 +100,29 @@ describe('the motion budget', () => {
   const MOTION_CALL_SITE = /\bmotion-reduce:/;
 
   /**
-   * DEFECT (round 2, front-end): `src/components/agency/card-tile.tsx` reveals
-   * its row of actions with `transition-opacity` on hover and silences it with
-   * `motion-reduce:transition-none`. Two spec deviations in one line — an
-   * animation outside the one-crossfade budget, and a call-site opt-in instead
-   * of the token. Not an accessibility failure (reduced motion *is* honoured,
-   * and `focus-within:` keeps the controls reachable from the keyboard), so it
-   * is recorded rather than suppressed.
+   * Empty, and it is worth recording why rather than deleting the constant.
    *
-   * The assertion is a subset check on purpose: a new offender fails, and
-   * fixing this one does not.
+   * Round 2 recorded `src/components/agency/card-tile.tsx` here: it revealed
+   * its row of actions with `transition-opacity` on hover and silenced it with
+   * `motion-reduce:transition-none` — two spec deviations in one line, an
+   * animation outside the one-crossfade budget and a call-site opt-in instead
+   * of the token. It was never an accessibility failure (reduced motion *was*
+   * honoured, and `focus-within:` kept the controls keyboard-reachable), so it
+   * was recorded rather than suppressed, and the check was written as a subset
+   * so that fixing it would not fail the build.
+   *
+   * The front-end fixed it: the call site now uses the `crossfade` token, whose
+   * duration resolves through `--dur-beat`, which `globals.css` sets to `0ms`
+   * under `prefers-reduced-motion`. One declaration silences every duration in
+   * the codebase arithmetically, which is the mechanism ACCESSIBILITY.md §7
+   * asks for.
+   *
+   * The entry is gone because an allowlist that outlives its offender is a
+   * standing permission nobody granted — the next component to write the
+   * variant would land in a file already on the list and pass. The subset check
+   * stays: it is what makes the list safe to hold entries at all.
    */
-  const KNOWN_CALL_SITE_OFFENDERS = ['src/components/agency/card-tile.tsx'];
+  const KNOWN_CALL_SITE_OFFENDERS: readonly string[] = [];
 
   it('honours reduced motion at the token and not at call sites', () => {
     const offenders = FILES.filter((f) => MOTION_CALL_SITE.test(f.text)).map((f) => f.path);
@@ -121,6 +132,21 @@ describe('the motion budget', () => {
       'a new component opted into reduced motion by hand. ACCESSIBILITY.md §7: ' +
         'add a duration token under the same media query instead — the next ' +
         'component will forget the variant, and nothing will catch it.',
+    ).toEqual([]);
+  });
+
+  it('carries no allowlist entry for a file that no longer offends', () => {
+    // The other half of the subset check, and the half DEFECT-6 was about: a
+    // subset check cannot tell a live exception from a stale one, because both
+    // pass. Every name on the list must still be an offender, or come off it.
+    const stale = KNOWN_CALL_SITE_OFFENDERS.filter(
+      (path) => !FILES.some((f) => f.path === path && MOTION_CALL_SITE.test(f.text)),
+    );
+    expect(
+      stale,
+      'an allowlisted file no longer opts into reduced motion by hand. Remove it — ' +
+        'a spent exception is a standing permission for whatever lands in that ' +
+        'file next.',
     ).toEqual([]);
   });
 

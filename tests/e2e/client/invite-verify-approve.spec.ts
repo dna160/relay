@@ -191,6 +191,46 @@ test.describe('the client completes a decision without agency chrome', () => {
     expect(await landed.text()).not.toContain('Packaging refresh');
   });
 
+  /**
+   * INV-10, on the read side, where the session that opens a download exists.
+   *
+   * This assertion used to live in `tests/e2e/agency/engagement-flow.spec.ts`,
+   * where it called `/api/client/download/:versionId` with an *agency* session
+   * and read the resulting 404 as a broken redirect. The route is a client
+   * route — it takes its engagement from the client session and refuses
+   * anything else — so the only place it can be exercised is a client spec,
+   * after a verified session. The agency spec keeps the other half of that
+   * story: that the same call with an agency session is 404 and not a redirect.
+   *
+   * Signing a GET contacts nothing, so this needs credentials but no bucket.
+   */
+  test('a download redirects rather than streaming bytes through the app (INV-10)', async ({
+    page,
+    request,
+  }) => {
+    test.skip(
+      !process.env.S3_ENDPOINT || !process.env.S3_ACCESS_KEY_ID,
+      'No object-storage credentials in this environment, so the presign cannot be signed and ' +
+        'the route 500s. Signing needs no bucket — three S3_* variables on the e2e job are ' +
+        'enough to run this.',
+    );
+
+    await verifyAndLandOnTheBoard(page, request, seed);
+
+    const response = await page.request.get(`/api/client/download/${seed.versionId}`, {
+      maxRedirects: 0,
+      failOnStatusCode: false,
+    });
+    expect([302, 303, 307]).toContain(response.status());
+
+    const location = response.headers()['location'] ?? '';
+    expect(location, 'the redirect must point at object storage, not back at the app').not.toBe('');
+    expect(
+      location.startsWith(page.url().split('/e/')[0] ?? ''),
+      'the redirect came back to the app server; INV-10 requires a presigned URL',
+    ).toBe(false);
+  });
+
   test('the free export is reachable and never paywalled', async ({ page, request }) => {
     // PRD §5.6: the client's export is free, on every plan, always. It is the
     // thing that makes the purge safe to ship.

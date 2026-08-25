@@ -352,6 +352,23 @@
   --tint-client: color-mix(in srgb, var(--client) 12%, var(--paper-2));
   --tint-breach: color-mix(in srgb, var(--breach) 12%, var(--paper-2));
 
+  /* The fourth quiet ground, and the one that was missing. A neutral chip
+     carries no possession, so it had no tint and was painted --paper-2 —
+     which IS a card's ground. A chip the colour of the surface under it has
+     no boundary at all, and every call site on a card had to override the
+     primitive to get one back.
+
+     Same 12% construction as the other three, mixed from --ink instead of a
+     hue: the chip keeps a ground of its own on --paper and on --paper-2, in
+     both modes, and nothing at a call site has to know which one it is
+     standing on. The rejected alternative was a `ground` prop on Chip, which
+     is a call-site opt-in — the same shape as a `motion-reduce:` variant, and
+     the next call site forgets it. A tint cannot be forgotten.
+
+     --ink on this measures 12.667:1 light and 9.621:1 dark. Both are in
+     CONTRAST_PAIRS; neither is a pair anybody had to guess at. */
+  --tint-neutral: color-mix(in srgb, var(--ink) 12%, var(--paper-2));
+
   /* Hover steps. Mixing toward --ink moves *away from the ground* in both
      modes — darker on paper, lighter on ink — so one expression gives the
      correct direction in light and dark without a second declaration. */
@@ -378,6 +395,33 @@
   --radius-2: 3px;
   --bar-width: 3px;
   --hairline: 1px;
+
+  /* ---- THE BARCODE SUBSTRATE ------------------------------------------
+     The only two colours in this file that do not follow the theme, and the
+     only two that are not a design decision.
+
+     A Code 39 symbol is not a graphic that happens to be made of rectangles.
+     Bar/space polarity and the quiet zone are part of the encoding: a reader
+     thresholds the image and looks for dark bars on a light substrate, and an
+     inverted symbol is, to most laser and CCD scanners and to plenty of
+     camera decoders, not a symbol at all. Following the theme into dark mode
+     therefore does not restyle the barcode — it un-encodes it. On the purge
+     certificate, which is the one document in this product meant to be
+     scanned and the one that goes to a client's legal team.
+
+     So the barcode brings its own plate: black bars on white, in light, in
+     dark and in print. The right way to read that is not "an element that
+     ignores dark mode" but "a printed label stuck to the page", which is
+     exactly what it is — and it is why the human-readable line beneath the
+     bars is NOT part of the plate. That line is text; it stays --ink on the
+     page ground and follows the theme like every other record in the product.
+
+     `!important` for the same reason the palette literals are: these are
+     literals rather than var()s of a locked token, so they do not inherit
+     §3's protection and a tenant inline style would otherwise be able to
+     invert a machine-readable mark. See docs/design/LABEL-SYSTEM.md §3b. */
+  --barcode-substrate: #ffffff !important;
+  --barcode-bar: #000000 !important;
 
   /* ---- MOTION ---------------------------------------------------------
      THE ONE DURATION TOKEN, and why there is only one.

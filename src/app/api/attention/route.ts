@@ -20,6 +20,7 @@ import { db } from '@/db/client';
 import { loadAttention, ATTENTION_LIMIT } from '@/db/queries/attention';
 import { toErrorResponse } from '@/lib/errors';
 import { requireAgency } from '../_guards';
+import { shadowVisible } from '../_shadow';
 
 const querySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional(),
@@ -39,6 +40,15 @@ export async function GET(request: Request): Promise<NextResponse> {
       session.userId,
       new Date(),
       limit ?? ATTENTION_LIMIT,
+    );
+
+    // Ranked across every engagement in the org, so the same set comparison
+    // applies: an item this account could not reach through the graph is a
+    // disagreement even though the endpoint returns cards rather than projects.
+    await shadowVisible(
+      'GET /api/attention',
+      session,
+      [...new Set(items.map((item) => item.engagementId))],
     );
 
     return NextResponse.json({ items }, { headers: { 'cache-control': 'private, no-store' } });

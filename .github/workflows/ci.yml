@@ -114,6 +114,11 @@ jobs:
       # Gates the seed and magic-link-capture endpoints the e2e suite needs.
       # Absent in production, which is what makes those endpoints safe to ship.
       E2E_SEED_TOKEN: ci-seed-token
+      S3_ENDPOINT: http://127.0.0.1:9000
+      S3_REGION: us-east-1
+      S3_BUCKET: relay-ci
+      S3_ACCESS_KEY_ID: ci-minio
+      S3_SECRET_ACCESS_KEY: ci-minio-not-used-in-production
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -144,7 +149,42 @@ jobs:
       - name: migrations are idempotent
         run: npm run db:migrate
 
+      # INV-10's byte path had never been exercised by anything, here or
+      # locally: with no S3 endpoint the presign route 500s, so no PUT was ever
+      # made, and the e2e assertion "no PUT reached the app server" was being
+      # made against a run containing no PUT in it. A green light for an absent
+      # byte path.
+      #
+      # `docker run`, not a `services:` entry, because service containers cannot
+      # override the command and `minio/minio` needs the `server /data`
+      # subcommand — a service block for this image starts a container that
+      # exits immediately and reports as a mysteriously refused connection.
+      - name: start object storage
+        run: |
+          docker run -d --name relay-minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=ci-minio \
+            -e MINIO_ROOT_PASSWORD=ci-minio-not-used-in-production \
+            minio/minio server /data
+
+      # Creates the bucket and proves the byte path with a put/get/compare/
+      # delete round trip, before any test depends on it. A bucket that exists
+      # but rejects writes presents as an open port and then fails inside a
+      # browser test, where the error reads as a product bug. This step is also
+      # what waits for the container — polling a real operation rather than
+      # sleeping.
+      - name: object storage is reachable, writable and readable
+        run: node .github/scripts/ensure-object-storage.mjs --wait 90
+
       - run: npm run test:e2e
+
+      # A skipped e2e test is invisible in a green CI run, and the two INV-10
+      # byte-path tests skip themselves when object storage is absent — which
+      # is correct behaviour and exactly how the byte path went unexercised for
+      # six phases while the job stayed green. Storage is configured above, so
+      # in CI those skips must not happen. Nothing may skip here silently.
+      - name: no e2e test skipped silently in CI
+        if: always()
+        run: node .github/scripts/check-e2e-skips.mjs
 
       # The whole point of `trace: on-first-retry` is that the trace exists when
       # something flakes. It is worth nothing if CI throws it away.
@@ -249,10 +289,15 @@ jobs:
   #
   # A dev server is not measured: unminified, unbundled, compiled on demand. Its
   # number would not be the number.
+  #
+  # It also carries the bundle-purity audit, because that check needs the same
+  # three expensive things — a production build, a database to seed, and a real
+  # client session — and standing a second job up for them would double the
+  # slowest part of the workflow to run two scripts against one browser.
   performance-budget:
     needs: verify
     runs-on: ubuntu-latest
-    name: client board FCP budget
+    name: client board FCP budget and bundle purity
     services:
       postgres:
         image: postgres:16-alpine
@@ -295,6 +340,18 @@ jobs:
           echo "the server never became healthy"; exit 1
       - name: client board FCP under budget
         run: node .github/scripts/check-fcp-budget.mjs | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # PHASE-4 EXIT: the client bundle contains no agency route code. Measured
+      # on what the browser downloaded from this production build with a real
+      # client session — not on the import graph, and not on the sign-in page.
+      #
+      # `--negative-control` is passed on purpose. The audit's clean result is
+      # only evidence if the detector can be made to fail, and a control that is
+      # only ever run by hand is a control nobody runs. It plants strings known
+      # to be in the downloaded bytes and requires the detector to find them, so
+      # every push proves the check works before believing that it passed.
+      - name: no agency code in the client bundle
+        run: node .github/scripts/check-chunk-purity.mjs --negative-control | tee -a "$GITHUB_STEP_SUMMARY"
 
   # ---------------------------------------------------- database-backed suites
   # INV-7 and the failure-mode matrix. Excluded from `npm run verify`, which is

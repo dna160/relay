@@ -195,13 +195,25 @@ ambiguous. If it does, a hue is doing work a word should be doing.
 | Light | `--ink` | `--tint-agency` #D9DFDC | 13.31 |
 | Light | `--ink` | `--tint-client` #DEDFE7 | 13.55 |
 | Light | `--ink` | `--tint-breach` #E9DAD6 | 13.25 |
+| Light | `--ink` | `--tint-neutral` #D7D9D6 | 12.67 |
 | Dark | `--ink` | `--tint-agency` #223032 | 11.28 |
 | Dark | `--ink` | `--tint-client` #292D39 | 11.34 |
 | Dark | `--ink` | `--tint-breach` #35282B | 11.63 |
+| Dark | `--ink` | `--tint-neutral` #35393C | 9.62 |
 
 (The hue set *on* its own tint would measure 3.93–4.23 in dark mode. That is why
 the quiet chip's label is `--ink` and the hue lives in the tint and the 2px
 leading rule instead.)
+
+`--tint-neutral` is the fourth of the set and it is a fix, not a completeness
+exercise. A chip carrying no possession has no hue to tint with, so it was
+painted `--paper-2` — which *is* a card's ground, so a neutral chip on a card
+had no boundary at all and `CardTile` had to override the primitive to get one
+back. Same 12% construction, mixed from `--ink`: the chip keeps a ground of its
+own on `--paper` and `--paper-2` alike, and nothing at a call site has to know
+which one it is standing on. A `ground` prop was the alternative and was
+rejected on the same grounds as a `motion-reduce:` variant — a call-site opt-in
+is a thing the next call site forgets.
 
 ---
 

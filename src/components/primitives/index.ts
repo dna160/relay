@@ -12,6 +12,7 @@ export { Dialog, type DialogProps } from './Dialog';
 export { Badge, type BadgeProps, type BadgeTone } from './Badge';
 export { Mono, type MonoProps } from './Mono';
 export { Plate, type PlateProps, type PlateRow } from './Plate';
+export { ColourBar, type ColourBarProps } from './ColourBar';
 export {
   Barcode,
   code39Path,

@@ -13,6 +13,7 @@
 import { eq, isNull, and } from 'drizzle-orm';
 import { organizations, users } from '@/db/schema';
 import type { Database } from '@/db/types';
+import { provisionAccountForUser } from '../access/provision-account';
 import { validationFailed } from '../errors';
 
 export interface OnboardOrgInput {
@@ -56,9 +57,39 @@ export async function onboardOrganization(
       .update(users)
       .set({ orgId: org.id, role: 'admin' })
       .where(and(eq(users.id, input.userId), isNull(users.orgId)))
-      .returning({ id: users.id });
+      .returning({ id: users.id, email: users.email, name: users.name });
 
-    if (!joined[0]) throw validationFailed('That account already belongs to an agency');
+    const person = joined[0];
+    if (!person) throw validationFailed('That account already belongs to an agency');
+
+    /**
+     * Phase 9. Give the founder their rows in the v1.1 permission graph, in the
+     * same transaction that creates the agency.
+     *
+     * Without this, a person who signs up after the migration has a `users` row
+     * and no `accounts` row, and the shadow harness records
+     * `account_not_backfilled` on every request they make — a dirty streak
+     * caused by a coverage gap rather than by a resolver bug, which is the most
+     * expensive kind of false signal to have during a migration window.
+     *
+     * `owner`, not `admin`: they created the organization. Under ADR-022's D3
+     * the two derive the same project access, and the distinction is what
+     * Phase 11 will hang "the last owner cannot be removed" on.
+     *
+     * A stopgap with an owner. Phase 10 moves account creation to signup, where
+     * it belongs, and this call leaves with the rest of the v1 identity path.
+     */
+    await provisionAccountForUser(
+      tx,
+      {
+        legacyUserId: person.id,
+        email: person.email,
+        name: person.name,
+        orgId: org.id,
+        orgRole: 'owner',
+      },
+      now,
+    );
 
     return { orgId: org.id, slug: org.slug };
   });

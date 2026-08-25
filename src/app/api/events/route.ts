@@ -18,6 +18,7 @@ import { loadEngagementDetail } from '@/db/queries/engagements';
 import { toErrorResponse } from '@/lib/errors';
 import { validationFailed } from '@/domain/errors';
 import { requireAgency } from '../_guards';
+import { shadowed } from '../_shadow';
 import { eventStreamResponse } from '../_stream';
 
 /** A stream is never static and never cached. */
@@ -41,11 +42,11 @@ export async function GET(request: Request): Promise<Response> {
     // Authorisation before subscription. `loadEngagementDetail` is org-scoped
     // and throws NOT_VISIBLE — a 404, never a 403, because a 403 would confirm
     // that another agency's engagement exists.
-    const engagement = await loadEngagementDetail(
-      db,
+    const engagement = await shadowed(
+      'GET /api/events',
+      session,
       parsed.data.engagementId,
-      session.orgId,
-      new Date(),
+      () => loadEngagementDetail(db, parsed.data.engagementId, session.orgId, new Date()),
     );
 
     /**

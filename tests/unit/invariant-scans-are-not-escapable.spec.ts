@@ -38,6 +38,13 @@ import {
   SERVER_SURFACE_PATTERN,
 } from '@tests/invariants/inv-09-domain-purity.spec';
 import { BYTE_INTAKE, BYTE_EGRESS } from '@tests/invariants/inv-10-no-bytes-through-app.spec';
+import {
+  ACCOUNT_ID_COMPARISON,
+  DEFAULT_ROLE_FALLBACK,
+  MEMBERSHIP_IMPORT,
+  MEMBERSHIP_RAW_SQL,
+  ROLE_LITERAL_BRANCH,
+} from '@tests/invariants/inv-11-access-resolution-is-one-function.spec';
 
 /** Builds the shape `sourceFiles()` hands a scan, comments already stripped. */
 function planted(path: string, text: string): SourceFile {
@@ -59,6 +66,34 @@ describe('the statement splitter', () => {
     const found = statements(file).filter((s) => s.includes('.update(cards)'));
     expect(found).toHaveLength(1);
     expect(found[0]).toContain('db .update(cards) .set({ state: 1 })');
+  });
+
+  it('joins a line that ends dangling, not only one that starts like a continuation', () => {
+    // Prettier breaks *after* an operator far more often than before one, which
+    // leaves a first line ending in `=` and a second starting with an ordinary
+    // identifier. Neither half looks like a continuation, so the splitter used
+    // to produce three statements where the compiler sees one — and a bounded
+    // pattern spanning the break saw neither half. INV-11's planted violations
+    // found this; it is DEFECT-3's shape approached from the other side.
+    const file = planted(
+      'src/domain/access/resolve-access.ts',
+      ['const effective =', '  strongest(projectRole, derived) ??', "  'reviewer';"].join('\n'),
+    );
+    expect(statements(file)).toEqual([
+      "const effective = strongest(projectRole, derived) ?? 'reviewer';",
+    ]);
+  });
+
+  it('does not join a JSX element to the one after it', () => {
+    // The false positive the conservative pattern exists to avoid: a `.tsx`
+    // line ending in `>` is a tag, and joining every element to the next would
+    // merge a whole component into one statement. For a bounded "must not
+    // contain" pattern that is a build failure for the wrong reason.
+    const file = planted(
+      'src/components/x.tsx',
+      ['const a = <Row id={one} />;', 'const b = <Row id={two} />;'].join('\n'),
+    );
+    expect(statements(file)).toHaveLength(2);
   });
 
   it('does not run two independent statements together', () => {
@@ -195,6 +230,151 @@ describe('INV-10 — byte intake cannot hide behind a parameter name', () => {
       'return getSignedUrl(client, new GetObjectCommand({ Bucket, Key }), { expiresIn: 300 });',
     );
     expect(BYTE_EGRESS.some((re) => re.test(presign.text))).toBe(false);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+
+describe('INV-11 — a permission decision cannot be made quietly outside the resolver', () => {
+  /**
+   * INV-11's structural half is **vacuously green today**: `resolveAccess()`
+   * has just landed, nothing outside `src/domain/access/` names a membership
+   * table, and every scan there is a "must not contain".
+   *
+   * That is the most dangerous state a guard can be in. A scan that finds
+   * nothing and a scan that *cannot* find anything are indistinguishable from
+   * the outside, and this one will spend the whole of Phase 9 looking green
+   * while routes are rewritten around it. So the violations are planted here,
+   * written the way the migration would actually write them.
+   */
+
+  it('catches a membership table imported into a route, however the import is punctuated', () => {
+    const PLANTS = [
+      "import { projectMemberships } from '@/db/schema';",
+      "import { cards, projectMemberships, lanes } from '@/db/schema';",
+      "import { orgMemberships } from '@/db/schema/access';",
+      "import type { teamMembers } from '../../db/schema/access';",
+      // The house style, wrapped by the formatter — the shape that escaped
+      // every line-based scan in this directory before `statements()` existed.
+      ['import {', '  engagements,', '  orgMemberships,', "} from '@/db/schema';"].join('\n'),
+    ];
+    for (const code of PLANTS) {
+      expect(
+        statementsMatching(planted('src/app/api/projects/[id]/route.ts', code), MEMBERSHIP_IMPORT),
+        `a membership import escaped the scan: ${JSON.stringify(code)}`,
+      ).not.toEqual([]);
+    }
+  });
+
+  it('does not mistake a neighbouring import for a membership import', () => {
+    // The false positive that would matter: `[^}]` rather than a lazy
+    // any-character group, so an earlier `import {` cannot span two unrelated
+    // import statements to reach this one's closing brace.
+    const file = planted(
+      'src/app/api/x/route.ts',
+      ["import { cards } from '@/db/schema';", "import { db } from '@/db/client';"].join('\n'),
+    );
+    expect(statementsMatching(file, MEMBERSHIP_IMPORT)).toEqual([]);
+  });
+
+  it('catches the permission graph reached in raw SQL, which imports nothing', () => {
+    const PLANTS = [
+      'const r = await db.execute(sql`SELECT role FROM project_memberships WHERE account_id = ${id}`);',
+      'await pool.query(`SELECT 1 FROM org_memberships WHERE account_id = $1`, [id]);',
+      'const q = sql`select * from engagements e join project_memberships pm on pm.project_id = e.id`;',
+      // Upper case. A lowercase-only match was one of the four escapes found
+      // in this build; it is not being reintroduced here.
+      'await db.execute(sql`SELECT * FROM TEAM_MEMBERS`);',
+    ];
+    for (const code of PLANTS) {
+      expect(
+        statementsMatching(planted('src/db/queries/agency-board.ts', code), MEMBERSHIP_RAW_SQL),
+        `raw SQL escaped the scan: ${JSON.stringify(code)}`,
+      ).not.toEqual([]);
+    }
+  });
+
+  it('catches an account id compared in a component, where no table is touched at all', () => {
+    // The form INV-11 names in its own words, and the one that needs no query:
+    // the row is already in hand and the decision is one line in some JSX.
+    const PLANTS = [
+      'if (membership.accountId === session.accountId) return true;',
+      'if (session.accountId !== m.accountId) return notFound();',
+      'const mine = rows.filter((r) => r.accountId === accountId);',
+      ['const owns =', '  project.ownerAccountId ===', '  session.accountId;'].join('\n'),
+    ];
+    for (const code of PLANTS) {
+      expect(
+        statementsMatching(planted('src/components/agency/members.tsx', code), ACCOUNT_ID_COMPARISON),
+        `an inline account-id comparison escaped the scan: ${JSON.stringify(code)}`,
+      ).not.toEqual([]);
+    }
+  });
+
+  it('treats a presence check as a presence check', () => {
+    // `accountId === null` is not a permission decision, and a guard that fails
+    // the build for one gets relaxed rather than obeyed.
+    for (const code of [
+      'if (session.accountId === null) return signIn();',
+      'if (session.accountId !== undefined) hydrate();',
+    ]) {
+      expect(
+        statementsMatching(planted('src/app/(agency)/layout.tsx', code), ACCOUNT_ID_COMPARISON),
+        `a null check was reported as a permission decision: ${JSON.stringify(code)}`,
+      ).toEqual([]);
+    }
+  });
+
+  it('catches a role branch, including the set form that contains no operator', () => {
+    const PLANTS = [
+      "if (membership.role === 'owner') return allow();",
+      "if (role !== 'reviewer') { showEditor(); }",
+      "const canEdit = ['owner', 'admin'].includes(membership.role);",
+      // Wrapped, and with the literal on the left — both shapes a formatter
+      // and a house style produce without anyone trying to hide anything.
+      ['const isLead =', "  'lead' ===", '  membership.role;'].join('\n'),
+    ];
+    for (const code of PLANTS) {
+      expect(
+        statementsMatching(planted('src/app/api/lanes/route.ts', code), ROLE_LITERAL_BRANCH),
+        `a role branch escaped the scan: ${JSON.stringify(code)}`,
+      ).not.toEqual([]);
+    }
+  });
+
+  it('catches the default role ADR-022 spends a paragraph forbidding', () => {
+    // "Null on both roles still means deny, not a default reviewer role. A
+    // fallback is the classic way a permission system leaks." This is the one
+    // scan that applies inside `src/domain/access/` too, because the resolver
+    // is exactly where the tempting line gets written.
+    const PLANTS = [
+      "const role = projectRole ?? 'reviewer';",
+      "return { role: derived || 'reviewer', via: 'org' };",
+      ['const effective =', '  strongest(projectRole, derived) ??', "  'reviewer';"].join('\n'),
+    ];
+    for (const code of PLANTS) {
+      expect(
+        statementsMatching(
+          planted('src/domain/access/resolve-access.ts', code),
+          DEFAULT_ROLE_FALLBACK,
+        ),
+        `a default role escaped the scan: ${JSON.stringify(code)}`,
+      ).not.toEqual([]);
+    }
+  });
+
+  it('the line-based scan missed the wrapped forms — the hole is still real here', () => {
+    // Kept for the same reason the INV-2 and INV-9 cases above keep theirs: as
+    // the standing proof that `statements()` is load-bearing rather than tidy.
+    const wrapped = planted(
+      'src/app/api/projects/route.ts',
+      ['import {', '  engagements,', '  orgMemberships,', "} from '@/db/schema';"].join('\n'),
+    );
+    expect(
+      linesMatching(wrapped, MEMBERSHIP_IMPORT),
+      'if this ever finds the violation, the line-based scan was adequate after all',
+    ).toEqual([]);
+    expect(statementsMatching(wrapped, MEMBERSHIP_IMPORT)).not.toEqual([]);
   });
 });
 

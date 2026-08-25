@@ -15,6 +15,7 @@ import { assertWritable } from '@/domain/engagement/lifecycle';
 import { toErrorResponse } from '@/lib/errors';
 import { publishEvent } from '@/lib/sse';
 import { requireAgency, type RouteContext } from '../../../_guards';
+import { shadowed } from '../../../_shadow';
 
 const schema = z
   .object({
@@ -34,7 +35,9 @@ export async function POST(
     const body = schema.parse(await request.json());
     const now = new Date();
 
-    const engagement = await loadEngagementDetail(db, body.engagementId, session.orgId, now);
+    const engagement = await shadowed('POST /api/cards/[id]/publish', session, body.engagementId, () =>
+      loadEngagementDetail(db, body.engagementId, session.orgId, now),
+    );
     assertWritable(engagement);
 
     const result = await publishCardToClient(

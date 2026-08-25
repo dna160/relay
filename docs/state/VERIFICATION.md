@@ -8,7 +8,7 @@
 > behind it. This document is where that claim is either true or visibly not.
 > Read the **UNPROVEN** rows first; they are the whole point.
 
-**Generated at:** end of the adversarial hardening sweep, after Phase 6. Phases 1–6 landed; 7–8 outstanding.
+**Generated at:** the v1.1 platform round, with Phase 9 landing underneath it. Phases 1–6 landed; 7–8 outstanding; 9 in progress.
 **Live Postgres:** yes, at last. Most of what §4 listed as never-executed has now executed, and the rows that have not are named individually rather than as a category.
 **Owner:** QA. Update it in the same commit that changes what is provable.
 
@@ -32,6 +32,7 @@ npm run test:e2e      # Playwright, both projects. Needs a running app and a dat
 node .github/scripts/check-invariant-skips.mjs     # the ten specs exist; skips name their phase
 node .github/scripts/check-env-registry.mjs        # env drift: src -> .env.example -> runbook -> .railway/railway.ts
 node .github/scripts/check-fcp-budget.mjs          # client board FCP on a throttled profile. Needs a production server.
+node .github/scripts/check-chunk-purity.mjs --negative-control   # no agency code in the client bundle. Same requirements.
 ```
 
 **Why `verify` no longer runs everything.** Two suites genuinely need a
@@ -72,10 +73,34 @@ inside a test that would have passed either way.
 | **INV-9** | Business logic lives in `src/domain/` | 🟢 live, **and the surface is no longer just `route.ts`** | `tests/invariants/inv-09-domain-purity.spec.ts` — 5 scans. The write scan covered `route.ts` only; a server action in `actions.ts` or a server component in `page.tsx` reaches the database on identical terms and was invisible. Now `route|actions|page|layout`, read as statements. A raw-SQL scan was added; the health probe is excluded and that exclusion is paid for by a test pinning it to a table-free `select 1`. Also an ESLint rule; the test is what catches someone disabling the rule inline. |
 | **INV-10** | File bytes never traverse the app server | 🟢 live, **and no longer a rule about a variable name** | `tests/invariants/inv-10-no-bytes-through-app.spec.ts` — 4 scans. Intake was pinned to a receiver called `req`/`request`: renaming the handler parameter to `r` let a 5 GB upload through a 512 MB container with the guard green. Egress scanned `src/app/` only, so the same stream in `src/lib/storage.ts` was invisible — it now covers `app`, `lib` and `workers`, and `storage.ts` is asserted to presign rather than fetch. Negative-tested against 6 planted intake shapes. |
 
+### The v1.1 platform layer — specified, and one of the four now has a suite
+
+| | Invariant | Status | Proven by |
+|---|---|---|---|
+| **INV-11** | All access decisions come from `resolveAccess()`. Deny by default | 🟢 **structural half live** / ⬜ behavioural half skipped | Two files, split for the reason INV-3 was split. **Structural:** `inv-11-access-resolution-is-one-function.spec.ts` — 24 live cases. **Behavioural:** `inv-11-access-resolution-is-one-function.db.spec.ts` — 74 cases, `describe.skip`, **UNSKIP IN: Phase 9 at EXIT**. See §6D. |
+| | ↳ where a decision may be made | 🟢 live, and vacuous-by-design today | Structural file: nothing outside `src/domain/access/` may import a membership table, reach one in raw SQL, compare an account id, or branch on a role literal — and **nothing anywhere** may default a role. Negative-tested against 20 planted violations in `tests/unit/invariant-scans-are-not-escapable.spec.ts`, which is what stops "vacuous" meaning "blind". |
+| | ↳ the resolution table itself | 🟢 live, portable | Same file — the 64-cell cube is asserted to *be* a cube: full cross-product of org role × project role × org scoping × the Studio-tier switch, both-null → deny in all four scopings, and the whole effect of ADR-022 D3 confined to six cells. Runs without a database. |
+| | ↳ (org role × project role × object) against expected resolution | ⬜ **skipped, Phase 9 EXIT** | `…db.spec.ts` — 64 matrix cells plus 10 edge cases, against a real Postgres. Skipped because the Phase 9 shadow harness **returns the old result**: a green matrix over it would be asserting the answers of the system being replaced. |
+| **INV-12** | An invite token never establishes a session | ⬜ not written | **Phase 10.** `check-invariant-skips.mjs` now requires the spec to exist from Phase 10 and to be unskipped from Phase 11. |
+| **INV-13** | Ingestion never writes a project graph | ⬜ not written | **Phase 12**, live from 13. |
+| **INV-14** | No inferred assignment triggers an outbound email | ⬜ not written | **Phase 12**, live from 13. |
+
 **Command for the whole column:** `npm run test:invariants`
 **Skip audit:** `node .github/scripts/check-invariant-skips.mjs`
 
-Nine of ten suites now execute. At Phase 0 handover it was four.
+Nine of ten v1 suites now execute, and INV-11's structural half joins them. At
+Phase 0 handover it was four.
+
+**The skip gate learned about the v1.1 four.** `check-invariant-skips.mjs` held a
+flat list of ten and one rule — nothing skipped from Phase 8. The first v1.1
+invariant to be written would have failed that gate the moment `PROGRESS.md`
+reached Phase 8: a correct, deliberately-deferred suite failing the check that
+exists to catch *undeclared* skips. It now carries a per-invariant `existsFrom`
+and `liveFrom`, taken from `CLAUDE.md`'s own phase markings. The v1 ten are
+unchanged at Phase 8; INV-11 must exist from Phase 9 and be live from Phase 10,
+because PHASE-9 EXIT puts the unskip *after* the old path is deleted. Verified
+in both directions: `--phase 8` still fails on INV-3, INV-4 and INV-6 and does
+**not** fail on INV-11.
 
 ---
 
@@ -120,8 +145,8 @@ Nine of ten suites now execute. At Phase 0 handover it was four.
 |---|---|
 | A Playwright run completes invite → verify → approve without touching an agency route | `tests/e2e/client/invite-verify-approve.spec.ts > invite -> verify -> approve, touching no agency route`. The seed endpoints now exist (B7); **not executed — see §4**. The route claim is asserted at the request level by `RouteRecorder`, not inferred from the flow completing. The classifier it depends on is itself tested: `tests/unit/routes.spec.ts` (57 live cases) in `npm run verify` — and it was **wrong** until round 2: `/api/events` sat in `CLIENT_ROUTE_PATTERNS`, so a client page fetching the agency stream would have been classified as staying on its own side. Amendment A1 makes that the agency stream. Fixed, with five cases pinning the split. |
 | INV-1 extended with a case for every new client query | 🟢 **PROVEN.** Same guard as Phase 2's row above. Eight client-reachable queries are enumerated and each has a compiled-SQL case; two more are excused in writing with a reason (the pre-session reads). A ninth appearing fails the build until someone writes its case — which it has done twice this round, catching `loadClientEngagementStatus` and `loadClientRevisionNotes` within minutes of them landing. |
-| Client board FCP under 1.5s on a throttled 4G profile | `tests/e2e/client/board-performance.spec.ts > first contentful paint stays under 1.5s on a throttled 4G profile` — CDP `Network.emulateNetworkConditions`, cache disabled, reads the `first-contentful-paint` entry. **Red**, no board. |
-| The client bundle contains no agency route code | `board-performance.spec.ts > the client bundle carries no agency route code` — inspects downloaded JS, not the import graph. **Red.** |
+| Client board FCP under 1.5s on a throttled 4G profile | 🟢 **PROVEN, and there is now exactly one budget.** `node .github/scripts/check-fcp-budget.mjs`, CI job `client board FCP budget and bundle purity`. **524 ms median against 1500 ms.** The e2e test this row used to name was **retired, not repaired** (DEFECT-7): it measured the sign-in page, and repairing it would have left two budgets for one NFR disagreeing about which build they measured — the dev server's number is not the number. See §4B. |
+| The client bundle contains no agency route code | 🟢 **PROVEN, and now in CI.** `node .github/scripts/check-chunk-purity.mjs --negative-control`, same job. Reads the bytes the browser downloaded from a production build under a real client session — not the import graph. Detector covered portably by `tests/unit/chunk-purity-detector.spec.ts` (12 cases) inside `npm run verify`. Browser-level companion: `tests/e2e/client/board-performance.spec.ts > carries no agency route code in its bundle`, which now signs in first. See §4C. |
 
 ### PHASE 5 — Time intelligence
 
@@ -166,14 +191,14 @@ Nine of ten suites now execute. At Phase 0 handover it was four.
 
 | Job | Enforces | Blocking now? |
 |---|---|---|
-| `verify (node 22)` / `verify (node 24)` | `npm run verify:all` — typecheck, lint, unit, invariants, **and `next build`**. The build is in the gate because a `'use server'` file exporting a non-async const passes typecheck and lint and fails page-data collection; only the build caught it. | Yes — **green**. 519 live assertions (398 unit, 121 invariant), plus 40 more under `test:db` — 559 in total, up from 474 at the start of this sweep. |
+| `verify (node 22)` / `verify (node 24)` | `npm run verify:all` — typecheck, lint, unit, invariants, **and `next build`**. The build is in the gate because a `'use server'` file exporting a non-async const passes typecheck and lint and fails page-data collection; only the build caught it. | Yes — **green**. 592 live assertions (447 unit, 145 invariant), plus 39 under `test:db` — 631 in total, up from 559. The additions are INV-11's structural half (24), the bundle-purity detector (12), INV-11's planted violations (20) and the a11y stale-allowlist case. |
 | `invariant contract` | All ten specs exist; every skipped suite names its phase; at Phase 8 none are skipped; nothing removed from `tests/invariants` without the `invariant-change` label | Yes — green |
 | `build` | `next build` succeeds | Yes |
 | `env registry` | Every `process.env` read in `src/` is in `.env.example`; every `.env.example` variable is in the runbook **and is set by `.railway/railway.ts`**; no `E2E_` variable reaches a deployed environment; no real secret is committed | Yes — **red on one line**: `NEXT_PUBLIC_APP_URL` (F7). `PGPOOL_MAX` was fixed by B8. |
 | `e2e` | Playwright both projects; migrations idempotent; traces uploaded on failure | Yes — see §4 for the run status |
 | `purge --plan smoke test` | A dry run prints a manifest and changes no row counts | Yes — Phase 6 landed the CLI, so this is now a real gate |
-| `database-backed suites` | `npm run test:db` — INV-7's five SIGKILLs, INV-3's hostile inserts, and the failure-mode matrix, against the job's Postgres. Creates and drops its own database (`tests/db-isolation.ts`) so no other suite can truncate a table mid-assertion | Yes — **green**, 40 assertions |
-| `client board FCP budget` | The ARCHITECTURE NFR, measured on a production build over throttled Slow 4G with 4× CPU. Fails over 1500 ms | Yes — **green at 528 ms median**, 972 ms headroom |
+| `database-backed suites` | `npm run test:db` — INV-7's five SIGKILLs, INV-3's hostile inserts, the failure-mode matrix, and (skipped until Phase 9 EXIT) INV-11's 74-case matrix, against the job's Postgres. Creates and drops its own database (`tests/db-isolation.ts`) so no other suite can truncate a table mid-assertion | **RED** — see DEFECT-12. 39 pass, 74 skipped, and INV-7's table-disposition completeness case fails because the Phase 9 schema landed seven tables the purge worker does not classify. The guard is behaving correctly; the worker has not caught up |
+| `client board FCP budget and bundle purity` | Two checks that need the same three expensive things — a production build, a database to seed, a real client session. (1) The ARCHITECTURE NFR over throttled Slow 4G with 4× CPU, failing over 1500 ms. (2) PHASE-4 EXIT: no agency route code in the client bundle, run with `--negative-control` so every push proves the detector can fail before believing that it passed | Yes — FCP **green at 524 ms median**, 976 ms headroom. Bundle purity newly adopted from a scratchpad script; first CI execution is the next push |
 
 The env-registry gate gained a fourth link this round: `.env.example` →
 `.railway/railway.ts`. The failure it now catches is a variable that is read by
@@ -297,6 +322,45 @@ defect in §5.
 excludes real network distance to the origin. The 150 ms RTT emulation covers
 the round trips but not the geography. Treat 972 ms as the budget for
 *everything the deploy adds*, and re-measure against staging once one exists.
+
+---
+
+## 4C. Bundle purity — adopted into CI
+
+PHASE-4 EXIT: *the client bundle contains no agency route code.* The front-end
+had been running this audit from a scratchpad script for three rounds and
+negative-controlling it every time. It was correct every time. It was also not a
+check: nothing failed when it stopped being run, and the first sign that the
+leak had returned would have been a client downloading the agency board's
+vocabulary.
+
+It is now `.github/scripts/check-chunk-purity.mjs`, and CI runs it.
+
+| | |
+|---|---|
+| **Command** | `node .github/scripts/check-chunk-purity.mjs --negative-control` |
+| **CI job** | `client board FCP budget and bundle purity` — shares the job with the FCP gate, because both need a production build, a seedable database and a real client session, and standing up a second job for them would double the slowest part of the workflow |
+| **Measured against** | The bytes the browser actually downloaded, across `/board`, `/queue` and a card page, on a **production build**, with a **real client session** |
+| **Not measured against** | The import graph — a tree-shaken import is not a leak and a string folded into a shared chunk is one. Not a dev server. Not the sign-in page, which was DEFECT-7 in its bundle form: unauthenticated, `/e/<token>/board` renders a form with almost no JavaScript and therefore almost no way to leak, and the audit passed by measuring nothing |
+| **Positive probe** | The two client decision-bar strings. If neither is found the run is reported **inconclusive and exits non-zero**, because "I read nothing and found no leak" is not a pass |
+| **Negative control** | `--negative-control`, passed in CI. Re-runs the detector over the same downloaded bytes with the probe strings moved into the offender list and requires it to fail. A detector that cannot be made to fail on demand has not been shown to work |
+| **Portable half** | `tests/unit/chunk-purity-detector.spec.ts` — 12 cases in `npm run verify`. The detector is pure and exported; its vocabulary, its per-marker and per-route coverage, its false-positive behaviour on `/api/client/*`, and the negative control's own shape are asserted in two seconds rather than after a six-minute build |
+
+**Why the portable half exists as well.** The CI job can only report pass or
+fail, once, after the expensive part. The thing that can silently break without
+a browser is the *matcher* — an emptied vocabulary list returns no hits for
+every input, forever. That failure has bitten every other guard in this
+repository in a different costume, so it gets a test that runs on every commit.
+What only the CI job can establish is that the audit read a production bundle
+under a real session rather than an empty set, and the positive probe is what
+makes that difference visible instead of silent.
+
+**One thing tightened during adoption.** The scratchpad version dropped
+`tests/e2e/routes.ts`'s bare `/w/` pattern when re-anchoring for a bundle, and
+that judgement is now enforced rather than remembered: a portable case requires
+every route pattern to be longer than five characters and every marker longer
+than eight. Two characters of punctuation match constantly inside minified code,
+and a false positive is how an audit gets ignored rather than fixed.
 
 ---
 
@@ -434,14 +498,25 @@ before the change. But for one round INV-6 was green on a guard that could not
 see its own subject.
 
 **DEFECT-7 — the client board FCP test measured the sign-in page.**
-*Owner: front-end — `tests/e2e/client/board-performance.spec.ts`. Not edited;
-`tests/e2e/**` is not mine.*
+*Owner: front-end. **CLOSED this round, by retirement rather than repair.***
 
-The spec navigates to the board URL without a session. That renders the sign-in
-form, which paints faster than the board. Any budget asserted there passes for
-the wrong reason. `.github/scripts/check-fcp-budget.mjs` establishes a real
-session and refuses to record a sample unless the final URL is still `/board`
-and a published fixture lane is in the DOM.
+The spec navigated to the board URL without a session. That renders the sign-in
+form, which paints faster than the board, so the budget passed for the wrong
+reason — worse than having no budget, because a green gate is read as evidence.
+
+The front-end **retired** the FCP test rather than fixing it, and that was the
+right call for a reason beyond the missing session: it ran against a dev server,
+which is unminified, unbundled and compiled on demand. Two budgets for one NFR,
+disagreeing about the build they measure, is how a budget gets quietly relaxed —
+the looser one is the one that never fires. `check-fcp-budget.mjs` is now the
+single budget: production build, Slow 4G with 4× CPU, median of five cold
+navigations, and it refuses to record a sample unless the final URL is still
+`/board` and a published fixture lane is in the DOM. **524 ms against 1500 ms.**
+
+The two tests that remained in that file are the ones that belong in an e2e
+suite — what the browser *did*, not how long it took — and both now sign in
+first. VERIFICATION's Phase 4 rows were still pointing at the retired test and
+now point at the script.
 
 **DEFECT-8 — two suites shared one database; a seed truncated a table
 mid-assertion.** *Owner: QA. **Fixed this round.***
@@ -511,16 +586,81 @@ does, the fixture's stated side is written and then ignored. INV-3's portable
 half asserts the fixture's side agrees with its ids, so the two cannot drift
 into disagreement silently.
 
+**DEFECT-12 — the Phase 9 schema landed seven tables the purge worker does not
+classify, and `npm run test:db` is red on it.** *Owner: back-end —
+`src/workers/purge.ts`, `TABLE_DISPOSITION`.* **Severity: high.**
+
+```
+inv-07 > every table in the schema has a disposition, so a new one cannot escape a purge
+  access_shadow_disagreements, accounts, identities, org_memberships,
+  project_memberships, team_members, teams
+```
+
+This is the guard working, not the guard breaking. INV-7's completeness case
+exists precisely so that a table added by one phase cannot silently escape the
+purge written in another, and Phase 9 added seven at once.
+
+The dispositions are already specified and do not need a product decision —
+DELIVERY-PLAN §IV: *"`project_memberships` rows are deleted; `accounts` are not
+— the person outlasts the project."* ADR-021's consequences say the same thing
+and add that the purge must now walk memberships rather than one engagement's
+contact list. So the shape is: `project_memberships` is content;
+`accounts`, `identities`, `organizations`, `teams` and `team_members` are not;
+`access_shadow_disagreements` is a migration instrument that outlives the
+project it names and should be classified deliberately rather than by default.
+
+Not fixed here: `src/workers/purge.ts` is `src/**`. **This blocks PHASE-6's
+"INV-7 unskipped and passing" from staying proven** — it was green last round
+and is red now, which is exactly the transition this row exists to make visible.
+
+**DEFECT-13 — the portfolio does not render plan usage.**
+*Owner: front-end / back-end (product gap, not a test bug). Reported by the
+front-end; `tests/e2e/**` is not mine to edit.* **Severity: medium.**
+
+`tests/e2e/agency/plan-and-lifecycle.spec.ts > the plan gate > the portfolio
+shows the limit rather than only failing at the button` fails because the
+surface does not exist. `src/components/agency/plan-usage-record.tsx` is
+written and renders "3 of 3"; nothing on the portfolio mounts it.
+
+The test is asserting the right thing and the right way round: a plan limit a
+user only discovers by being refused at the button is a plan limit that reads as
+a bug. **Blocks PHASE-7 EXIT** — the plan-gate row is proven for
+*"read from one limits table and one active counter"* and unproven for the
+surface that shows it — and **PHASE-8 EXIT "full e2e matrix, agency desktop"**.
+
+**DEFECT-14 — a client download route reached with an agency session.**
+*Owner: back-end (route behaviour) — reported by the front-end.*
+**Severity: medium.**
+
+`tests/e2e/agency/engagement-flow.spec.ts > a client download route is closed to
+an agency session` fails. The test is an INV-10/INV-6 boundary case and it is a
+good one: the two session kinds are separate namespaces, so a client route
+handed an agency session must refuse *as though the object were not there* —
+404, never 403, and never a redirect that confirms the object exists.
+
+Worth stating plainly because the failure looks cosmetic and is not: an agency
+session reaching a client download path is the one direction in which INV-6's
+narrowing (ADR-021 §4, reviewer sessions stay scoped) could be read as
+permission to be relaxed about the other kind. **Blocks PHASE-8 EXIT "full e2e
+matrix"**, and it is the row PHASE-4's "touching no agency route" assertion has
+no mirror for.
+
+The remaining three of the five agency e2e failures the front-end reported are
+test-level and belong to them; these two are the ones that need product work.
+
 ### Open — carried from earlier rounds
 
-1. **`src/components/agency/card-tile.tsx` animates outside the motion budget.**
-   `transition-opacity` on hover, silenced with `motion-reduce:transition-none`
-   at the call site. ACCESSIBILITY.md §7 reduces motion at the token precisely
-   so no component has to remember the variant — and the next one will not. Not
-   an accessibility failure (reduced motion is honoured and `focus-within:`
-   keeps the controls keyboard-reachable), so it is recorded rather than
-   suppressed: `a11y-source.spec.ts` allows this one file by name and fails on
-   any second. **Owner: front-end.**
+1. ~~**`src/components/agency/card-tile.tsx` animates outside the motion
+   budget.**~~ **CLOSED this round.** The front-end replaced the hand-rolled
+   `transition-opacity` / `motion-reduce:transition-none` pair with the
+   `crossfade` token, whose duration resolves through `--dur-beat` — which
+   `globals.css` sets to `0ms` under `prefers-reduced-motion`, so one
+   declaration silences every duration in the codebase arithmetically. The
+   allowlist entry in `a11y-source.spec.ts` is **deleted**: a subset check
+   cannot tell a live exception from a spent one, and an allowlist that
+   outlives its offender is a standing permission for whatever lands in that
+   file next. A new case now fails on exactly that — every name on the list
+   must still be an offender.
 2. **`loadClientShelf()` is exported, covered, and reachable from nothing.** The
    reachability walk finds every other client query from a route; this one has
    no caller anywhere in `src/`. Either the client shelf surface was never wired
@@ -548,7 +688,8 @@ into disagreement silently.
 
 ### Still UNPROVEN in this document
 
-Four rows, down from nine at the end of round 1:
+Six rows. Four are carried; two are new, and both are new because Phase 9 landed
+work under a suite that then reported on it.
 
 - **PHASE-1** — a client session for engagement A returns 404 for B. Written and
   ready (`invite-verify-approve.spec.ts`); needs a database.
@@ -560,6 +701,27 @@ Four rows, down from nine at the end of round 1:
 - **PHASE-8** — deploy and rollback executed once against staging. Not provable
   by a test. No longer blocked on tooling: `railway@^3.11.0` is a devDependency
   under ADR-019 and `.railway/**` is inside tsc and ESLint.
+- **PHASE-6 (regressed)** — INV-7 unskipped and passing. It was proven last
+  round and is red now: the Phase 9 schema added seven tables the purge worker
+  does not classify (DEFECT-12). Nothing about the purge changed; the surface it
+  must cover grew. **Owner: back-end.** This is the row that most repays being
+  re-run rather than remembered.
+- **PHASE-9** — the resolution matrix against the real graph. Deliberately
+  deferred rather than missing: written, skipped, and gated to unskip at
+  Phase 10 (§6D). Distinct from the four above in that the test exists and the
+  condition for running it is written down; it becomes a genuine hole only if
+  Phase 9 exits without the shadow-disagreement count reaching zero.
+
+**And two exit conditions the front-end's agency e2e failures block**, recorded
+here because `tests/e2e/**` is not QA's to edit and a defect reported into a
+handover note is a defect nobody audits:
+
+- **PHASE-7** — the plan surface. DEFECT-13: the portfolio never renders
+  "3 of 3"; the component exists and nothing mounts it. The 402 half of the plan
+  gate is proven; the half a user actually sees is not.
+- **PHASE-8** — the full e2e matrix, agency desktop. DEFECT-13 and DEFECT-14
+  both sit in it, and DEFECT-14 is the INV-10/INV-6 boundary: a client download
+  route reached with an agency session.
 
 ---
 
@@ -614,6 +776,87 @@ Both halves import their numbers from `src/styles/a11y-contract.ts`, which the
 design layer owns. Nobody retypes a hex value, and `globals.css` is diffed
 against that module so the two cannot drift apart silently.
 
+### D. INV-11's resolution table, written twice on purpose
+
+The DELIVERY-PLAN assigns INV-11 two tests: a static one for where a decision
+may be made, and a runtime matrix of *(org role × project role × object)*
+against expected resolution, including both-null → deny. Both exist. The split
+between them is INV-3's, for INV-3's reason.
+
+**The table was transcribed independently, and it agreed.** QA wrote
+`tests/fixtures/access-matrix.ts` from ADR-021 §6 and ADR-022 D3 without seeing
+`src/domain/access/resolve-access.ts`; the back-end wrote `resolveAccessFrom()`
+from the same two documents without seeing the fixture. Every cell agrees,
+including the two ADR-022 implies rather than states:
+
+| Value | ADR-022 says | Both transcriptions read it as | Why |
+|---|---|---|---|
+| What `owner`/`admin` derive | "access to every project" — not *as what* | `lead` | `resolveAccess()` returns one of three project roles, and it is the only one that serves the case the ADR was decided for: "the founder of a six-person studio expecting to see their own company's work". An owner resolving to `contributor` could not do the lead-only things on their own org's project. |
+| `via` when both paths tie | silent | `project` | The direct grant is the more specific authority and the one that survives the org switch being turned off. Attributing a tie to the org would make an audit row read as though revoking the project membership changed nothing. |
+
+Agreement is worth stating because disagreement was the outcome worth paying
+for, and it was looked for. **The cross-check did find one thing:**
+`organizations.org_roles_derive_project_access`. ADR-022 names per-org
+configuration as the escape hatch and the column ships `NOT NULL DEFAULT true`,
+but a matrix over roles alone would have asserted only the half of the product
+where derivation is on. It is now a real axis, and the cube is 4 org roles × 4
+project roles × 2 org scopings × 2 switch states = **64 cells**.
+
+**The cell most worth arguing about**, recorded so nobody has to rediscover it:
+an org `admin` explicitly added to a project as a `reviewer` still resolves to
+`lead via org`. `strongest()` means the org grant wins, so an explicit narrow
+grant does not narrow. Someone will eventually try exactly that to wall off one
+project and it will not work — ADR-022 puts the escape hatch in the per-org
+switch, not in a downgrade-by-explicit-grant. Both transcriptions mirror the
+decision rather than quietly improving on it. If the product wants the other
+behaviour that is an ADR, not a test edit.
+
+Three properties fall out and are asserted rather than described:
+
+- **Deny is confined.** Both-null resolves to `{ role: null, via: null }` in all
+  four scopings, and a denial never carries provenance.
+- **D3's blast radius is six cells of sixty-four.** Derivation *happens* in
+  eight — owner and admin across all four project roles, own org, switch on —
+  but in the two where the account is already a project `lead` the direct grant
+  ties and takes the `via` label. A seventh cell deciding by org means a role
+  started deriving that should not.
+- **Teams are not an authority.** `src/db/schema/access.ts` expands a team grant
+  into individual `project_memberships` rows, so `resolveAccess()` never reads
+  `team_members`. The structural half enforces that inside the access domain;
+  the matrix has the behavioural row.
+
+**Why the behavioural half stays skipped through Phase 9.** For the length of
+the phase every permission check calls both the old inline logic and
+`resolveAccess()` and **returns the old result**. A matrix asserted against that
+would go green while measuring the system being replaced — and a green invariant
+is read as evidence. PHASE-9 EXIT puts the unskip after the old path is deleted,
+which happens after seven consecutive days at zero shadow-harness
+disagreements. `check-invariant-skips.mjs` now encodes that as `liveFrom: 10`,
+so the deferral is mechanical rather than remembered.
+
+**What the structural half buys in the meantime.** It is live today and vacuous
+today — `resolveAccess()` has just landed and nothing outside it names a
+membership table — which is the most dangerous state a guard can occupy, because
+a scan that finds nothing and a scan that cannot find anything are
+indistinguishable. So the twenty planted violations in
+`invariant-scans-are-not-escapable.spec.ts` are not optional decoration; they
+are what makes the green meaningful. **They earned their place immediately:**
+they caught three defects in the scans on first run —
+
+- `statements()` joined a line that *starts* like a continuation but not one
+  that *ends* dangling, so prettier's `const x =` / newline / value shape split
+  one statement into three and any bounded pattern spanning the break saw
+  neither half. That is DEFECT-3's hole approached from the other side, in
+  shared infrastructure every structural invariant uses. Now closed, with the
+  JSX false-positive case pinned alongside it.
+- The account-id pattern's null-exclusion lookahead sat after a `\s*` that could
+  match zero width, so it inspected the space rather than the word.
+- And with that fixed, the engine settled for `==` as a prefix of `===`,
+  sidestepping the exclusion anyway. Either mistake turns every presence check
+  in the codebase into a permission violation.
+
+None of the three would have been visible by reading the regexes.
+
 ### New recommendation
 
 **C. `.railway/**` needs to be inside the toolchain.** It is the only
@@ -636,16 +879,28 @@ tests/
 │   ├── possession.ts  typed loader, validates the file at import
 │   ├── seed.ts        insertion graph + transition scripts (seeds never write cards.state)
 │   └── index.ts
-├── invariants/        113 live, 16 skipped, across 10 specs + 3 helpers
-│   ├── _source.ts         source scanning; client-route import-graph reachability
+├── fixtures/
+│   └── access-matrix.ts   INV-11's 64-cell resolution cube + 9 edge cases, every
+│                          expectation a hand-written literal from ADR-021/022
+├── invariants/        145 live, 84 skipped, across 11 specs + 3 helpers
+│   ├── _source.ts         source scanning; client-route import-graph reachability;
+│   │                      `statements()`, which now joins a dangling line as well
+│   │                      as a leading one
 │   ├── _query-capture.ts  runs a query or a write against a fake driver; compiled
 │   │                      SQL, bound insert parameters, and empty-result 404 paths
 │   └── _sql.ts
-├── unit/              350 live, 20 skipped, across 12 specs
+├── unit/              447 live, 20 skipped, across 14 specs
 │   ├── a11y-contract.spec.ts     78 — the contrast floor, and globals.css against it
-│   ├── a11y-source.spec.ts       11 — focus ring, motion budget, app shell
+│   ├── a11y-source.spec.ts       12 — focus ring, motion budget, app shell, and
+│   │                                  the stale-allowlist case
 │   ├── railway-topology.spec.ts  14 — the deploy topology nothing else checks
 │   ├── round-counter.spec.ts     12 — ADR-014 as behaviour, never as a location
+│   ├── chunk-purity-detector.spec.ts
+│   │                             12 — the bundle audit's matcher, where it costs
+│   │                                  two seconds instead of a six-minute build
+│   ├── invariant-scans-are-not-escapable.spec.ts
+│   │                             72 — planted violations for every structural
+│   │                                  scan, incl. INV-11's twenty
 │   └── comment-writer.spec.ts    24 — the agency writer, driven end to end
 │                                   with no database: order of operations, the
 │                                   423 gate, and the events an internal
@@ -654,6 +909,14 @@ tests/
                     61 accessibility (all pass, executed); 22 data-driven (never run, §4)
 ```
 
-Live totals: **463 passing, 36 skipped**. `npm run verify` is green.
-Every skipped block names the phase that unskips it; the `invariant contract`
-job fails if one does not. At the end of round 1 the same line read 255.
+Live totals: **592 passing, 104 skipped**. `npm run verify` is green;
+`npm run test:db` is **red on DEFECT-12**, which is INV-7 correctly reporting
+that the Phase 9 schema outgrew the purge worker.
+
+The skipped count jumped by 68 in one round and that is the intended shape, not
+drift: 74 of the 104 are INV-11's behavioural matrix, deliberately deferred to
+Phase 9's EXIT and mechanically gated there. Every skipped block names the phase
+that unskips it, and the `invariant contract` job fails if one does not — and
+now also fails if an invariant is still skipped past its own `liveFrom`, which
+is per-invariant rather than a single Phase 8 rule. At the end of round 1 the
+live line read 255.

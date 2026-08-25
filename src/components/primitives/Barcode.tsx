@@ -34,6 +34,27 @@ import { Mono } from './Mono';
  * ACCESSIBILITY. The bars are `aria-hidden`: they are a second, machine-facing
  * rendering of text that is already on the page in `Mono`. A screen reader
  * that announced both would read the same hash twice.
+ *
+ * POLARITY, and why this one element does not follow the theme.
+ * Round 3 shipped the bars in `currentColor`, which in dark mode is light bars
+ * on a dark ground. The symbol still encoded correctly and could not be
+ * scanned: an inverted Code 39 is, to most laser and CCD readers and to plenty
+ * of camera decoders, not a symbol. A barcode that encodes nothing is
+ * decoration wearing a record's clothes; a barcode that encodes correctly and
+ * cannot be read is the same failure one step later, and it lands on the purge
+ * certificate — the one document in this product meant to be scanned, and the
+ * one that goes to a client's legal team.
+ *
+ * So bar/space polarity and the quiet zone are treated as part of the
+ * encoding, which is what they are, and not as styling. The symbol brings its
+ * own substrate: `--barcode-bar` on `--barcode-substrate`, black on white, in
+ * light, in dark and in print. The reading is not "an element that ignores
+ * dark mode" — it is a printed label stuck to the page, which is precisely
+ * what a barcode on a certificate is.
+ *
+ * The human-readable line beneath the bars is NOT part of the plate. It is
+ * text, it is `--ink` on the page ground, and it follows the theme like every
+ * other record in the product. The plate is only as big as the symbol.
  */
 
 /**
@@ -65,6 +86,16 @@ const NARROW = 1;
 const WIDE = 3;
 /** Code 39 requires a quiet zone of at least ten narrow modules each side. */
 const QUIET = 10;
+/**
+ * Narrow modules of substrate above and below the bars. The quiet zone the
+ * standard specifies is horizontal, but the plate has to be a plate: bars that
+ * touch the edge of their own white ground read as a cropped symbol, and a
+ * scanner that clips the top or bottom of a bar loses the same edge.
+ *
+ * It is applied by growing the viewBox, never by moving the path, so the
+ * geometry `code39Path` emits — and the test that decodes it — is untouched.
+ */
+const PLATE_PAD = 4;
 /** One narrow module of space between characters. */
 const GAP = 1;
 
@@ -131,13 +162,24 @@ export function Barcode({
         // read the same hash twice.
         aria-hidden="true"
         focusable="false"
-        viewBox={`0 0 ${width} ${height}`}
+        viewBox={`0 ${-PLATE_PAD} ${width} ${height + PLATE_PAD * 2}`}
         width={width}
-        height={height}
+        height={height + PLATE_PAD * 2}
         preserveAspectRatio="xMinYMid meet"
         className="block max-w-full"
       >
-        <path d={d} fill="currentColor" />
+        {/* The substrate. It covers the quiet zone as well as the bars,
+            because the quiet zone is part of the encoding and a quiet zone
+            painted in whatever ground the page happens to have is a quiet
+            zone that inverts with the theme. */}
+        <rect
+          x={0}
+          y={-PLATE_PAD}
+          width={width}
+          height={height + PLATE_PAD * 2}
+          fill="var(--barcode-substrate)"
+        />
+        <path d={d} fill="var(--barcode-bar)" />
       </svg>
       {showValue ? (
         <Mono label={label}>{normalised}</Mono>

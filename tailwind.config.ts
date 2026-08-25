@@ -43,10 +43,13 @@ const config: Config = {
       /* Text laid over a filled possession or breach surface. */
       'on-hue': 'var(--on-hue)',
 
-      /* Quiet chip grounds. */
+      /* Quiet chip grounds. Four, not three: `tint-neutral` is what a chip
+         carrying no possession stands on, so it keeps a ground of its own on
+         a card instead of being painted the card's own `--paper-2`. */
       'tint-agency': 'var(--tint-agency)',
       'tint-client': 'var(--tint-client)',
       'tint-breach': 'var(--tint-breach)',
+      'tint-neutral': 'var(--tint-neutral)',
 
       /* Hover steps. Never use an opacity modifier (`bg-agency/90`) on a token
          colour — the tokens are `var()` strings and Tailwind 3 cannot compute

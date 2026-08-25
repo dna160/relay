@@ -14,20 +14,37 @@
  * what makes the bar read as ink laid *on* the card, and it is the reason the
  * motion below is a wipe and not a fade.
  *
- * When possession changes hands the bar is re-keyed and redrawn top to bottom
- * with `animate-bar-draw origin-head` — three beats, delayed two so it begins
- * on the beat the label-attach strike lands (MOTION.md §3 R3). **The hue is
- * already the new one when this runs.** Nothing crossfades: a fade says "this
- * value was replaced", a wipe says "this mark was applied", and possession
- * changing hands is the one event in the product that has earned the second
- * reading.
+ * When possession changes hands the bar is drawn top to bottom over the hue it
+ * is replacing — three beats, delayed two so it begins on the beat the
+ * label-attach strike lands (MOTION.md §3 R3). Nothing crossfades: a fade says
+ * "this value was replaced", a wipe says "this mark was applied", and
+ * possession changing hands is the one event in the product that has earned the
+ * second reading.
+ *
+ * **The two layers are the `ColourBar` primitive's and this file does not
+ * hand-roll them.** It used to: one element, the new hue on it, a changing
+ * `key` to force a remount, and `animate-bar-draw origin-head`. That is what
+ * MOTION.md §4c said to do, and it was wrong in a way that only showed up on a
+ * stopwatch — `bar-draw`'s `both` fill holds the element at `scaleY(0)` through
+ * the two-beat delay, and the remount destroys the outgoing bar in the same
+ * frame, so the leading edge of the card was blank for 120ms during the one
+ * event the whole element exists to report. A blink there does not read as
+ * "possession is changing"; it reads as possession being briefly *unknown*.
+ * One element cannot be both the ink being laid down and the ink being covered.
+ * §4c now warns off the instruction it used to give.
+ *
+ * So the call sites below pass a fill and nothing else. The primitive keeps the
+ * outgoing hue on an under-layer, draws the incoming one over it, and suppresses
+ * the whole thing on first mount — the memory belongs with the mark, because
+ * CSS cannot remember and every call site that hand-rolled it would have to.
  *
  * This module is `'use client'` for exactly one reason: knowing that possession
  * *changed* requires memory of what it was, and the server has none. Nothing
- * animates on first render — `useOneEvent` reports no event until it has seen
- * one — so the server-rendered board is still and the FCP budget is untouched.
- * The file is imported only from `components/agency/`, so none of this reaches
- * the client bundle, where the budget actually lives.
+ * animates on first render — a bar with no outgoing hue has no under-layer and
+ * carries no animation class in the markup at all — so the server-rendered
+ * board is still and the FCP budget is untouched. The file is imported only
+ * from `components/agency/`, so none of this reaches the client bundle, where
+ * the budget actually lives.
  *
  * Agency surface only. Possession is internal-only in v1 (PRD §9) and this file
  * lives under `components/agency/` so that importing it into the client bundle
@@ -61,7 +78,7 @@
 import { POSSESSION } from '@/domain/card/state-machine';
 import type { CardState, Possession, PossessionSplit } from '@/lib/types';
 import { formatDuration, formatPossession } from '@/lib/format';
-import { useOneEvent } from '@/lib/hooks/use-one-event';
+import { ColourBar } from '@/components/primitives';
 import {
   POSSESSION_CLOSED_FILL,
   POSSESSION_CLOSED_TEXT,
@@ -102,20 +119,9 @@ export function PossessionEdge({
 }) {
   const { side } = heldBy(possession, state);
   const fill = side ? POSSESSION_FILL[side] : POSSESSION_CLOSED_FILL;
-  const drawn = useOneEvent([['possession', side]] as const);
-  return (
-    <span
-      // A changed key is the whole mechanism: React remounts the bar and the
-      // CSS animation runs from zero. MOTION.md §4c, step 2.
-      key={drawn.seq}
-      aria-hidden="true"
-      className={cn(
-        'colour-bar absolute inset-y-0 left-0 w-bar',
-        fill,
-        drawn.kind === 'possession' && 'animate-bar-draw origin-head',
-      )}
-    />
-  );
+  // Geometry here, ink in the primitive. There is no `key`, no animation class
+  // and no change detection at this call site by design — see the note above.
+  return <ColourBar fill={fill} className="absolute inset-y-0 left-0 w-bar" />;
 }
 
 /** `client · 6d`. Mono, because it is a record of who held the work. */
@@ -160,7 +166,6 @@ export function PossessionBar({
 }) {
   const { side, unstarted } = heldBy(possession, state);
   const fill = side ? POSSESSION_FILL[side] : POSSESSION_CLOSED_FILL;
-  const drawn = useOneEvent([['possession', side]] as const);
   const split = unstarted
     ? UNSTARTED_TITLE
     : `agency ${formatDuration(possession.agencyMs)} · client ${formatDuration(
@@ -168,15 +173,7 @@ export function PossessionBar({
       )}`;
   return (
     <span className="inline-flex items-center gap-2" title={split}>
-      <span
-        key={drawn.seq}
-        aria-hidden="true"
-        className={cn(
-          'colour-bar block h-4 w-bar',
-          fill,
-          drawn.kind === 'possession' && 'animate-bar-draw origin-head',
-        )}
-      />
+      <ColourBar fill={fill} className="block h-4 w-bar" />
       <PossessionLabel possession={possession} state={state} />
     </span>
   );

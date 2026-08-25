@@ -180,7 +180,13 @@ if (iac === null) {
 
 // A committed placeholder is fine. A committed secret is not.
 for (const line of envExample.split('\n')) {
-  const match = line.match(/^\s*([A-Z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD))\s*=\s*(.+)$/);
+  // `ACCESS_KEY_ID` is named explicitly: it ends in `ID`, so the KEY/SECRET/
+  // TOKEN/PASSWORD suffixes did not match it, and an access key id committed
+  // beside its secret is half a working credential. Found while wiring MinIO —
+  // the secret was caught and the key id sailed through.
+  const match = line.match(
+    /^\s*([A-Z0-9_]*(?:ACCESS_KEY_ID|KEY|SECRET|TOKEN|PASSWORD))\s*=\s*(.+)$/,
+  );
   if (!match) continue;
   const [, name, rawValue] = match;
   const value = rawValue.trim().replace(/^["']|["']$/g, '');

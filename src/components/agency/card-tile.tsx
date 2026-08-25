@@ -163,15 +163,15 @@ export function CardTile({ card, href, controls, dragging }: CardTileProps) {
 
       <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
         {/*
-          `bg-paper` because a card's ground *is* `--paper-2`, which is the
-          `Chip` primitive's own quiet-neutral fill — a chip painted the colour
-          of the surface under it has no boundary at all. One step recessed is
-          the same ground the plate below takes, so the two records on this card
-          sit at the same depth. Raised with UI/UX: `Chip variant="quiet"
-          tone="neutral"` has no ground-aware form, and every call site on a
-          card will need this until it does.
+          No ground override any more. This carried `bg-paper` because a quiet
+          neutral `Chip` was painted `--paper-2`, which is a card's own ground,
+          so the chip had no boundary at all and every call site on a card had
+          to reach past the primitive to give it one. `--tint-neutral` closed
+          that (UI/UX, this round): the chip now brings a ground that works on
+          `--paper` and `--paper-2` alike, and the override would paint over the
+          fix on the surface that has forty of these on it.
         */}
-        <StateChip state={card.state} className="bg-paper" />
+        <StateChip state={card.state} />
         {due && (
           <span
             className={cn(mono, 'text-12', muted, due.overdue && 'font-semibold text-ink')}

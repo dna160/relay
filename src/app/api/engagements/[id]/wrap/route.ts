@@ -12,6 +12,7 @@ import { wrapEngagement } from '@/domain/engagement/lifecycle';
 import { daysToPurge } from '@/domain/retention/schedule';
 import { toErrorResponse } from '@/lib/errors';
 import { requireAgency, type RouteContext } from '../../../_guards';
+import { shadowed } from '../../../_shadow';
 
 export async function POST(
   _request: Request,
@@ -22,7 +23,9 @@ export async function POST(
     const { id } = await context.params;
     const now = new Date();
 
-    const engagement = await wrapEngagement(db, { engagementId: id, orgId: session.orgId }, now);
+    const engagement = await shadowed('POST /api/engagements/[id]/wrap', session, id, () =>
+      wrapEngagement(db, { engagementId: id, orgId: session.orgId }, now),
+    );
 
     return NextResponse.json({
       engagement: {

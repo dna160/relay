@@ -51,6 +51,35 @@ export interface EngagementDetail {
   agencyName: string;
 }
 
+/**
+ * `GET /api/engagements` — the portfolio, plus what the org has spent of its
+ * plan.
+ *
+ * `plan` is the *same block* `POST /api/engagements` already returns as
+ * `CreatedEngagement['plan']`, widened by the plan's own name. That is
+ * deliberate and it is the whole point: the number the portfolio states and the
+ * number the 402 enforces have to be one evaluation, or the surface eventually
+ * promises a slot the route refuses (INV-8).
+ *
+ * **Optional, for one round only.** The route does not ship the block yet; the
+ * portfolio derives it in `_lib/plan-usage.ts` in the meantime and stops the
+ * moment this field arrives. Owner: back-end, alongside Phase 9's
+ * `countActiveEngagements()` signature change.
+ */
+export interface PlanUsage {
+  readonly plan: Plan;
+  readonly activeCount: number;
+  /** Null means unlimited — Studio. */
+  readonly limit: number | null;
+  /** Null when the limit is. */
+  readonly remaining: number | null;
+}
+
+export interface PortfolioPayload {
+  engagements: EngagementSummary[];
+  plan?: PlanUsage;
+}
+
 /** `GET /api/engagements/:id` also returns the value that goes in the client link. */
 export interface EngagementDetailResult {
   engagement: EngagementDetail;
@@ -269,11 +298,15 @@ export interface ExportJob {
 /* ---------------------------------------------------------------- agency api */
 
 export const agencyApi = {
-  /** GET /api/engagements */
+  /**
+   * GET /api/engagements
+   *
+   * Returns the payload rather than only the list: the portfolio needs the
+   * plan block beside the rows, and unwrapping to an array here is what would
+   * make a second request the only way to get it.
+   */
   portfolio(ctx?: RequestContext) {
-    return request<{ engagements: EngagementSummary[] }>('/api/engagements', { ctx }).then((r) =>
-      pick(r, (p) => p.engagements),
-    );
+    return request<PortfolioPayload>('/api/engagements', { ctx });
   },
 
   /** GET /api/attention — the portfolio's primary content (PRD §5.5). */

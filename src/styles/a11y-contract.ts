@@ -110,7 +110,8 @@ export type TokenName =
   | '--on-hue'
   | '--tint-agency'
   | '--tint-client'
-  | '--tint-breach';
+  | '--tint-breach'
+  | '--tint-neutral';
 
 /**
  * The shipped values. `--on-hue` is `var(--paper)` and the three tints are
@@ -134,6 +135,7 @@ export const TOKENS: Readonly<Record<Mode, Readonly<Record<TokenName, string>>>>
     '--tint-agency': '#D9DFDC',
     '--tint-client': '#DEDFE7',
     '--tint-breach': '#E9DAD6',
+    '--tint-neutral': '#D7D9D6',
   },
   dark: {
     '--ink': '#E8EAE5',
@@ -149,6 +151,7 @@ export const TOKENS: Readonly<Record<Mode, Readonly<Record<TokenName, string>>>>
     '--tint-agency': '#223032',
     '--tint-client': '#292D39',
     '--tint-breach': '#35282B',
+    '--tint-neutral': '#35393C',
   },
 } as const;
 
@@ -198,6 +201,7 @@ export const CONTRAST_PAIRS: readonly ContrastPair[] = [
   { id: 'light/ink-on-tint-agency', mode: 'light', fg: '--ink', bg: '--tint-agency', min: 4.5, measured: 13.313, kind: 'text', why: 'quiet chip label — the hue is in the tint, never in the label' },
   { id: 'light/ink-on-tint-client', mode: 'light', fg: '--ink', bg: '--tint-client', min: 4.5, measured: 13.549, kind: 'text', why: 'quiet chip label' },
   { id: 'light/ink-on-tint-breach', mode: 'light', fg: '--ink', bg: '--tint-breach', min: 4.5, measured: 13.249, kind: 'text', why: 'quiet chip label' },
+  { id: 'light/ink-on-tint-neutral', mode: 'light', fg: '--ink', bg: '--tint-neutral', min: 4.5, measured: 12.667, kind: 'text', why: 'quiet chip label with no possession. The tint exists so the chip is not painted the card ground it sits on.' },
   // ---- light, non-text
   { id: 'light/rule-strong-on-paper', mode: 'light', fg: '--rule-strong', bg: '--paper', min: 3, measured: 3.005, kind: 'non-text', why: 'WCAG 1.4.11 — the boundary of any control' },
   { id: 'light/rule-strong-on-paper-2', mode: 'light', fg: '--rule-strong', bg: '--paper-2', min: 3, measured: 3.269, kind: 'non-text', why: 'control boundary on a card' },
@@ -225,6 +229,7 @@ export const CONTRAST_PAIRS: readonly ContrastPair[] = [
   { id: 'dark/ink-on-tint-agency', mode: 'dark', fg: '--ink', bg: '--tint-agency', min: 4.5, measured: 11.277, kind: 'text', why: 'quiet chip label' },
   { id: 'dark/ink-on-tint-client', mode: 'dark', fg: '--ink', bg: '--tint-client', min: 4.5, measured: 11.337, kind: 'text', why: 'quiet chip label' },
   { id: 'dark/ink-on-tint-breach', mode: 'dark', fg: '--ink', bg: '--tint-breach', min: 4.5, measured: 11.634, kind: 'text', why: 'quiet chip label' },
+  { id: 'dark/ink-on-tint-neutral', mode: 'dark', fg: '--ink', bg: '--tint-neutral', min: 4.5, measured: 9.619, kind: 'text', why: 'quiet chip label with no possession' },
   // ---- dark, non-text
   { id: 'dark/rule-strong-on-paper', mode: 'dark', fg: '--rule-strong', bg: '--paper', min: 3, measured: 3.394, kind: 'non-text', why: 'WCAG 1.4.11 — the boundary of any control' },
   { id: 'dark/rule-strong-on-paper-2', mode: 'dark', fg: '--rule-strong', bg: '--paper-2', min: 3, measured: 3.056, kind: 'non-text', why: 'control boundary on a card' },
@@ -552,3 +557,89 @@ export const TARGETS = {
 
 /** The floor the whole product reflows to, with no horizontal page scroll. */
 export const REFLOW = { minWidthPx: 360, allowHorizontalPageScroll: false } as const;
+
+/* ==========================================================================
+   8. THE MACHINE-READABLE MARK
+   ========================================================================== */
+
+/**
+ * THE BARCODE IS NOT THEMED, AND THAT IS THE SPECIFICATION.
+ *
+ * ROUND 3 DEFECT, and the reason this block exists: `Barcode` filled its bars
+ * with `currentColor`. In dark mode that is light bars on a dark ground —
+ * an inverted Code 39 symbol, which most laser and CCD scanners and plenty of
+ * camera decoders will not read at all. The symbol still *encoded* correctly;
+ * it simply could not be scanned. On the purge certificate, which is the one
+ * document in this product meant to be scanned and the one that reaches a
+ * client's legal team.
+ *
+ * Bar/space polarity and the quiet zone are part of the encoding, not part of
+ * the styling. So the barcode carries its own substrate — black bars on white,
+ * in light, in dark and in print — and the two tokens are declared
+ * `!important` so a tenant cannot invert them either. The human-readable line
+ * beneath the bars is NOT part of the plate: it is text, it is `--ink` on the
+ * page ground, and it follows the theme like every other record.
+ *
+ * What to assert, in both modes and with a hostile tenant style applied:
+ *   - the computed `fill` of the bar path is `BARCODE.bar`;
+ *   - the computed `fill` of the substrate rect is `BARCODE.substrate`;
+ *   - `contrastRatio(bar, substrate)` is `BARCODE.minContrast` — 21:1, the
+ *     maximum, because scan margin is the whole point;
+ *   - both are IDENTICAL between `[data-theme="dark"]` and light. A barcode
+ *     whose colours moved with the theme is the regression.
+ *
+ * The encoding itself is asserted separately and without a browser: decode
+ * `code39Path()` back to element widths and it must return the input. See
+ * `docs/design/A11Y-ASSERTIONS.md` §11.
+ */
+export const BARCODE = {
+  substrateToken: '--barcode-substrate',
+  barToken: '--barcode-bar',
+  substrate: '#FFFFFF',
+  bar: '#000000',
+  minContrast: 21,
+  /** Quiet zone, in narrow modules, required on each side by Code 39. */
+  quietModules: 10,
+  /** True in light, in dark, and in print. This is the property under test. */
+  themeInvariant: true,
+} as const;
+
+/* ==========================================================================
+   9. FIRST PAINT
+   ========================================================================== */
+
+/**
+ * NOTHING ANIMATES BEFORE HYDRATION — as a check rather than as prose.
+ *
+ * `docs/design/MOTION.md` §5 forbids "the initial board render" and §8 Claim 1
+ * rests the entire FCP argument on it. Both were prose, and prose cannot fail
+ * CI: `Chip` shipped `animate-chip-in` unconditionally on its current label,
+ * so every state chip on a server-rendered board faded in on first paint. The
+ * document said one thing, the primitive did another, and nothing was looking.
+ *
+ * The honest check is the bytes, not the components. Every animation in this
+ * product is triggered by a change, and a change is by definition something
+ * that happened after the document was sent. So:
+ *
+ *   **The server-rendered HTML of any route contains no `animate-` utility.**
+ *
+ * That is one assertion, it needs no browser, no clock and no hydration, and
+ * it is exactly the claim being made. Fetch the route over the wire (Playwright
+ * `request.get`, or `renderToStaticMarkup` on a primitive in a unit test) and
+ * match `FIRST_PAINT.utilityPattern` against the response body.
+ *
+ * A component that genuinely must animate an element the server rendered has
+ * misunderstood the system: make the element new when the event happens, and
+ * the animation runs from zero on an element that did not exist at first paint.
+ */
+export const FIRST_PAINT = {
+  /** The prefix every sanctioned keyframe reaches the DOM through. */
+  utilityPrefix: 'animate-',
+  /** Ready to lift: `new RegExp(FIRST_PAINT.utilityPattern)`. */
+  utilityPattern: 'class="[^"]*\\banimate-[a-z-]',
+  /**
+   * Empty, and it should stay empty. An entry here is a component claiming an
+   * entrance on a document nobody has interacted with yet.
+   */
+  allowedInServerMarkup: [] as readonly string[],
+} as const;

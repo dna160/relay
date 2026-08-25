@@ -8,6 +8,7 @@ import { updateLane } from '@/domain/lane/mutate';
 import { assertWritable } from '@/domain/engagement/lifecycle';
 import { toErrorResponse } from '@/lib/errors';
 import { requireAgency, type RouteContext } from '../../_guards';
+import { shadowed } from '../../_shadow';
 
 const schema = z.object({
   engagementId: z.string().uuid(),
@@ -26,7 +27,9 @@ export async function PATCH(
     const body = schema.parse(await request.json());
     const now = new Date();
 
-    const engagement = await loadEngagementDetail(db, body.engagementId, session.orgId, now);
+    const engagement = await shadowed('PATCH /api/lanes/[id]', session, body.engagementId, () =>
+      loadEngagementDetail(db, body.engagementId, session.orgId, now),
+    );
     assertWritable(engagement);
 
     const { engagementId: _engagementId, ...patch } = body;

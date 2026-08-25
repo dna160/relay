@@ -19,7 +19,13 @@ import { notVisible } from '@/domain/errors';
  */
 export async function loadActivityRows(exec: Executor, orgId: string): Promise<ActivityRow[]> {
   return exec
-    .select({ status: engagements.status, lastActivityAt: engagements.lastActivityAt })
+    .select({
+      status: engagements.status,
+      lastActivityAt: engagements.lastActivityAt,
+      // Phase 9: the counter scopes to an org id of its own accord (ADR-021),
+      // so the rows have to say which org they belong to.
+      orgId: engagements.orgId,
+    })
     .from(engagements)
     .where(and(eq(engagements.orgId, orgId), ne(engagements.status, 'purged')));
 }

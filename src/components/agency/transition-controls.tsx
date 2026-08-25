@@ -75,14 +75,40 @@ export function TransitionControls({
     );
   }
 
+  /**
+   * The confirmation line, rendered in every branch that can follow an action.
+   *
+   * It used to live only beside the buttons, which meant the one move that
+   * removes them — `Publish to client`, the whole point of the internal gate —
+   * was the only move in the product with no confirmation. The refresh
+   * replaced "Published to client" with "with the client · no agency move" a
+   * few hundred milliseconds after it appeared, so a screen reader on a polite
+   * region frequently never announced it at all. The copy rule (DESIGN-SYSTEM:
+   * the control that says "Publish to client" produces "Published to client")
+   * was being kept by `useAction` and then thrown away by this component.
+   */
+  const status = (
+    <p aria-live="polite" className={cn(mono, 'text-12', muted, 'min-h-4')}>
+      {failure ? `${failure.code} — ${failure.message}` : (done ?? '')}
+    </p>
+  );
+
   if (state === 'awaiting_client') {
     return (
-      <p className={cn(mono, 'text-12', muted)}>with the client · no agency move</p>
+      <div className="flex flex-col gap-1">
+        <p className={cn(mono, 'text-12', muted)}>with the client · no agency move</p>
+        {status}
+      </div>
     );
   }
 
   if (moves.length === 0) {
-    return <p className={cn(mono, 'text-12', muted)}>signed off · no further moves</p>;
+    return (
+      <div className="flex flex-col gap-1">
+        <p className={cn(mono, 'text-12', muted)}>signed off · no further moves</p>
+        {status}
+      </div>
+    );
   }
 
   return (
@@ -103,10 +129,23 @@ export function TransitionControls({
             size={compact ? 'sm' : 'md'}
             disabled={pending}
             onClick={async () => {
-              const result =
-                state === 'internal_review' && to === 'awaiting_client'
-                  ? await publish.run(actionDoneLabel(to), cardId, { engagementId })
-                  : await move.run(actionDoneLabel(to), cardId, { engagementId, to });
+              const throughTheGate = state === 'internal_review' && to === 'awaiting_client';
+              /*
+                Clear the *other* action before running this one.
+
+                There are two `useAction`s here and one line to report them in,
+                read as `move.done ?? publish.done`. `run()` clears its own
+                state, not its sibling's, so a card that went to internal review
+                and was then published showed "Sent to internal review" — the
+                earlier action's confirmation, still non-null, shadowing the
+                later one. The publish was correct; only the sentence about it
+                was a round out of date, which is the worst kind of wrong for a
+                line whose whole job is to say what just happened.
+              */
+              (throughTheGate ? move : publish).reset();
+              const result = throughTheGate
+                ? await publish.run(actionDoneLabel(to), cardId, { engagementId })
+                : await move.run(actionDoneLabel(to), cardId, { engagementId, to });
               if (result.ok) router.refresh();
             }}
           >
@@ -114,9 +153,7 @@ export function TransitionControls({
           </Button>
         ))}
       </div>
-      <p aria-live="polite" className={cn(mono, 'text-12', muted, 'min-h-4')}>
-        {failure ? `${failure.code} — ${failure.message}` : (done ?? '')}
-      </p>
+      {status}
     </div>
   );
 }

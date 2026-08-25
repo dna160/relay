@@ -12,6 +12,7 @@ import { loadShelf } from '@/db/queries/shelf';
 import { assertReadable } from '@/domain/engagement/lifecycle';
 import { toErrorResponse } from '@/lib/errors';
 import { requireAgency, type RouteContext } from '../../../_guards';
+import { shadowed } from '../../../_shadow';
 
 export async function GET(
   _request: Request,
@@ -20,7 +21,9 @@ export async function GET(
   try {
     const session = await requireAgency();
     const { id } = await context.params;
-    const engagement = await loadEngagementDetail(db, id, session.orgId, new Date());
+    const engagement = await shadowed('GET /api/engagements/[id]/shelf', session, id, () =>
+      loadEngagementDetail(db, id, session.orgId, new Date()),
+    );
     // A purged engagement is 410 on a read too, so the caller reaches the
     // certificate instead of an empty workspace.
     assertReadable(engagement);

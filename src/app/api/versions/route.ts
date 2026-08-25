@@ -19,6 +19,7 @@ import { notVisible } from '@/domain/errors';
 import { recordVersion } from '@/domain/version/record-version';
 import { toErrorResponse } from '@/lib/errors';
 import { requireAgency } from '../_guards';
+import { shadowed } from '../_shadow';
 
 const schema = z
   .object({
@@ -38,7 +39,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     const body = schema.parse(await request.json());
     const now = new Date();
 
-    const engagement = await loadEngagementDetail(db, body.engagementId, session.orgId, now);
+    const engagement = await shadowed('POST /api/versions', session, body.engagementId, () =>
+      loadEngagementDetail(db, body.engagementId, session.orgId, now),
+    );
     assertWritable(engagement);
     if (!(await cardBelongsToEngagement(db, body.cardId, engagement.id))) {
       throw notVisible('Card not found');

@@ -36,6 +36,13 @@
       "when": 1787654422818,
       "tag": "0004_approval_survives_erasure",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1787667872457,
+      "tag": "0005_identity_and_tenancy_graph",
+      "breakpoints": true
     }
   ]
 }

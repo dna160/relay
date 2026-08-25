@@ -10,10 +10,11 @@
 import { eq } from 'drizzle-orm';
 import { engagements, organizations } from '@/db/schema';
 import type { Database } from '@/db/types';
+import { grantOrgMembersOnCreate } from '../access/grant-on-create';
 import { assertCanOpenEngagement, type PlanGateResult } from '../plan/gate';
 import { notVisible } from '../errors';
 import { createEngagement, type EngagementRow } from './lifecycle';
-import type { ActivityRow } from './count-active';
+import type { OrgScopedActivityRow } from './count-active';
 
 export interface OpenEngagementInput {
   orgId: string;
@@ -48,12 +49,18 @@ export async function openEngagement(
      * active belongs to `countActiveEngagements()` and to nothing else (INV-8);
      * a `WHERE status = 'active'` here would be a second definition in disguise.
      */
-    const rows: ActivityRow[] = await tx
-      .select({ status: engagements.status, lastActivityAt: engagements.lastActivityAt })
+    const rows: OrgScopedActivityRow[] = await tx
+      .select({
+        status: engagements.status,
+        lastActivityAt: engagements.lastActivityAt,
+        orgId: engagements.orgId,
+      })
       .from(engagements)
       .where(eq(engagements.orgId, input.orgId));
 
-    const gate = assertCanOpenEngagement(org.plan, rows, now);
+    // The org id is named, not implied by the query above (ADR-021): the plan
+    // limit belongs to the organization, and the counter filters to it itself.
+    const gate = assertCanOpenEngagement(input.orgId, org.plan, rows, now);
 
     const engagement = await createEngagement(
       tx,
@@ -69,6 +76,14 @@ export async function openEngagement(
       },
       now,
     );
+
+    /**
+     * Phase 9. Keep the v1.1 permission graph true for a project that did not
+     * exist when the backfill ran — see `grantOrgMembersOnCreate`. It grants,
+     * it never decides, and it is inside the same transaction as the insert so
+     * a project can never exist without the memberships it implies.
+     */
+    await grantOrgMembersOnCreate(tx, input.orgId, engagement.id, now);
 
     return { engagement, gate };
   });

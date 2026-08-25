@@ -20,6 +20,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
+import { runBackfill } from './backfill/identity-graph';
 import {
   approvals as approvalsTable,
   assetVersions,
@@ -90,6 +91,19 @@ const TRUNCATE = sql`
     auth_sessions,
     auth_verification_tokens,
     users,
+    -- Phase 9's permission graph. Truncating organizations would cascade into
+    -- most of these, but they are listed explicitly for the same reason the
+    -- purge worker spells out its deletes: what a reset clears should be
+    -- readable here, not inferred from foreign keys. The shadow ledger is
+    -- cleared too -- a seeded suite that inherits yesterday's disagreements
+    -- reports a clean streak that is not real.
+    access_shadow_disagreements,
+    project_memberships,
+    org_memberships,
+    team_members,
+    teams,
+    identities,
+    accounts,
     organizations
   RESTART IDENTITY CASCADE
 `;
@@ -338,6 +352,19 @@ export async function resetToFixtures(db: Database, now: Date): Promise<SeedResu
         })
         .where(eq(engagementsTable.id, e.id));
     }
+
+    /**
+     * Phase 9. The fixtures describe a v1 world — `users`, `organizations`,
+     * `engagements` — and the shadow harness compares that world against the
+     * v1.1 graph on every request. Without this, every seeded run would record
+     * `account_not_backfilled` against every endpoint it touched, and the
+     * disagreement dashboard would be measuring the seed rather than the
+     * migration.
+     *
+     * Runs inside the same transaction as the seed, so there is no window in
+     * which the fixtures exist and the graph does not.
+     */
+    await runBackfill(tx, now);
   });
 
   return {

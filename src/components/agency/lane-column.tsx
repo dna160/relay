@@ -59,11 +59,23 @@ export function LaneColumn({
           isDropTarget && 'outline-dashed outline-1 outline-offset-2 outline-rule-strong',
         )}
       >
-        {lane.cards.length === 0 ? (
+        {/*
+          The empty state is rendered *above* the children, never instead of
+          them.
+
+          This was a ternary, and the branch it took on an empty lane dropped
+          `children` — which is where the board puts `AddCardForm`. So a lane
+          with no cards said "Add the first deliverable" and rendered no control
+          that could add one: the first card could not be created on a
+          newly-stamped board at all, which is the first thing anyone does after
+          making one. The instruction and the affordance it names now sit
+          together, which is also the only arrangement in which the sentence
+          means anything.
+        */}
+        {lane.cards.length === 0 && (
           <EmptyState instruction="Nothing here yet. Add the first deliverable." />
-        ) : (
-          children
         )}
+        {children}
       </div>
     </section>
   );

@@ -66,6 +66,7 @@ import {
   type PurgeStep,
   type PurgeStepStatus,
 } from '@/db/schema';
+import { destroyProjectAccess } from '@/domain/access/purge-project-access';
 import { clientTokenIdentifierPrefixes } from '@/domain/engagement/client-token-identity';
 import {
   canSignCertificates,
@@ -679,6 +680,19 @@ async function destroyContent(tx: Executor, engagementId: string): Promise<void>
   await tx.delete(lanes).where(eq(lanes.engagementId, engagementId));
   await tx.delete(referenceFiles).where(eq(referenceFiles.engagementId, engagementId));
   await tx.delete(clientContacts).where(eq(clientContacts.engagementId, engagementId));
+
+  /**
+   * Phase 9's two engagement-scoped tables in the permission graph.
+   *
+   * `project_memberships` is who could reach this workspace; leaving it would
+   * mean the purge kept a list of exactly that, for a workspace it certifies as
+   * destroyed. `accounts` are untouched by design — the person outlasts the
+   * project (DELIVERY-PLAN §IV) — so this deletes the edge, never the node.
+   *
+   * `access_shadow_disagreements` carries the same ids in its recorded inputs.
+   * A diagnostic table does not get an exemption from a deletion promise.
+   */
+  await destroyProjectAccess(tx, engagementId);
 
   /**
    * The client contact's email address survives in `auth_verification_tokens`

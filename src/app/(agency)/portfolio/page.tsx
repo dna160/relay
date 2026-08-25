@@ -20,6 +20,8 @@ import { EngagementRow } from '@/components/agency/engagement-row';
 import { EmptyState } from '@/components/agency/empty-state';
 import { ErrorPanel } from '@/components/agency/error-panel';
 import { NewEngagementForm } from '@/components/agency/new-engagement-form';
+import { PlanUsageRecord } from '@/components/agency/plan-usage-record';
+import { derivePlanUsage } from '../_lib/plan-usage';
 import { serverContext } from '../_lib/server-context';
 
 export const metadata: Metadata = { title: 'Portfolio · Relay' };
@@ -43,6 +45,18 @@ export default async function PortfolioPage() {
    */
   if (!engagements.ok && engagements.code === 'UNAUTHENTICATED') redirect('/onboarding');
 
+  const rows = engagements.ok ? engagements.data.engagements : [];
+
+  /**
+   * The plan block if the route states it, derived from these same rows if it
+   * does not yet (see `_lib/plan-usage.ts`). Either way it is one evaluation of
+   * `evaluatePlanGate()` — the function the 402 is thrown from — so the number
+   * on this screen and the number at the button cannot drift (INV-8).
+   */
+  const planUsage = engagements.ok
+    ? (engagements.data.plan ?? (await derivePlanUsage(rows, new Date())))
+    : null;
+
   return (
     <div className="flex flex-col gap-10">
       <section aria-labelledby="attention-heading">
@@ -50,7 +64,23 @@ export default async function PortfolioPage() {
           <h1 id="attention-heading" className={cn(display, 'text-28 text-ink')}>
             Needs a decision
           </h1>
-          <NewEngagementForm templates={templates.ok ? templates.data : []} />
+          {/*
+            The usage record sits under the control it constrains rather than
+            down beside the engagement list. What it is for is the moment before
+            someone presses New engagement, not an audit of the portfolio — and
+            when the form is open it is still on screen, above the two fields
+            being filled in.
+          */}
+          <div className="flex flex-col items-start gap-2">
+            <NewEngagementForm templates={templates.ok ? templates.data : []} />
+            {planUsage && (
+              <PlanUsageRecord
+                plan={planUsage.plan}
+                activeCount={planUsage.activeCount}
+                limit={planUsage.limit}
+              />
+            )}
+          </div>
         </div>
         <p className={cn('mt-1 max-w-prose text-14', muted)}>
           Ranked by who is holding the work, not by what is due soonest.
@@ -71,11 +101,11 @@ export default async function PortfolioPage() {
         <div className="mt-3">
           {!engagements.ok ? (
             <ErrorPanel failure={engagements} />
-          ) : engagements.data.length === 0 ? (
+          ) : rows.length === 0 ? (
             <EmptyState instruction="No engagements yet. Create the first one when a contract is signed." />
           ) : (
             <ul>
-              {engagements.data.map((e) => (
+              {rows.map((e) => (
                 <EngagementRow key={e.id} engagement={e} />
               ))}
             </ul>
