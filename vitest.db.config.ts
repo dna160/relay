@@ -31,6 +31,7 @@ export default defineConfig({
     include: [
       'tests/unit/failure-modes.spec.ts',
       'tests/invariants/inv-07-purge-leaves-certificate.spec.ts',
+      'tests/invariants/inv-03-approval-binds-version.db.spec.ts',
     ],
     /**
      * A database of this run's own, created and dropped by `db-isolation.ts`.

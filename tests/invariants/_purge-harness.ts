@@ -183,10 +183,17 @@ export async function seedPurgeable(
       );
     }
 
+    /**
+     * `decided_by_side` is written explicitly, never inferred from which FK is
+     * populated. Inferring it is precisely what stops working the moment an
+     * erasure nulls the FK — which is the whole reason the column exists
+     * (migration 0004).
+     */
     await c.query(
       `INSERT INTO approvals
-         (id, asset_version_id, decision, decided_by_contact_id, version_sha256, note)
-       VALUES ($1, $2, 'changes_requested', $3, $4, 'the blue is wrong')`,
+         (id, asset_version_id, decision, decided_by_contact_id, decided_by_side,
+          version_sha256, note)
+       VALUES ($1, $2, 'changes_requested', $3, 'client', $4, 'the blue is wrong')`,
       [id.approval, id.v1, id.contact, sha],
     );
     await c.query(
@@ -430,25 +437,22 @@ export function cleanStore(root: string): void {
 /**
  * Removes every row this harness created, leaving the database as it found it.
  *
- * `approvals` has to go **first and by hand**, and that is not tidiness. The
- * cascade from `engagements` reaches `client_contacts`, whose delete sets
- * `approvals.decided_by_contact_id` to NULL, which leaves an approval with
- * neither decider and trips the `approvals_one_decider` CHECK. So
- * `DELETE FROM engagements` fails outright on any engagement whose client ever
- * recorded a decision. See DEFECT: cascade-vs-CHECK, reported against
- * `src/db/schema/assets.ts`. This teardown works around it; nothing in the
- * product can.
+ * This used to delete `approvals` by hand first, to work around a defect: the
+ * cascade from `engagements` reached `client_contacts`, whose delete nulled
+ * `approvals.decided_by_contact_id`, leaving a row with neither decider and
+ * tripping the old `num_nonnulls(...) = 1` CHECK. `DELETE FROM engagements`
+ * failed outright on any engagement whose client had ever decided anything.
+ *
+ * Migration 0004 fixed it properly — an approval is allowed to become anonymous
+ * and `decided_by_side` carries the fact that anonymity would have destroyed —
+ * so the workaround is gone and the cascade does the work. That the cascade
+ * now completes is asserted in `inv-03`, not left to this function silently
+ * succeeding.
  */
 export async function dropSeed(pool: pg.Pool, seed: SeededEngagement): Promise<void> {
   await pool.query('DELETE FROM purge_certificates WHERE engagement_id = $1', [seed.engagementId]);
   await pool.query('DELETE FROM purge_manifest WHERE engagement_id = $1', [seed.engagementId]);
   await pool.query('DELETE FROM audit_log WHERE engagement_id = $1', [seed.engagementId]);
-  await pool.query(
-    `DELETE FROM approvals WHERE asset_version_id IN (
-       SELECT v.id FROM asset_versions v JOIN cards k ON k.id = v.card_id
-        WHERE k.engagement_id = $1)`,
-    [seed.engagementId],
-  );
   await pool.query('DELETE FROM engagements WHERE id = $1', [seed.engagementId]);
   await pool.query('DELETE FROM organizations WHERE id = $1', [seed.orgId]);
 }

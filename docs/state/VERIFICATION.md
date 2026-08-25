@@ -60,7 +60,7 @@ inside a test that would have passed either way.
 | | ↳ at the query layer, in compiled SQL | 🟢 live | `visibility.spec.ts > INV-1 at the query layer, against compiled SQL` — 11 cases. Runs each client-reachable read against a fake driver and asserts the emitted predicate, so a read that forgets `clientScope()` fails on the SQL rather than on a projection shape. |
 | | ↳ the two pre-session reads | 🟢 live | `visibility.spec.ts > INV-1 the two reads that happen before a session exists` — 6 cases. `loadLinkableEngagement` and `findContact` reach exactly one table each and return three thin columns between them. |
 | **INV-2** | `cards.state` changes only via the state machine | 🟢 live, **and no longer escapable by line-wrapping** | `tests/invariants/inv-02-state-machine-sole-writer.spec.ts` — 3 structural scans, now reading **statements** rather than physical lines. The scan wanted `.set({` and `state:` on one line; the house style puts them on two, so a wrapped write was invisible. Negative-tested in `tests/unit/invariant-scans-are-not-escapable.spec.ts` (4 planted shapes, plus the proof the old line-based scan missed them). Behaviour: `tests/unit/state-machine.spec.ts` (15 cases). Concurrency: `tests/unit/failure-modes.spec.ts > two agency members transitioning one card cannot both win`. |
-| **INV-3** | An approval binds one immutable version and stores its sha256 | 🟢 live (structural + schema) | `tests/invariants/inv-03-approval-binds-version.spec.ts` — 9 live cases: the copy, the sole writer, no re-derivation at read time, no `card_id` column, both CHECK constraints in the migration. |
+| **INV-3** | An approval binds one immutable version and stores its sha256 | 🟢 live (structural) **+ live database** | `inv-03-approval-binds-version.spec.ts` — 11 portable cases, and `inv-03-approval-binds-version.db.spec.ts` — 10 cases against a running Postgres (`npm run test:db`). The decider rule was being asserted by reading frozen migration text; it is now asserted with hostile inserts and `pg_constraint`. See DEFECT-10. |
 | | ↳ under a live database | ⬜ skipped | Same file, `INV-3 under a live database` — 4 cases. **Phase 3** (needs Postgres). |
 | **INV-4** | `asset_versions` is append-only | 🟢 live (structural + schema) | `tests/invariants/inv-04-versions-append-only.spec.ts` — 7 live cases: no delete outside the purge worker, only the two set-once columns updatable, hash/size/key never rewritten, `UNIQUE (card_id, version_no)`. |
 | | ↳ under a live database | ⬜ skipped | Same file, `INV-4 under a live database` — 3 cases. **Phase 3 / Phase 6.** |
@@ -166,13 +166,13 @@ Nine of ten suites now execute. At Phase 0 handover it was four.
 
 | Job | Enforces | Blocking now? |
 |---|---|---|
-| `verify (node 22)` / `verify (node 24)` | `npm run verify:all` — typecheck, lint, unit, invariants, **and `next build`**. The build is in the gate because a `'use server'` file exporting a non-async const passes typecheck and lint and fails page-data collection; only the build caught it. | Yes — **green**. 517 live assertions (398 unit, 119 invariant), plus 30 more under `test:db` — 547 in total, up from 474 at the start of this sweep. |
+| `verify (node 22)` / `verify (node 24)` | `npm run verify:all` — typecheck, lint, unit, invariants, **and `next build`**. The build is in the gate because a `'use server'` file exporting a non-async const passes typecheck and lint and fails page-data collection; only the build caught it. | Yes — **green**. 519 live assertions (398 unit, 121 invariant), plus 40 more under `test:db` — 559 in total, up from 474 at the start of this sweep. |
 | `invariant contract` | All ten specs exist; every skipped suite names its phase; at Phase 8 none are skipped; nothing removed from `tests/invariants` without the `invariant-change` label | Yes — green |
 | `build` | `next build` succeeds | Yes |
 | `env registry` | Every `process.env` read in `src/` is in `.env.example`; every `.env.example` variable is in the runbook **and is set by `.railway/railway.ts`**; no `E2E_` variable reaches a deployed environment; no real secret is committed | Yes — **red on one line**: `NEXT_PUBLIC_APP_URL` (F7). `PGPOOL_MAX` was fixed by B8. |
 | `e2e` | Playwright both projects; migrations idempotent; traces uploaded on failure | Yes — see §4 for the run status |
 | `purge --plan smoke test` | A dry run prints a manifest and changes no row counts | Yes — Phase 6 landed the CLI, so this is now a real gate |
-| `database-backed suites` | `npm run test:db` — INV-7's five SIGKILLs and the failure-mode matrix, against the job's Postgres. Creates and drops its own database (`tests/db-isolation.ts`) so no other suite can truncate a table mid-assertion | Yes — **green**, 30 assertions |
+| `database-backed suites` | `npm run test:db` — INV-7's five SIGKILLs, INV-3's hostile inserts, and the failure-mode matrix, against the job's Postgres. Creates and drops its own database (`tests/db-isolation.ts`) so no other suite can truncate a table mid-assertion | Yes — **green**, 40 assertions |
 | `client board FCP budget` | The ARCHITECTURE NFR, measured on a production build over throttled Slow 4G with 4× CPU. Fails over 1500 ms | Yes — **green at 528 ms median**, 972 ms headroom |
 
 The env-registry gate gained a fourth link this round: `.env.example` →
@@ -465,6 +465,51 @@ answered". A whole run was lost to it, and it did not look like a broken server
 — it looked like forty broken tests. `tests/e2e-preflight.ts` now gates the run
 on `/api/health` reporting `db: ok`, and the `webServer.url` probe points at the
 health endpoint rather than the root.
+
+**DEFECT-10 — INV-3 asserted the decider rule against frozen migration text.**
+*Owner: QA. **Fixed this round.*** The fourth instance of one shape.
+
+`createTableBody('approvals')` reads `CREATE TABLE` out of migration `0002`. A
+migration is history — its text cannot change — so the assertion pinned what the
+schema *was*, not what rows are checked against. When migration `0004` replaced
+`num_nonnulls(contact, user) = 1`, the assertion went on passing while describing
+a rule the product had deliberately abandoned. It would also have passed with the
+live constraint dropped entirely.
+
+Negative-tested on a throwaway database:
+
+| | constraint present | constraint dropped |
+|---|---|---|
+| side disagrees with decider | refused by `approvals_one_decider` | **ACCEPTED** |
+| two deciders named | refused by `approvals_one_decider` | **ACCEPTED** |
+| `pg_constraint` enumeration | both CHECKs | one CHECK |
+| **the old migration-text assertion** | passes | **passes** |
+
+Now split by who actually owns each half. The **database** owns *at most one
+decider, agreeing with its side* — asserted by handing Postgres eight rows it
+must refuse and one it must accept, plus a `pg_constraint` enumeration that
+notices a drop. `recordDecision()` owns *exactly one at write time*, which the
+database cannot own: after an erasure it genuinely cannot distinguish "never had
+a decider" from "had one, and they were erased". That half stays in the portable
+suite as a scan that all three columns derive from one discriminated actor.
+
+An invariant that claims the database refuses something the database does not
+refuse is worse than no invariant, because it is believed.
+
+**DEFECT-11 — the seed infers `decided_by_side` instead of reading it.**
+*Owner: back-end — `src/db/test-support.ts:287`.* **Severity: low.**
+
+```ts
+decidedBySide: a.decidedByContactId !== null ? 'client' : 'agency',
+```
+
+Deriving the side from which FK is populated is precisely the derivation
+migration `0004` exists to stop depending on. It is correct today only because
+no fixture approval is anonymous. `tests/fixtures/board.ts` now carries
+`decidedBySide` explicitly, so this should read `a.decidedBySide`. Until it
+does, the fixture's stated side is written and then ignored. INV-3's portable
+half asserts the fixture's side agrees with its ids, so the two cannot drift
+into disagreement silently.
 
 ### Open — carried from earlier rounds
 

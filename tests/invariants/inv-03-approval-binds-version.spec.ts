@@ -13,7 +13,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { linesMatching, sourceFiles } from './_source';
-import { createTableBody, hasMigrations } from './_sql';
+import { allMigrationSql, createTableBody, hasMigrations } from './_sql';
 import { approvals, versions } from '@tests/fixtures';
 
 const RECORDER = 'src/domain/approval/record-decision.ts';
@@ -78,10 +78,79 @@ describe('INV-3 approvals bind to an immutable version hash', () => {
     );
   });
 
-  it('the database refuses an approval with two deciders or none', () => {
-    const body = createTableBody('approvals');
-    if (body === null) return;
-    expect(body).toMatch(/num_nonnulls\([^)]*decided_by_contact_id[^)]*decided_by_user_id[^)]*\)\s*=\s*1/i);
+  /**
+   * The decider rule moved out of this file, and the move is the point.
+   *
+   * This case used to read `num_nonnulls(contact, user) = 1` out of migration
+   * `0002`'s `CREATE TABLE`. A migration is history: its text cannot change, so
+   * the assertion pinned what the schema *was* and would have kept passing if
+   * the live constraint were altered — or dropped entirely. Migration `0004`
+   * then replaced that CHECK, and the old assertion went on passing while
+   * describing a rule the product had deliberately abandoned.
+   *
+   * That is the same shape as the other three escapes found this build: the
+   * guard reads something narrower than the invariant claims. So the rule is
+   * now asserted against `pg_constraint` and by handing Postgres rows it must
+   * refuse — `inv-03-approval-binds-version.db.spec.ts`, `npm run test:db`.
+   *
+   * What stays here is the half the database does not own and cannot: *exactly*
+   * one decider at write time. After an erasure Postgres cannot tell "never had
+   * a decider" from "had one, and they were erased", so that half belongs to
+   * `recordDecision()` — and this is the scan that keeps it there.
+   */
+  it('the recorder derives all three decider columns from one actor', () => {
+    const recorder = sourceFiles().find((f) => f.path === RECORDER);
+    expect(recorder, `${RECORDER} is missing`).toBeDefined();
+    if (!recorder) return;
+
+    // One discriminated actor in, three columns out. Two independent reads of
+    // the actor is how a row acquires a side that disagrees with its id.
+    expect(recorder.text, 'decided_by_side must come from the actor discriminant').toMatch(
+      /decidedBySide\s*:\s*\w+\.actor\.kind/,
+    );
+    expect(recorder.text, 'the contact id must be conditional on the actor kind').toMatch(
+      /decidedByContactId\s*:[^,]*actor\.kind\s*===\s*'client'/,
+    );
+    expect(recorder.text, 'the user id must be conditional on the actor kind').toMatch(
+      /decidedByUserId\s*:[^,]*actor\.kind\s*===\s*'agency'/,
+    );
+  });
+
+  it('the current decider constraint is in the migration set, and the old one is gone', () => {
+    if (!hasMigrations()) return;
+    const sql = allMigrationSql();
+    // Not a substitute for the live check — a migration that was never applied
+    // says nothing. This catches the other direction: a live database patched
+    // by hand, with no migration behind it.
+    expect(sql, 'no migration establishes the side/decider agreement rule').toMatch(
+      /decided_by_side['"\s]*=\s*'client'[\s\S]{0,200}decided_by_user_id[\s\S]{0,40}IS NULL/i,
+    );
+    expect(sql, 'decided_by_side must be NOT NULL').toMatch(
+      /ALTER COLUMN "decided_by_side" SET NOT NULL/i,
+    );
+    expect(
+      sql,
+      'the impossible num_nonnulls rule is still being established somewhere',
+    ).toMatch(/DROP CONSTRAINT "approvals_one_decider"/i);
+  });
+
+  it('every fixture approval states its side rather than implying it', () => {
+    for (const approval of approvals) {
+      expect(
+        approval.decidedBySide,
+        `approval ${approval.id} does not say which side decided`,
+      ).toMatch(/^(client|agency)$/);
+      // And the side agrees with whichever id it carries — the same rule the
+      // database enforces, checked against the fixture the seed uses.
+      if (approval.decidedBySide === 'client') {
+        expect(approval.decidedByUserId, `${approval.id} is client-side but names a user`).toBeNull();
+      } else {
+        expect(
+          approval.decidedByContactId,
+          `${approval.id} is agency-side but names a contact`,
+        ).toBeNull();
+      }
+    }
   });
 
   it('the domain rejects a note-less changes_requested before the constraint does', () => {

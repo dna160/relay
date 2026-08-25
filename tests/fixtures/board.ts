@@ -200,6 +200,17 @@ export interface ApprovalRow {
   /** Copied from the version at decision time and never re-read (INV-3). */
   versionSha256: string;
   note: string | null;
+  /**
+   * Which side decided, stated rather than inferred.
+   *
+   * It could be derived from which of the two ids is non-null — and that is
+   * exactly the derivation migration 0004 exists to stop relying on. Both FKs
+   * are `ON DELETE SET NULL`, so after an erasure the row has no id to infer
+   * from, and "the client approved this" and "the agency signed it off" become
+   * the same empty row. The fixture spells it out for the same reason the
+   * column does.
+   */
+  decidedBySide: 'client' | 'agency';
   ip: string | null;
   userAgent: string | null;
   decidedAt: Date;
@@ -212,6 +223,7 @@ export const approvals: readonly ApprovalRow[] = [
     decision: 'changes_requested',
     decidedByContactId: CONTACT.active,
     decidedByUserId: null,
+    decidedBySide: 'client',
     versionSha256: SHA.v1,
     note: 'The logo reads too small at the bottom of the frame.',
     ip: '203.0.113.7',
@@ -224,6 +236,7 @@ export const approvals: readonly ApprovalRow[] = [
     decision: 'approved',
     decidedByContactId: CONTACT.active,
     decidedByUserId: null,
+    decidedBySide: 'client',
     versionSha256: SHA.signed,
     note: null,
     ip: '203.0.113.7',

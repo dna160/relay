@@ -284,7 +284,12 @@ export async function resetToFixtures(db: Database, now: Date): Promise<SeedResu
         decidedByUserId: a.decidedByUserId,
         // Derived rather than added to the fixture shape: the fixtures already
         // carry exactly one decider, so the side is not a new fact about them.
-        decidedBySide: a.decidedByContactId !== null ? ('client' as const) : ('agency' as const),
+        // The stated side, not one re-derived from which FK happens to be
+        // set. Migration 0004 exists precisely to stop that derivation being
+        // load-bearing: after an erasure both FKs are null and the side is the
+        // only thing left saying who decided. Deriving it here would be correct
+        // only for as long as no fixture approval is anonymous.
+        decidedBySide: a.decidedBySide,
         versionSha256: a.versionSha256,
         note: a.note,
         ip: a.ip,

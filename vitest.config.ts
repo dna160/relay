@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 const DB_BACKED = [
   'tests/unit/failure-modes.spec.ts',
   'tests/invariants/inv-07-purge-leaves-certificate.spec.ts',
+  'tests/invariants/inv-03-approval-binds-version.db.spec.ts',
 ];
 
 export default defineConfig({
