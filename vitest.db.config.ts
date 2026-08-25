@@ -32,6 +32,13 @@ export default defineConfig({
       'tests/unit/failure-modes.spec.ts',
       'tests/invariants/inv-07-purge-leaves-certificate.spec.ts',
     ],
+    /**
+     * A database of this run's own, created and dropped by `db-isolation.ts`.
+     * Sharing one with the e2e suite meant a seed's TRUNCATE could land between
+     * a purge's checkpoints, and the resulting failure looked like a purge bug
+     * rather than like two suites in one database.
+     */
+    globalSetup: ['tests/db-isolation.ts'],
     // Purge kills backends and reruns; concurrency here is a lie about the
     // system under test, and one database cannot serve two of these at once.
     fileParallelism: false,

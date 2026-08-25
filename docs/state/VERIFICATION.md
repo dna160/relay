@@ -8,7 +8,8 @@
 > behind it. This document is where that claim is either true or visibly not.
 > Read the **UNPROVEN** rows first; they are the whole point.
 
-**Generated at:** end of round 2. Phases 1–4 landed and parts of 5 pulled forward; Phases 6–8 outstanding.
+**Generated at:** end of the adversarial hardening sweep, after Phase 6. Phases 1–6 landed; 7–8 outstanding.
+**Live Postgres:** yes, at last. Most of what §4 listed as never-executed has now executed, and the rows that have not are named individually rather than as a category.
 **Owner:** QA. Update it in the same commit that changes what is provable.
 
 ## How to read a row
@@ -20,15 +21,26 @@
 - **UNPROVEN** — nothing currently proves it. The phase named is the one that
   must. A row that has been UNPROVEN across two phases is a row to argue about.
 
-## The four commands
+## The commands
 
 ```bash
 npm run verify:all    # verify + next build. THE HANDOVER GATE.
-npm run verify        # typecheck + lint + unit + invariants
+npm run verify        # typecheck + lint + unit + invariants. Portable: no infrastructure.
+npm run test:db       # INV-7 and the failure-mode matrix. Needs Postgres; makes its own database.
+npm run verify:db     # verify + test:db
 npm run test:e2e      # Playwright, both projects. Needs a running app and a database.
 node .github/scripts/check-invariant-skips.mjs     # the ten specs exist; skips name their phase
 node .github/scripts/check-env-registry.mjs        # env drift: src -> .env.example -> runbook -> .railway/railway.ts
+node .github/scripts/check-fcp-budget.mjs          # client board FCP on a throttled profile. Needs a production server.
 ```
+
+**Why `verify` no longer runs everything.** Two suites genuinely need a
+database and are written to fail loudly rather than skip when one is absent —
+a failure-mode matrix nobody interrupted proves nothing. Phase 0's exit
+condition is that `npm run verify` works on a fresh machine with nothing
+installed, so those two live in `vitest.db.config.ts` and run under
+`npm run test:db`. The skip is a named config rather than a silent branch
+inside a test that would have passed either way.
 
 ---
 
@@ -47,18 +59,18 @@ node .github/scripts/check-env-registry.mjs        # env drift: src -> .env.exam
 | | ↳ the client revision thread | 🟢 live | `visibility.spec.ts > INV-1 the client revision thread` — 8 cases; the comment thread gets its own, including the parent self-join that stops a public reply under an internal root from leaking. The three 404 paths (unpublished version, private lane, another engagement's version), their indistinguishability from each other, and the internal-note filter. |
 | | ↳ at the query layer, in compiled SQL | 🟢 live | `visibility.spec.ts > INV-1 at the query layer, against compiled SQL` — 11 cases. Runs each client-reachable read against a fake driver and asserts the emitted predicate, so a read that forgets `clientScope()` fails on the SQL rather than on a projection shape. |
 | | ↳ the two pre-session reads | 🟢 live | `visibility.spec.ts > INV-1 the two reads that happen before a session exists` — 6 cases. `loadLinkableEngagement` and `findContact` reach exactly one table each and return three thin columns between them. |
-| **INV-2** | `cards.state` changes only via the state machine | 🟢 live | `tests/invariants/inv-02-state-machine-sole-writer.spec.ts` — 3 structural scans over the whole tree. Behaviour: `tests/unit/state-machine.spec.ts` (15 cases). |
+| **INV-2** | `cards.state` changes only via the state machine | 🟢 live, **and no longer escapable by line-wrapping** | `tests/invariants/inv-02-state-machine-sole-writer.spec.ts` — 3 structural scans, now reading **statements** rather than physical lines. The scan wanted `.set({` and `state:` on one line; the house style puts them on two, so a wrapped write was invisible. Negative-tested in `tests/unit/invariant-scans-are-not-escapable.spec.ts` (4 planted shapes, plus the proof the old line-based scan missed them). Behaviour: `tests/unit/state-machine.spec.ts` (15 cases). Concurrency: `tests/unit/failure-modes.spec.ts > two agency members transitioning one card cannot both win`. |
 | **INV-3** | An approval binds one immutable version and stores its sha256 | 🟢 live (structural + schema) | `tests/invariants/inv-03-approval-binds-version.spec.ts` — 9 live cases: the copy, the sole writer, no re-derivation at read time, no `card_id` column, both CHECK constraints in the migration. |
 | | ↳ under a live database | ⬜ skipped | Same file, `INV-3 under a live database` — 4 cases. **Phase 3** (needs Postgres). |
 | **INV-4** | `asset_versions` is append-only | 🟢 live (structural + schema) | `tests/invariants/inv-04-versions-append-only.spec.ts` — 7 live cases: no delete outside the purge worker, only the two set-once columns updatable, hash/size/key never rewritten, `UNIQUE (card_id, version_no)`. |
 | | ↳ under a live database | ⬜ skipped | Same file, `INV-4 under a live database` — 3 cases. **Phase 3 / Phase 6.** |
 | **INV-5** | Every transition writes a possession row; the clock derives from it alone | 🟢 live | `tests/invariants/inv-05-possession-from-transitions.spec.ts` — 7 live cases: one insert in the sole persister, nothing else writes the table, no denormalised column in schema *or* migrations, totals recompute within 1s, sign-off stops the clock, the clock never reads `Date.now()`. |
-| **INV-6** | A client session is scoped to exactly one engagement | 🟢 live (type + structural + schema) | `tests/invariants/inv-06-client-session-single-engagement.spec.ts` — 8 live cases: the `Session` union shape, no engagement list anywhere, no client route reading an engagement id, `UNIQUE (engagement_id, email)` present and no global unique on email. |
+| **INV-6** | A client session is scoped to exactly one engagement | 🟢 live (type + structural + schema) | `tests/invariants/inv-06-client-session-single-engagement.spec.ts` — 11 live cases. The retention sweeps are excluded from the list scan; the exclusion is paid for by three tests, not one. **Audited this round and strengthened** — see §5, *the exclusion was running unbacked*. |
 | | ↳ at the session boundary | ⬜ skipped | Same file, `INV-6 at the session boundary` — 3 cases. **Phase 4.** |
-| **INV-7** | Purge is total and leaves exactly one certificate | ⬜ skipped | `tests/invariants/inv-07-purge-leaves-certificate.spec.ts` — all 6 cases. **Phase 6.** The only invariant with nothing live. |
+| **INV-7** | Purge is total and leaves exactly one certificate | 🟢 **live — all six conditions, none by reasoning** | `tests/invariants/inv-07-purge-leaves-certificate.spec.ts` — 16 cases (5 structural, 11 against a live Postgres with real bytes on a real filesystem). **Five real SIGKILLs**, each parked deterministically rather than raced. See §4A. Run: `npm run test:db`. |
 | **INV-8** | Active count is one function; billing and expiry never diverge | 🟢 live | `tests/invariants/inv-08-single-active-count.spec.ts` — 9 live cases, incl. `the two callers move together when the clock does` (counted + swept always equals running, at five clock offsets). |
-| **INV-9** | Business logic lives in `src/domain/` | 🟢 live | `tests/invariants/inv-09-domain-purity.spec.ts` — 3 structural scans. Also an ESLint rule; the test is what catches someone disabling the rule inline. |
-| **INV-10** | File bytes never traverse the app server | 🟢 live | `tests/invariants/inv-10-no-bytes-through-app.spec.ts` — 3 structural scans. End to end: `tests/e2e/agency/engagement-flow.spec.ts > a download redirects rather than streaming bytes` and the PUT-origin assertion in `create -> stamp -> upload -> publish`. Both **red** until routes exist. |
+| **INV-9** | Business logic lives in `src/domain/` | 🟢 live, **and the surface is no longer just `route.ts`** | `tests/invariants/inv-09-domain-purity.spec.ts` — 5 scans. The write scan covered `route.ts` only; a server action in `actions.ts` or a server component in `page.tsx` reaches the database on identical terms and was invisible. Now `route|actions|page|layout`, read as statements. A raw-SQL scan was added; the health probe is excluded and that exclusion is paid for by a test pinning it to a table-free `select 1`. Also an ESLint rule; the test is what catches someone disabling the rule inline. |
+| **INV-10** | File bytes never traverse the app server | 🟢 live, **and no longer a rule about a variable name** | `tests/invariants/inv-10-no-bytes-through-app.spec.ts` — 4 scans. Intake was pinned to a receiver called `req`/`request`: renaming the handler parameter to `r` let a 5 GB upload through a 512 MB container with the guard green. Egress scanned `src/app/` only, so the same stream in `src/lib/storage.ts` was invisible — it now covers `app`, `lib` and `workers`, and `storage.ts` is asserted to presign rather than fetch. Negative-tested against 6 planted intake shapes. |
 
 **Command for the whole column:** `npm run test:invariants`
 **Skip audit:** `node .github/scripts/check-invariant-skips.mjs`
@@ -124,10 +136,10 @@ Nine of ten suites now execute. At Phase 0 handover it was four.
 
 | EXIT condition | Proven by |
 |---|---|
-| INV-7 unskipped and passing, including idempotency | ⬜ **skipped.** `tests/invariants/inv-07-purge-leaves-certificate.spec.ts`, 6 cases. **Phase 6.** |
-| A purge killed at each step and rerun yields exactly one certificate | ⬜ skipped — `tests/unit/retention-dates.spec.ts > purge idempotency and resumability`, 5 cases naming each checkpoint. Operational procedure: `docs/RUNBOOK.md` §6. |
-| No purge path runs without four warning rows already recorded | ⬜ skipped — `retention-dates.spec.ts > the retention worker > refuses to purge an engagement that has not been warned four times`. |
-| `purge:plan` leaves every row count and object count unchanged | **CI job `purge --plan smoke test`** — snapshots `pg_stat_user_tables` before and after, requires the manifest to be non-empty, and diffs the counts. Self-skips with a note until `src/workers/purge-cli.ts` exists, then becomes a real gate with no further edit. |
+| INV-7 unskipped and passing, including idempotency | 🟢 **PROVEN.** `inv-07-purge-leaves-certificate.spec.ts` — 16 cases, `npm run test:db`. Content census across all ten content tables goes to zero; the tombstone survives marked `purged`; the four warnings, the archive record and `purge.completed` survive; an ordinary audit row does not. |
+| A purge killed at each step and rerun yields exactly one certificate | 🟢 **PROVEN, by killing it.** Five SIGKILLs, each rerun: `manifest`, `objects`, mid-`objects` (half the bytes gone), **inside the content transaction**, and after the certificate but before the tombstone. Every rerun ends at exactly one certificate, zero content rows, zero objects, four `done` checkpoints. See §4A for how each kill is made deterministic. |
+| No purge path runs without four warning rows already recorded | 🟢 **PROVEN twice.** Three warnings on record → refuses, destroys nothing, writes no checkpoint. And the *inner* guard proved load-bearing: the purge is parked between the outer check and the transaction, the warnings are deleted while it waits, and the content transaction refuses and rolls back. Removing the inner check as redundant would destroy an engagement nobody warned. |
+| `purge:plan` leaves every row count and object count unchanged | 🟢 **PROVEN two ways.** CI job `purge --plan smoke test` diffs `pg_stat_user_tables` around a real run. And `inv-07 > --plan prints a manifest and destroys nothing` spawns the real CLI and asserts the content census, the bucket listing, the certificate count *and* that no checkpoint row was written — a dry run writes nothing at all, not even bookkeeping. |
 | The 30/60 timeline and the four warning offsets | 🟢 live now — `tests/unit/retention-dates.spec.ts`, 19 live cases: 30/60 arithmetic, offsets `[0,14,23,29]`, gaps `[14,9,6]` closing as the deadline approaches, a full day before the purge, retaining plans null rather than distant, days-to-purge rounding and clamping. |
 
 ### PHASE 7 — Templates, white-label, plan gates
@@ -154,12 +166,14 @@ Nine of ten suites now execute. At Phase 0 handover it was four.
 
 | Job | Enforces | Blocking now? |
 |---|---|---|
-| `verify (node 22)` / `verify (node 24)` | `npm run verify:all` — typecheck, lint, unit, invariants, **and `next build`**. The build is in the gate because a `'use server'` file exporting a non-async const passes typecheck and lint and fails page-data collection; only the build caught it. | Yes — **green**. 463 live assertions (350 unit, 113 invariant), up from 321 at the end of round 1. |
+| `verify (node 22)` / `verify (node 24)` | `npm run verify:all` — typecheck, lint, unit, invariants, **and `next build`**. The build is in the gate because a `'use server'` file exporting a non-async const passes typecheck and lint and fails page-data collection; only the build caught it. | Yes — **green**. 517 live assertions (398 unit, 119 invariant), plus 30 more under `test:db` — 547 in total, up from 474 at the start of this sweep. |
 | `invariant contract` | All ten specs exist; every skipped suite names its phase; at Phase 8 none are skipped; nothing removed from `tests/invariants` without the `invariant-change` label | Yes — green |
 | `build` | `next build` succeeds | Yes |
 | `env registry` | Every `process.env` read in `src/` is in `.env.example`; every `.env.example` variable is in the runbook **and is set by `.railway/railway.ts`**; no `E2E_` variable reaches a deployed environment; no real secret is committed | Yes — **red on one line**: `NEXT_PUBLIC_APP_URL` (F7). `PGPOOL_MAX` was fixed by B8. |
 | `e2e` | Playwright both projects; migrations idempotent; traces uploaded on failure | Yes — see §4 for the run status |
-| `purge --plan smoke test` | A dry run prints a manifest and changes no row counts | Self-skips until Phase 6 |
+| `purge --plan smoke test` | A dry run prints a manifest and changes no row counts | Yes — Phase 6 landed the CLI, so this is now a real gate |
+| `database-backed suites` | `npm run test:db` — INV-7's five SIGKILLs and the failure-mode matrix, against the job's Postgres. Creates and drops its own database (`tests/db-isolation.ts`) so no other suite can truncate a table mid-assertion | Yes — **green**, 30 assertions |
+| `client board FCP budget` | The ARCHITECTURE NFR, measured on a production build over throttled Slow 4G with 4× CPU. Fails over 1500 ms | Yes — **green at 528 ms median**, 972 ms headroom |
 
 The env-registry gate gained a fourth link this round: `.env.example` →
 `.railway/railway.ts`. The failure it now catches is a variable that is read by
@@ -171,29 +185,118 @@ it — a failure that survived all three of the previous checks.
 
 ## 4. What has never met a live Postgres
 
-The e2e suite is no longer blocked on missing endpoints — B7 shipped
-`POST /api/test/seed`, `GET /api/test/last-code` and `POST /api/test/session`,
-gated on `E2E_SEED_TOKEN` **and** refusing to mount when
-`NODE_ENV === 'production'`. It is blocked on a database: **Docker Hub is
-unreachable from this environment**, so no Postgres exists here and the 22
-data-driven e2e tests could not be run. CI's `e2e` job will be their first real
-execution. Stated plainly, because "the endpoints exist" reads like "the tests
-pass" and it is not the same claim.
+**There is a live Postgres now, and most of this section has collapsed.** What
+follows is what it collapsed *to*: the rows that executed, and the rows that
+still have not. The second list is short and specific, which is the point — a
+category called "never met a database" is no longer an honest way to describe
+the risk.
 
-The accessibility suite was deliberately written against a route that needs no
-database, which is why 33 of its 37 tests **did** execute. Everything below did
-not, and none of it is provable without a running Postgres:
+### Now executed
 
-| Unverified | Why it can only fail against a real database |
+| Was unverified | Now proven by |
 |---|---|
-| The three migrations, applied to an empty database | Nothing has ever run `db:migrate` here. CI runs it twice (the second run asserts idempotency, PHASE-1 EXIT). A migration that is not idempotent passes every test in `npm run verify`. |
-| Seed ordering | `tests/fixtures/seed.ts` drives cards to their fixture state by replaying `transitionScripts` through the state machine, because a seed that writes `cards.state` breaks INV-2. Whether the insertion graph satisfies every foreign key in order is a claim only Postgres can settle. |
-| The `LISTEN`/`NOTIFY` reconnect path | B2's SSE streams. A dropped connection that never re-subscribes looks identical to a quiet engagement, and the client surface would show a stale board indefinitely. |
-| The Auth.js session cookie name | The client flow depends on it, and it changes with `AUTH_URL`'s scheme (`__Secure-` prefix on https). A staging deploy is the first place that difference appears. |
-| `FOR UPDATE` row locking | `transitionCard` and `recordDecision` both take it. Two people approving the same card at the same moment must produce one transition and one 409. Unprovable without concurrent transactions. |
-| Both CHECK constraints on `approvals` | INV-3's database half — 4 cases, skipped and named. |
-| `UNIQUE (card_id, version_no)` and the append-only triggers | INV-4's database half — 3 cases, skipped and named. |
-| Every 402/409/410/423 status code end to end | Asserted in unit tests at the domain layer; the route-to-status mapping is not. |
+| The four migrations, applied to an empty database | 🟢 Executed on every `npm run test:db`: `tests/db-isolation.ts` creates a database from nothing and migrates it. Idempotency still comes from CI's `e2e` job running `db:migrate` twice. |
+| Seed ordering | 🟢 `resetToFixtures()` runs on every FCP measurement and every e2e run. The insertion graph satisfies its foreign keys, in order, against a real Postgres. |
+| Both CHECK constraints on `approvals` | 🟢 Executed. And `approvals_one_decider` **fires in production-shaped situations it should not** — see DEFECT-1 in §5. This is the row that most repays having been executed rather than read. |
+| `FOR UPDATE` row locking | 🟢 `failure-modes > two agency members transitioning one card cannot both win` — two concurrent transactions, asserting no lost update. |
+| The purge, end to end | 🟢 INV-7, 16 cases, five SIGKILLs. §4A. |
+| The client session cookie, end to end | 🟢 The FCP gate signs a session with the product's own `signClientSession()` and the production build accepts it on `/e/<token>/board`. |
+| The 30/60 retention arithmetic against real rows | 🟢 The INV-7 harness seeds `archive_at`/`purge_at` and the worker's own `isDue()` acts on them. |
+
+### Still unverified
+
+| Unverified | Why it can only fail somewhere this build has not been |
+|---|---|
+| The `LISTEN`/`NOTIFY` reconnect path | A dropped connection that never re-subscribes looks identical to a quiet engagement, and the client would show a stale board indefinitely. Nothing kills a `LISTEN` connection and watches for re-subscription. **Recommended:** the INV-7 harness already terminates backends on purpose — the same `pg_terminate_backend` aimed at the listener would settle this. Owner: back-end. |
+| The Auth.js session cookie name under https | It changes with `AUTH_URL`'s scheme (`__Secure-` prefix). Everything here runs on http. First visible on a staging deploy. |
+| A 200 MB upload with the app RSS flat | INV-10 proves structurally that no server file reads a body or streams one, which is the mechanism. Nothing measures RSS, and nothing has moved 200 MB. Needs object storage credentials, which this environment does not have. |
+| `UNIQUE (card_id, version_no)` under a real race | The constraint exists and is asserted in the migration. Two genuinely concurrent uploads on one card have never run. INV-4's database half remains skipped and named. |
+| Every 402/409/410/423 status code end to end | Asserted at the domain layer; the route-to-status mapping is exercised by the e2e suite, which has open defects of its own (§5). |
+
+---
+
+## 4A. The failure-mode matrix
+
+Six ways this system can be interrupted, what happens, and what does the
+interrupting. Everything here executes; nothing is a disposition arrived at by
+reading the worker.
+
+Run: `npm run test:db` (`tests/unit/failure-modes.spec.ts` and
+`tests/invariants/inv-07-purge-leaves-certificate.spec.ts`).
+
+| Failure | What happens now | Disposition | Proven by |
+|---|---|---|---|
+| **Database unreachable mid-request** | The backend is terminated mid-transaction. The driver rejects on the next statement, the whole transaction rolls back, and the pool serves the next caller. No half-written row survives. | ✅ Correct. | `failure-modes > a connection lost mid-transaction leaves no half-written row` — `pg_terminate_backend` against a live transaction that has already written two rows; both are gone afterwards. Plus `> the pool survives losing a connection`. |
+| **Object storage unreachable mid-upload** | Bytes never touch the app (INV-10), so a failed upload is *silence*, not a broken stream: the browser's PUT fails and the confirm call never arrives. Presigning writes no row, so nothing is orphaned. On the purge side, a bucket that cannot be reached makes `remove()` **throw** rather than degrade. | ✅ Correct. The asymmetry is deliberate — listing may degrade, deleting may not. | `failure-modes > object storage unreachable mid-upload` — 3 cases: the presign route writes nothing, the version row is written by a separate step, and the storage adapter's `remove()` throws. |
+| **Worker dies between purge checkpoints** | Resumable from the last completed step. The stored manifest is reused rather than rebuilt, so the certificate describes what was destroyed rather than the empty set a post-deletion rebuild would find. | ✅ Correct, at all five kill points. | INV-7, five SIGKILLs. The certificate is asserted to still say `objectCount = 4` after a kill inside the deleting transaction — a `0` there is the bug the stored manifest exists to prevent. |
+| **Two agency members transitioning one card** | `transitionCard` reads the card `FOR UPDATE`, so the second writer blocks until the first commits and then branches off the *new* state. No lost update. | ✅ Correct. | `failure-modes > two agency members transitioning one card cannot both win` — two concurrent connections; asserts the two `state_transitions` rows do not share a `from_state`, which is what a lost update looks like. Plus a scan that the `FOR UPDATE` is still in the persister. |
+| **A client verifying twice** | `verified_at` is set once, under an `IS NULL` guard. A second verification is a no-op; the first sign-in instant — the attribution every approval leans on — never moves. | ✅ Correct, including under a race. | `failure-modes > a contact verifying twice keeps its first verified_at`, and `> two verifications arriving at the same instant still produce one verified_at` (concurrent, exactly one row updated). |
+| **Clock skew between app and database** | The app clock decides and is always passed in; no query asks Postgres what time it is, and `archive_at`/`purge_at` carry no column default. Both sides of every comparison move together, so drift shifts nothing. | ✅ Correct. The margin is days, not seconds. | `failure-modes > clock skew` — a scan proving no decision query uses SQL `now()`, a scan proving the retention domain never reads the clock itself, and a live check that an engagement ten days from purge does not read as due. |
+
+### How the purge kills are made deterministic
+
+A `setTimeout` racing a purge would pass on the runs where it fired too late
+and prove nothing. Each checkpoint is parked instead:
+
+- **Steps 1 and 2** are parked from inside the injected `ObjectStore` — it drops
+  a sentinel file and then returns a promise that can never settle. The parent
+  polls for the sentinel and kills. The store is a dependency the worker already
+  takes; nothing about the worker changed to be testable.
+- **Steps 3 and 4** have no injected seam, so they are parked from the database:
+  the parent holds a `SELECT … FOR UPDATE` row lock on a row the step must
+  write. Row locks leave the earlier steps' plain reads alone, so the child
+  reaches exactly the statement we mean to interrupt. The parent watches
+  `pg_stat_activity` for that backend to enter `wait_event_type = 'Lock'` and
+  only then kills. That is an observation, not a delay.
+
+The kill is `SIGKILL` to a child process, never a thrown exception. An exception
+unwinds the stack, runs every `finally`, and lets drizzle send its `ROLLBACK`
+politely. The failure RUNBOOK §6 is written for is a container that stops
+existing.
+
+**One thing this surfaced that is worth knowing at 3am:** the last statement of
+a killed purge can still land *after* the kill. `UPDATE engagements SET status =
+'purged'` is a statement of its own, and a backend blocked on a lock has not yet
+noticed its client is gone — when the lock frees it runs the update, commits,
+and only then discovers there is nobody to answer. Harmless, because step 4 is
+idempotent. Not harmless if a future step 4 does something that is not.
+
+---
+
+## 4B. Performance budget — measured
+
+ARCHITECTURE's NFR — *client board FCP under 1.5s on 4G* — had nothing behind
+it. It now has a number and a gate that fails.
+
+```
+client board — First Contentful Paint
+  profile   Slow 4G (1.6 Mbit/s down, 750 kbit/s up, 150 ms RTT), CPU 4x, Pixel 7 viewport
+  samples   528ms, 528ms, 520ms, 532ms, 524ms
+  median    528ms
+  worst     532ms
+  budget    1500ms
+  OK — 972ms of headroom.
+```
+
+| | |
+|---|---|
+| **Command** | `node .github/scripts/check-fcp-budget.mjs` |
+| **CI job** | `client board FCP budget` — required, fails the build over budget |
+| **Measured against** | A **production build** (`next build && next start`). A dev server is unminified, unbundled and compiled on demand; its number would not be the number. |
+| **Profile** | Chrome DevTools' *Slow 4G*, spelled out numerically in the script so a preset rename cannot silently move the budget. 4× CPU throttling, because the client is on a phone. |
+| **Statistic** | Median of 5 navigations, each with a cleared cache. One throttled navigation is noisy enough to flake a gate, and a flaky gate gets deleted. |
+| **Negative-tested** | `FCP_BUDGET_MS=400` → exits 1 with the overage. It is a gate, not a print statement. |
+
+**It asserts it measured the right page.** An unauthenticated request to
+`/e/<token>/board` renders the sign-in form, which paints faster than the board.
+The script requires the final URL to still be the board and a published lane
+from the fixtures to be in the DOM. This is not hypothetical — see the e2e
+defect in §5.
+
+**Headroom, in context.** 528 ms is measured against a local server, so it
+excludes real network distance to the origin. The 150 ms RTT emulation covers
+the round trips but not the geography. Treat 972 ms as the budget for
+*everything the deploy adds*, and re-measure against staging once one exists.
 
 ---
 
@@ -222,7 +325,148 @@ because this is the document that gets audited.
 | 14 | `railway/iac` was not a dependency and `.railway/**` was outside tsc and ESLint | Architect, ADR-019. `railway@^3.11.0` added; the topology file is typechecked and linted, verified by planting an error and confirming `tsc` caught it. |
 | 15 | The audience classifier put `/api/events` on the client side | QA (round 2). Amendment A1 makes it the agency stream; a client page fetching it would not have tripped the Phase 4 exit assertion. Five cases pin the split. |
 
-### Open
+### Open — found by the adversarial sweep
+
+**DEFECT-1 — `ON DELETE SET NULL` and `approvals_one_decider` cannot both hold.
+An organization cannot be deleted.** *Owner: back-end — `src/db/schema/assets.ts`,
+migration `0002`.* **Severity: high.**
+
+`approvals.decided_by_contact_id` and `decided_by_user_id` are both
+`ON DELETE SET NULL`, and the table carries
+`CHECK (num_nonnulls(decided_by_contact_id, decided_by_user_id) = 1)`. Nulling
+either one on a row where the other is already null violates the CHECK, so the
+delete fails. Reproduced against the live database — all three fail:
+
+```
+DELETE FROM client_contacts WHERE id = …   -- FAILS
+DELETE FROM engagements     WHERE id = …   -- FAILS (cascade reaches contacts)
+DELETE FROM organizations   WHERE id = …   -- FAILS (cascade reaches contacts)
+```
+
+Consequences, in increasing order of seriousness: a client contact who has ever
+approved or requested changes cannot be removed; an engagement row cannot be
+deleted, which blocks the ADR-007 30-day tombstone reaper that Phase 6
+deliberately deferred; and **account deletion / GDPR erasure fails outright**,
+because deleting an organization cascades to its contacts.
+
+It is latent today only because nothing in the product deletes any of these —
+the purge is careful to leave the engagement row standing, and `resetToFixtures`
+uses `TRUNCATE`, which does not check constraints. The first feature that
+deletes an account meets this on its first run.
+
+Not fixed here: this is `src/**` and a schema decision, not a test fix. The two
+plausible directions are `ON DELETE RESTRICT` on the decider columns — an
+approval is evidence, so blocking the delete loudly is defensible — or relaxing
+the CHECK to allow a "decider was removed" state. That is a product call.
+
+**DEFECT-2 — a purge killed in one narrow window logs `purge.completed` twice.**
+*Owner: back-end — `src/workers/purge.ts`, step 4.* **Severity: low.**
+
+Step 4 writes the audit row and *then* marks the `finalize` checkpoint done. A
+kill between the two leaves the audit row committed and the checkpoint
+unfinished, so a rerun writes a second `purge.completed`. Reproduced by
+recreating that exact state and rerunning: `purge.completed` went from 1 to 2.
+
+INV-7 still holds — the certificate count stays 1, guaranteed by the unique
+index. But `audit_log` is the evidence RUNBOOK §6 triages against, and evidence
+that says the purge completed twice is evidence someone has to stop and explain.
+The fix is the same shape as the certificate's: make the insert conditional on
+the checkpoint, or move it inside a transaction with the checkpoint write.
+
+**DEFECT-3 — every structural invariant was escapable by line-wrapping.**
+*Owner: QA. **Fixed this round.*** Recorded because the shape will recur.
+
+Every scan in `tests/invariants/` was built on `linesMatching`, which reads one
+physical line. The escape needed no cleverness — it is what a formatter does to
+a long drizzle chain:
+
+```ts
+await db
+  .insert(cards)      // INV-9 wanted `db` and `.insert(` on one line
+  .values(row);
+```
+
+Same for `.set({` / `state:` in INV-2. This is the same shape as the
+signature-based escape found in round 2: **the guard reads something narrower
+than the invariant claims.** Closed by `statements()` in
+`tests/invariants/_source.ts`, and negative-tested against planted violations in
+`tests/unit/invariant-scans-are-not-escapable.spec.ts` — which caught a bug in
+the splitter itself on its first run.
+
+**DEFECT-4 — INV-9 scanned only `route.ts`.** *Owner: QA. **Fixed this round.***
+A server action in `actions.ts` or a server component in `page.tsx` reaches the
+database on identical terms. `src/app/(agency)/signin/actions.ts` exists and was
+never scanned. Nothing was hiding there; the hole was.
+
+**DEFECT-5 — INV-10's intake scan was a rule about a variable name.**
+*Owner: QA. **Fixed this round.*** The pattern required a receiver literally
+called `req` or `request`. `export async function POST(r: Request)` followed by
+`r.formData()` passed the guard. Egress scanned `src/app/` only, so the same
+stream written in `src/lib/storage.ts` was invisible — and `storage.ts` is
+exactly where someone would put it.
+
+**DEFECT-6 — the INV-6 exclusion was running unbacked.** *Owner: QA (the
+exclusion was the Architect's; the audit is mine). **Fixed this round.***
+
+The verdict asked for: **the change was right, and its payment did not work.**
+Excluding the retention sweeps from the list scan was correct — they are
+definitionally multi-engagement and hold no session — and pairing the exclusion
+with a compensating assertion was the right instinct. But the compensating
+assertion looked for `clientScope`, lowercase, and the thing it needs to forbid
+is the type `ClientScope`. Every one of these escaped it:
+
+```ts
+function sweepFor(scope: ClientScope, now: Date)          // escaped
+import type { ClientScope } from '@/db/queries/client-scope';  // escaped
+const scope: ClientScope = build();                        // escaped
+```
+
+Second weakness: the exclusion list and the payment list were the same array, so
+a renamed sweep would silently make *both* vacuous — the scan would go on
+excluding a path that no longer exists while the payment iterated an empty set
+and passed. Now: the type is matched with its capital, the list is asserted to
+name files that exist, and a third test checks the sweeps are unreachable by
+import from any client route — reachability, not spelling, because spelling is
+the half that can be renamed.
+
+Net: no engagement was ever actually widened, and the invariant is stronger than
+before the change. But for one round INV-6 was green on a guard that could not
+see its own subject.
+
+**DEFECT-7 — the client board FCP test measured the sign-in page.**
+*Owner: front-end — `tests/e2e/client/board-performance.spec.ts`. Not edited;
+`tests/e2e/**` is not mine.*
+
+The spec navigates to the board URL without a session. That renders the sign-in
+form, which paints faster than the board. Any budget asserted there passes for
+the wrong reason. `.github/scripts/check-fcp-budget.mjs` establishes a real
+session and refuses to record a sample unless the final URL is still `/board`
+and a published fixture lane is in the DOM.
+
+**DEFECT-8 — two suites shared one database; a seed truncated a table
+mid-assertion.** *Owner: QA. **Fixed this round.***
+
+`POST /api/test/seed` TRUNCATEs every content table. Run alongside INV-7, it can
+land between the `content` and `finalize` checkpoints, and the purge then
+asserts against a row that no longer exists. The failure does not look like a
+race — it looks like the purge wrote a wrong status, and it produced a wrong bug
+report against a worker that was behaving correctly.
+
+Two fixes, both landed. `tests/db-isolation.ts` gives `npm run test:db` a
+database it creates and drops, so the question cannot arise. And the assertion
+that misreported now checks the row exists first, with its own message: a
+`toContain(rows[0]?.status)` cannot tell "wrong value" from "no row", and should
+not have been asked to.
+
+**DEFECT-9 — Playwright adopted a stale dev server answering 500 to
+everything.** *Owner: QA. **Fixed this round.*** `reuseExistingServer` adopts
+whatever is listening, and Playwright's readiness standard is "the URL
+answered". A whole run was lost to it, and it did not look like a broken server
+— it looked like forty broken tests. `tests/e2e-preflight.ts` now gates the run
+on `/api/health` reporting `db: ok`, and the `webServer.url` probe points at the
+health endpoint rather than the root.
+
+### Open — carried from earlier rounds
 
 1. **`src/components/agency/card-tile.tsx` animates outside the motion budget.**
    `transition-opacity` on hover, silenced with `motion-reduce:transition-none`

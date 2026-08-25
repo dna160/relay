@@ -241,6 +241,95 @@ jobs:
           diff /tmp/counts-before.txt /tmp/counts-after.txt \
             || { echo "purge --plan changed row counts. A dry run destroys nothing."; exit 1; }
 
+  # ------------------------------------------------------ performance budget
+  # ARCHITECTURE NFR: "client board FCP under 1.5s on 4G". It was a sentence in
+  # a document until this job existed, which means nothing failed when it was
+  # missed and nobody knew the number. Measured on a production build against a
+  # throttled profile, and it fails rather than warns.
+  #
+  # A dev server is not measured: unminified, unbundled, compiled on demand. Its
+  # number would not be the number.
+  performance-budget:
+    needs: verify
+    runs-on: ubuntu-latest
+    name: client board FCP budget
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_USER: relay, POSTGRES_PASSWORD: relay, POSTGRES_DB: relay }
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U relay" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgres://relay:relay@localhost:5432/relay
+      AUTH_SECRET: ci-secret-not-used-in-production
+      CLIENT_LINK_SECRET: ci-secret-not-used-in-production
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      AUTH_URL: http://localhost:3000
+      E2E_BASE_URL: http://localhost:3000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: 'npm' }
+      - uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: node-modules-22-${{ hashFiles('package-lock.json') }}
+          restore-keys: node-modules-22-
+      - run: npm ci
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - run: npx playwright install --with-deps chromium
+      - run: npm run db:migrate
+      - run: npm run build
+      - name: start the production server
+        run: |
+          npm run start &
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:3000/api/health | grep -q '"db":"ok"'; then exit 0; fi
+            sleep 2
+          done
+          echo "the server never became healthy"; exit 1
+      - name: client board FCP under budget
+        run: node .github/scripts/check-fcp-budget.mjs | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------- database-backed suites
+  # INV-7 and the failure-mode matrix. Excluded from `npm run verify`, which is
+  # portable by contract, and run here against a real Postgres — where killing a
+  # backend mid-transaction means something. `db-isolation.ts` gives the run its
+  # own database so a seed from another suite cannot truncate a table out from
+  # under an assertion.
+  db-suites:
+    needs: verify
+    runs-on: ubuntu-latest
+    name: database-backed suites
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_USER: relay, POSTGRES_PASSWORD: relay, POSTGRES_DB: relay }
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U relay" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgres://relay:relay@localhost:5432/relay
+      CERTIFICATE_SIGNING_KEY: ci-secret-not-used-in-production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: 'npm' }
+      - uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: node-modules-22-${{ hashFiles('package-lock.json') }}
+          restore-keys: node-modules-22-
+      - run: npm ci
+      - run: npm run db:migrate
+      - run: npm run test:db
+
   # -------------------------------------------------------------- deployable
   # The build has to succeed before anything is promoted. Kept separate from
   # `verify` so a broken Next build is legible as a build failure rather than

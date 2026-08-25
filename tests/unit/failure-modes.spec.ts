@@ -150,9 +150,20 @@ describe('failure modes under a live database', () => {
     const c = await pool.connect();
     try {
       await c.query('BEGIN');
-      // The whole uuid, not a prefix: uuid v7 leads with a timestamp, so two
-      // orgs seeded in the same millisecond share their first eight characters.
-      await c.query(`INSERT INTO organizations (id, name, slug, plan) VALUES ($1,'fm','fm-' || $1::text,'free')`, [id.org]);
+      /**
+       * The slug is passed as its own parameter rather than built from `$1`.
+       * `VALUES ($1, 'fm', 'fm-' || $1::text, ...)` asks Postgres to infer one
+       * type for `$1` from two incompatible uses — `uuid` for the id column and
+       * `text` for the concatenation — and it refuses with "inconsistent types
+       * deduced for parameter $1", taking every test in this file down in
+       * setup. It is also a prefix-collision fix: uuid v7 leads with a
+       * timestamp, so two orgs seeded in the same millisecond shared their
+       * first eight characters and tripped the unique index on slug.
+       */
+      await c.query(`INSERT INTO organizations (id, name, slug, plan) VALUES ($1,'fm',$2,'free')`, [
+        id.org,
+        `fm-${id.org}`,
+      ]);
       await c.query(`INSERT INTO users (id, org_id, email, role) VALUES ($1,$2,$3,'admin')`, [id.user, id.org, `fm-${id.user}@relay.test`]);
       await c.query(
         `INSERT INTO engagements (id, org_id, client_org_name, title, status, last_activity_at)

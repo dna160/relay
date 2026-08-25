@@ -39,6 +39,11 @@ export default defineConfig({
     ? [['github'], ['html', { open: 'never' }], ['junit', { outputFile: 'playwright-report/junit.xml' }]]
     : 'list',
   outputDir: 'test-results',
+  /**
+   * Health-checks the server before the first test — including, especially, a
+   * server this run did not start. See `tests/e2e-preflight.ts`.
+   */
+  globalSetup: './tests/e2e-preflight.ts',
   use: {
     baseURL: process.env.E2E_BASE_URL ?? 'http://localhost:3000',
     // Traces are the artifact CI uploads on failure. `on-first-retry` keeps the
@@ -64,7 +69,13 @@ export default defineConfig({
     ? undefined
     : {
         command: 'npm run dev',
-        url: 'http://localhost:3000',
+        /**
+         * The readiness probe is the health endpoint, not the root. The root
+         * answers before the database connection is proved, and "it answered"
+         * is the standard that let a 500-ing stale server be adopted. This
+         * narrows the window; `globalSetup` above closes it.
+         */
+        url: 'http://localhost:3000/api/health',
         reuseExistingServer: !process.env.CI,
         timeout: 120_000,
       },

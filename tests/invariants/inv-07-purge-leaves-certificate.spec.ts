@@ -443,9 +443,26 @@ describe('INV-7 under a live database', () => {
         'SELECT status FROM engagements WHERE id = $1',
         [s.engagementId],
       );
+      /**
+       * The row first, on its own, with its own message.
+       *
+       * This assertion used to be a bare `toContain(rows[0]?.status)`, and when
+       * something else truncated `engagements` mid-run it failed with
+       * "expected [archived, purged] to contain undefined" — which reads
+       * exactly like a purge that wrote a wrong status. It cost a wrong bug
+       * report. An assertion that cannot tell "wrong value" from "no row"
+       * should not be asked to.
+       */
+      expect(
+        rows,
+        'the engagement row is gone. Nothing in a purge deletes it — the tombstone ' +
+          'survives by design (ADR-007) — so something outside this suite truncated the ' +
+          'table underneath it. Check that nothing else is using this database.',
+      ).toHaveLength(1);
       expect(
         ['archived', 'purged'],
-        'the engagement is neither archived nor purged after a finalize kill',
+        `the engagement is '${String(rows[0]?.status)}' after a finalize kill; expected it ` +
+          'to be archived (the update never landed) or purged (it landed post-mortem)',
       ).toContain(rows[0]?.status);
 
       const rerun = await run(s.engagementId, { resume: true });

@@ -461,6 +461,30 @@ filing — it is the field the whole investigation hangs off.
 > what the code is built against, and because whoever is reading this at 3am
 > after the first real failure will not want to derive it then.
 
+### What has actually been executed, and what has not
+
+Everything in this section below the line has been run against a live Postgres,
+not reasoned about. `npm run test:db` kills a real purge process with `SIGKILL`
+at five points — before the manifest, before the object delete, halfway through
+it, **inside the transaction that deletes content**, and after the certificate
+but before the tombstone — and reruns each one. Every rerun ends at exactly one
+certificate. The `--plan` claim below is checked by diffing row counts around a
+real run, not by reading the code.
+
+Two things this exercise turned up that matter at 3am:
+
+- **The last statement of a killed purge can still land after the kill.** A
+  backend blocked on a lock has not yet noticed its client is gone; when the
+  lock frees it runs the statement, commits, and only then finds nobody to
+  answer. So an engagement can read `purged` from a run you are certain you
+  killed. This is harmless — step 4 is idempotent — but do not treat a `purged`
+  status as proof the run completed. **The certificate is the proof.**
+- **A rerun can log `purge.completed` twice.** If the kill landed between the
+  audit write and the final checkpoint, the rerun writes a second one. Two
+  `purge.completed` rows for one engagement is a known defect, not evidence of
+  two purges. There is still exactly one certificate, and the unique index
+  guarantees that.
+
 ### The one thing to understand first
 
 **Purge is idempotent and resumable. Rerunning it is the correct response to a
