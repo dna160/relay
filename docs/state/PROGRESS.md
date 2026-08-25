@@ -20,11 +20,11 @@
 | 7 | Templates, white-label, plan gates | 🟡 partial — white-label lock shipped; `applyTemplate()` does not exist |
 | 8 | Hardening & deploy | ⬜ not started |
 | — | *v1.1 platform layer below — specified, not started* | |
-| 9 | Identity and tenancy migration | 🔴 blocked on D3 |
+| 9 | Identity and tenancy migration | 🟡 in progress — D3 answered (ADR-022) |
 | 10 | Auth and invites | ⬜ not started |
 | 11 | Multi-org navigation and teams | ⬜ not started |
 | 12 | Document ingestion | 🔴 blocked on D4, D5 |
-| 13 | Deployment and retention hardening | 🔴 blocked on D1, D2 |
+| 13 | Deployment and retention hardening | ⬜ not started — D1, D2 answered (ADR-022) |
 
 Phases 5 and 7 are partial because Round 2 pulled work forward deliberately:
 `GET /api/attention` because the portfolio is the agency home screen and shipping
@@ -87,12 +87,12 @@ Recorded because it is the argument for the harness existing:
 
 `docs/PRD.md` is now v2.0 and supersedes v1, which is preserved as
 `docs/PRD-v1.md`. `docs/DELIVERY-PLAN.md` carries the platform-layer blueprint.
-Phase files exist for 9 and 12 only — **10, 11 and 13 are named but unwritten**,
-and must be written before those phases start.
+Phase files now exist for all of 9–13. The package shipped 9 and 12; 10, 11 and
+13 were named in the plan and written here from `DELIVERY-PLAN.md`.
 
-Phases 9–13 are blocked on product decisions D1–D5, below. Phase 9 in particular
-cannot begin: `resolveAccess()`'s core expression and every test case built on it
-depend on D3.
+**D1, D2 and D3 are resolved** (ADR-022, 2026-08-25), which unblocks Phases 9
+and 13. D4 and D5 still block Phase 12 — the model sub-processor default, and
+what a low-confidence extraction should do.
 
 ## Open product decisions
 
