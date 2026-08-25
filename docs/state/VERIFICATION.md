@@ -33,6 +33,9 @@ node .github/scripts/check-invariant-skips.mjs     # the ten specs exist; skips 
 node .github/scripts/check-env-registry.mjs        # env drift: src -> .env.example -> runbook -> .railway/railway.ts
 node .github/scripts/check-fcp-budget.mjs          # client board FCP on a throttled profile. Needs a production server.
 node .github/scripts/check-chunk-purity.mjs --negative-control   # no agency code in the client bundle. Same requirements.
+node .github/scripts/ensure-object-storage.mjs     # creates the bucket and round-trips an object. Run before the e2e suite.
+node .github/scripts/check-upload-rss.mjs          # 200 MB upload vs the app's resident set. Needs a production server.
+node .github/scripts/check-e2e-skips.mjs           # nothing skipped silently in CI. Reads playwright-report/junit.xml.
 ```
 
 **Why `verify` no longer runs everything.** Two suites genuinely need a
@@ -119,7 +122,7 @@ in both directions: `--phase 8` still fails on INV-3, INV-4 and INV-6 and does
 | INV-6 and INV-8 unskipped and passing | `npx vitest run tests/invariants/inv-06-client-session-single-engagement.spec.ts tests/invariants/inv-08-single-active-count.spec.ts` — 16 live cases. ✅ **done as of this session** (both were still fully skipped). |
 | `db:migrate` on an empty database succeeds; rerunning is a no-op | CI job `e2e`, steps `npm run db:migrate` then `migrations are idempotent`. Locally: `npm run db:up && npm run db:migrate && npm run db:migrate`. |
 | Creating past the plan limit returns 402 `PLAN_LIMIT_REACHED` | Unit: `tests/unit/plan-limits.spec.ts > the plan gate > throws 402 PLAN_LIMIT_REACHED at the limit, not one past it`. E2E: `tests/e2e/agency/plan-and-lifecycle.spec.ts > the plan gate > creating past the limit returns 402 PLAN_LIMIT_REACHED` — **red**, no route. |
-| A client session for engagement A returns 404 `NOT_VISIBLE` for B | ⚠️ **UNPROVEN.** `tests/e2e/client/invite-verify-approve.spec.ts > a client session for one engagement cannot reach another (INV-6)` is written, and the routes and seed endpoints it needs now both exist. It has **never been run** — no Postgres in this environment (§4). The fixture holds one email on two engagements ready for it. First execution is CI's `e2e` job. |
+| A client session for engagement A returns 404 `NOT_VISIBLE` for B | 🟢 **PROVEN, executed.** `invite-verify-approve.spec.ts > a client session for one engagement cannot reach another (INV-6)` — green in a full 86/86 run. *Previously:* ⚠️ UNPROVEN — `tests/e2e/client/invite-verify-approve.spec.ts > a client session for one engagement cannot reach another (INV-6)` is written, and the routes and seed endpoints it needs now both exist. It has **never been run** — no Postgres in this environment (§4). The fixture holds one email on two engagements ready for it. First execution is CI's `e2e` job. |
 
 ### PHASE 2 — Board core
 
@@ -135,7 +138,7 @@ in both directions: `--phase 8` still fails on INV-3, INV-4 and INV-6 and does
 | EXIT condition | Proven by |
 |---|---|
 | INV-3, INV-4, INV-10 unskipped and passing | `npm run test:invariants` — INV-10 fully live; INV-3 and INV-4 live for everything checkable without a database, DB halves skipped and named. |
-| A 200 MB upload completes without the app process RSS moving | ⚠️ **UNPROVEN.** INV-10's structural scans prove no route *reads* bytes, which is the mechanism; nothing measures RSS. **Phase 3 owner** — the honest cheap version is asserting the PUT went to the R2 origin, which `engagement-flow.spec.ts` already does. |
+| A 200 MB upload completes without the app process RSS moving | 🟢 **PROVEN, and measured.** `node .github/scripts/check-upload-rss.mjs`, CI job `client board FCP budget and bundle purity`. **200 MB uploaded in 3.8s; the app process moved 0.0 MB** against a 48 MB budget. Open since round 1 and unmeasurable until object storage existed. Positive-controlled: pointed at a process that grows 300 MB inside the upload window it reports +299.1 MB and exits 1. See §4D. |
 | A decision recorded, then the version re-read: stored hash still matches | Structural: `inv-03 > a recorded decision copies the version sha256 rather than referencing it` and `> never recomputes the stored hash from the version at read time`. Behavioural: `inv-03 > INV-3 under a live database` — **skipped, Phase 3**. |
 | `changes_requested` with no note returns 400 and writes nothing | Domain-first check: `inv-03 > the domain rejects a note-less changes_requested before the constraint does`. Constraint: `inv-03 > the database refuses changes_requested without a note`. End to end: **skipped, Phase 3**. |
 
@@ -191,13 +194,13 @@ in both directions: `--phase 8` still fails on INV-3, INV-4 and INV-6 and does
 
 | Job | Enforces | Blocking now? |
 |---|---|---|
-| `verify (node 22)` / `verify (node 24)` | `npm run verify:all` — typecheck, lint, unit, invariants, **and `next build`**. The build is in the gate because a `'use server'` file exporting a non-async const passes typecheck and lint and fails page-data collection; only the build caught it. | Yes — **green**. 592 live assertions (447 unit, 145 invariant), plus 39 under `test:db` — 631 in total, up from 559. The additions are INV-11's structural half (24), the bundle-purity detector (12), INV-11's planted violations (20) and the a11y stale-allowlist case. |
+| `verify (node 22)` / `verify (node 24)` | `npm run verify:all` — typecheck, lint, unit, invariants, **and `next build`**. The build is in the gate because a `'use server'` file exporting a non-async const passes typecheck and lint and fails page-data collection; only the build caught it. | Yes — **green**. 632 live assertions (487 unit, 145 invariant), plus 40 under `test:db` — 672 in total, up from 559 at the start of the round. The additions: INV-11's structural half (24) and its 20 planted violations, the bundle-purity detector and vocabulary liveness (16), the Code 39 decoder and barcode polarity (13), first paint (17), the JUnit skip parser (6), and the a11y stale-allowlist case. |
 | `invariant contract` | All ten specs exist; every skipped suite names its phase; at Phase 8 none are skipped; nothing removed from `tests/invariants` without the `invariant-change` label | Yes — green |
 | `build` | `next build` succeeds | Yes |
 | `env registry` | Every `process.env` read in `src/` is in `.env.example`; every `.env.example` variable is in the runbook **and is set by `.railway/railway.ts`**; no `E2E_` variable reaches a deployed environment; no real secret is committed | Yes — **red on one line**: `NEXT_PUBLIC_APP_URL` (F7). `PGPOOL_MAX` was fixed by B8. |
 | `e2e` | Playwright both projects; migrations idempotent; traces uploaded on failure | Yes — see §4 for the run status |
 | `purge --plan smoke test` | A dry run prints a manifest and changes no row counts | Yes — Phase 6 landed the CLI, so this is now a real gate |
-| `database-backed suites` | `npm run test:db` — INV-7's five SIGKILLs, INV-3's hostile inserts, the failure-mode matrix, and (skipped until Phase 9 EXIT) INV-11's 74-case matrix, against the job's Postgres. Creates and drops its own database (`tests/db-isolation.ts`) so no other suite can truncate a table mid-assertion | **RED** — see DEFECT-12. 39 pass, 74 skipped, and INV-7's table-disposition completeness case fails because the Phase 9 schema landed seven tables the purge worker does not classify. The guard is behaving correctly; the worker has not caught up |
+| `database-backed suites` | `npm run test:db` — INV-7's five SIGKILLs, INV-3's hostile inserts, the failure-mode matrix, and (skipped until Phase 9 EXIT) INV-11's 74-case matrix, against the job's Postgres. Creates and drops a database **of this run's own**, named with an epoch, a pid and a random tail, so neither another suite nor another *run* can truncate a table mid-assertion | Yes — **green**, 40 assertions, 74 skipped. DEFECT-12 fixed by the back-end |
 | `client board FCP budget and bundle purity` | Two checks that need the same three expensive things — a production build, a database to seed, a real client session. (1) The ARCHITECTURE NFR over throttled Slow 4G with 4× CPU, failing over 1500 ms. (2) PHASE-4 EXIT: no agency route code in the client bundle, run with `--negative-control` so every push proves the detector can fail before believing that it passed | Yes — FCP **green at 524 ms median**, 976 ms headroom. Bundle purity newly adopted from a scratchpad script; first CI execution is the next push |
 
 The env-registry gate gained a fourth link this round: `.env.example` →
@@ -225,6 +228,7 @@ the risk.
 | Both CHECK constraints on `approvals` | 🟢 Executed. And `approvals_one_decider` **fires in production-shaped situations it should not** — see DEFECT-1 in §5. This is the row that most repays having been executed rather than read. |
 | `FOR UPDATE` row locking | 🟢 `failure-modes > two agency members transitioning one card cannot both win` — two concurrent transactions, asserting no lost update. |
 | The purge, end to end | 🟢 INV-7, 16 cases, five SIGKILLs. §4A. |
+| The upload byte path | 🟢 **Executed for the first time.** MinIO in `docker-compose.yml` and in both CI jobs. `engagement-flow.spec.ts > upload -> publish -> awaiting client, with the bytes going direct (INV-10)` ran in 11.6s — a real 4-part multipart PUT — where it had previously skipped itself. See §4E. |
 | The client session cookie, end to end | 🟢 The FCP gate signs a session with the product's own `signClientSession()` and the production build accepts it on `/e/<token>/board`. |
 | The 30/60 retention arithmetic against real rows | 🟢 The INV-7 harness seeds `archive_at`/`purge_at` and the worker's own `isDue()` acts on them. |
 
@@ -234,7 +238,6 @@ the risk.
 |---|---|
 | The `LISTEN`/`NOTIFY` reconnect path | A dropped connection that never re-subscribes looks identical to a quiet engagement, and the client would show a stale board indefinitely. Nothing kills a `LISTEN` connection and watches for re-subscription. **Recommended:** the INV-7 harness already terminates backends on purpose — the same `pg_terminate_backend` aimed at the listener would settle this. Owner: back-end. |
 | The Auth.js session cookie name under https | It changes with `AUTH_URL`'s scheme (`__Secure-` prefix). Everything here runs on http. First visible on a staging deploy. |
-| A 200 MB upload with the app RSS flat | INV-10 proves structurally that no server file reads a body or streams one, which is the mechanism. Nothing measures RSS, and nothing has moved 200 MB. Needs object storage credentials, which this environment does not have. |
 | `UNIQUE (card_id, version_no)` under a real race | The constraint exists and is asserted in the migration. Two genuinely concurrent uploads on one card have never run. INV-4's database half remains skipped and named. |
 | Every 402/409/410/423 status code end to end | Asserted at the domain layer; the route-to-status mapping is exercised by the e2e suite, which has open defects of its own (§5). |
 
@@ -361,6 +364,98 @@ that judgement is now enforced rather than remembered: a portable case requires
 every route pattern to be longer than five characters and every marker longer
 than eight. Two characters of punctuation match constantly inside minified code,
 and a false positive is how an audit gets ignored rather than fixed.
+
+---
+
+## 4D. Upload RSS — measured
+
+PHASE-3's last EXIT condition, and the oldest UNPROVEN row on the board: open
+since round 1. It was not neglected — it was **unmeasurable**, because neither
+`docker-compose.yml` nor any CI job provided an S3 endpoint, so the presign
+route 500'd and there was never an upload whose cost could be observed.
+
+```
+200 MB upload — app process resident set
+  server    production build (next build && next start), pid discovered from the listening socket
+  presign   multipart, 4 parts of up to 64 MB — the product's own route, real agency session
+  baseline  182.1 MB (median of 10 samples, taken after the presign)
+  peak      182.1 MB over 42 samples
+  delta     +0.0 MB   (budget 48 MB)
+  elapsed   3.8s
+```
+
+| | |
+|---|---|
+| **Command** | `node .github/scripts/check-upload-rss.mjs` |
+| **CI job** | `client board FCP budget and bundle purity` — it already has the production build and the database; storage was added for it |
+| **What it proves** | The app **serves the presign** — a real request, real route, real session — and then 200 MB crosses to storage without the app being in the path. The presign is fetched over HTTP rather than by importing `presignUpload()` on purpose: importing it would measure a library and say nothing about the server, and the question is whether the process that answered the request also carried the payload. |
+| **Why a delta rather than equality** | A Node server's resident set breathes — JIT tiering, the pool, a GC that has not run. 48 MB is generous against that and two orders of magnitude below what buffering the body would cost. A regression that streams the upload through the app cannot hide inside 48 MB while moving 200. |
+| **Positive control** | Pointed at a process that allocates 300 MB **inside the upload window**, it reports `+299.1 MB` and exits 1. |
+
+**The control's first two attempts failed, and the reason is worth keeping.**
+The grower allocated at 0.3s and then at 1.5s, and the check reported `+0.0 MB`
+both times — not because the apparatus was blind, but because the growth had
+already happened before the baseline was taken, so it was *in* the baseline.
+A control that fires too early is indistinguishable from a measurement that
+works. It now allocates at 6s, inside the window the upload actually occupies,
+and the timing is stated in the control itself so the next person does not have
+to rediscover it.
+
+**Why the session is established out of band.** `/api/test/seed` and
+`/api/test/session` refuse to mount when `NODE_ENV === 'production'` — that is
+half of DEFECT-5's fix, and the half that makes those endpoints safe to ship at
+all. Measuring a production build therefore cannot use them, and the answer is
+not to relax the gate: `tests/agency-session.ts` calls the same
+`resetToFixtures()` and `createTestSession()` those routes call, from the other
+side of the process boundary, exactly as `tests/fcp-session.ts` already does for
+the FCP gate. `createTestSession()` still signs in an existing user only, so it
+cannot provision an admin. The presign — the part under measurement — still goes
+over HTTP to the real route.
+
+---
+
+## 4E. The byte path, executed
+
+INV-10 has been green since Phase 3 on four structural scans, and until this
+round **the byte path had never run**. Neither `docker-compose.yml` nor the e2e
+job provided an S3 endpoint; without one the presign route 500s, so no PUT was
+ever made — and the e2e assertion *"no PUT reached the app server"* was being
+made against a run containing no PUT in it.
+
+That is a green light for an absent byte path, and it is the same shape as every
+other escape this build has found: the guard reads something narrower than the
+invariant claims.
+
+Three things landed together, and all three were needed:
+
+1. **MinIO** in `docker-compose.yml` — so `npm run db:up` brings up the whole
+   spine — and in both CI jobs that need it.
+2. **`ensure-object-storage.mjs`** — creates the bucket and proves the path with
+   a put/get/compare/delete round trip through the same path-style client
+   `src/lib/storage.ts` uses. Not a health check: *the port is open* is the same
+   standard as *the URL answered*, which is what let a 500-ing stale dev server
+   be adopted for a whole Playwright run (DEFECT-9). Negative-tested — wrong
+   credentials fail immediately with a 403 rather than burning the timeout.
+3. **`check-e2e-skips.mjs`** — the gate that stops this recurring. The two
+   INV-10 tests skip themselves when storage is absent, which is *correct*; what
+   was wrong was the job accepting it. Playwright exits 0 on a run where
+   everything skipped, because the exit code answers "did anything fail" and the
+   question here is "did everything run". This reads the JUnit report instead.
+   There is deliberately no `--allow N`: the moment a skip budget exists, the
+   budget is what gets edited. A test that genuinely cannot run in CI goes in
+   `SANCTIONED` with a reason, where a reviewer sees it in a diff.
+
+**Result: 86/86 e2e passing, zero skipped** — agency 42/42, client 44/44. The
+INV-10 upload test ran for 11.6 seconds, a real 4-part multipart PUT, where it
+had previously skipped in silence.
+
+The skip gate is negative-tested end to end against real Playwright JUnit
+shapes: a report with one skip exits 1 and names the test; the same report with
+the skip removed exits 0; a missing report exits 1, because a suite that did not
+run is the strongest form of the thing being checked for. Its parser has six
+more cases in `tests/unit/e2e-skip-report.spec.ts`, including the self-closing
+`<testcase/>` that a naive pattern misses — a parser that cannot see passing
+tests reports `0 of 0` and calls it clean.
 
 ---
 
@@ -586,9 +681,45 @@ does, the fixture's stated side is written and then ignored. INV-3's portable
 half asserts the fixture's side agrees with its ids, so the two cannot drift
 into disagreement silently.
 
-**DEFECT-12 — the Phase 9 schema landed seven tables the purge worker does not
-classify, and `npm run test:db` is red on it.** *Owner: back-end —
-`src/workers/purge.ts`, `TABLE_DISPOSITION`.* **Severity: high.**
+**DEFECT-15 — two concurrent `test:db` runs shared one database, and the
+collision presented as 27 failures in someone else's work.** *Owner: QA.*
+**Fixed this round.**
+
+`tests/db-isolation.ts` was itself the fix for DEFECT-8 — two *suites* sharing a
+database — and it left two *runs* sharing one. It created a single
+`<database>_dbsuite` and opened with `DROP DATABASE ... WITH (FORCE)`.
+`fileParallelism: false` serialises files within a run and says nothing about
+two runs, and this repository has several agents working at once.
+
+The back-end lost a run to it: a second `test:db` reached that `DROP` mid-suite
+and every open connection died with `57P01 terminating connection due to
+administrator command`. Twenty-seven failures, clean on retry.
+
+**The evidence is the interesting part.** It does not present as a collision. It
+presents as twenty-seven unrelated-looking failures in code that was never
+wrong, and the retry that clears them is indistinguishable from flake — so a
+whole investigation was spent establishing that the back-end's work was fine.
+That is the same cost DEFECT-8 imposed, one level up.
+
+The name now carries an epoch, a pid and a random tail, and the opening `DROP`
+is gone: there is nothing of anyone else's to drop. **Proved by running two
+`test:db` runs concurrently — both green, 40 assertions each.** Both landed in
+the same millisecond, so the epoch alone would still have collided and the pid
+is what separated them.
+
+Unique names trade a collision for a leak: a SIGKILLed run — and this suite
+kills processes for a living — never reaches teardown, and under a fixed name
+that was self-correcting. So the epoch is *in* the name, and setup sweeps any
+database matching the prefix older than two hours. No catalogue timestamp
+needed, and no privilege beyond what creating the database already required.
+
+**DEFECT-12 — the Phase 9 schema landed seven tables the purge worker did not
+classify.** *Owner: back-end — `src/workers/purge.ts`, `TABLE_DISPOSITION`.*
+**FIXED at `4fd6d6a`.** `access_shadow_disagreements` was classified **content**,
+not diagnostics-exempt, because it holds per-project records of who tried to
+reach what — the right call, and not the obvious one. `npm run test:db` is green
+at 40. Kept below because the *shape* recurs: nothing about the purge changed;
+the surface it had to cover grew underneath it.
 
 ```
 inv-07 > every table in the schema has a disposition, so a new one cannot escape a purge
@@ -613,7 +744,10 @@ Not fixed here: `src/workers/purge.ts` is `src/**`. **This blocks PHASE-6's
 "INV-7 unskipped and passing" from staying proven** — it was green last round
 and is red now, which is exactly the transition this row exists to make visible.
 
-**DEFECT-13 — the portfolio does not render plan usage.**
+**DEFECT-13 — the portfolio does not render plan usage.** **FIXED** — the
+front-end mounted `plan-usage-record.tsx`; the agency suite is 42/42.
+
+*Original report:*
 *Owner: front-end / back-end (product gap, not a test bug). Reported by the
 front-end; `tests/e2e/**` is not mine to edit.* **Severity: medium.**
 
@@ -629,6 +763,12 @@ a bug. **Blocks PHASE-7 EXIT** — the plan-gate row is proven for
 surface that shows it — and **PHASE-8 EXIT "full e2e matrix, agency desktop"**.
 
 **DEFECT-14 — a client download route reached with an agency session.**
+**RESOLVED as a contract question**, not a code fix: the agency gets no download
+route at all, and the redirect assertion moved to the client project where a
+client session actually exists. A test asserting a route that should not exist
+was the defect.
+
+*Original report:*
 *Owner: back-end (route behaviour) — reported by the front-end.*
 **Severity: medium.**
 
@@ -688,40 +828,40 @@ test-level and belong to them; these two are the ones that need product work.
 
 ### Still UNPROVEN in this document
 
-Six rows. Four are carried; two are new, and both are new because Phase 9 landed
-work under a suite that then reported on it.
+Three rows, and one of them is a deliberate deferral rather than a hole.
 
-- **PHASE-1** — a client session for engagement A returns 404 for B. Written and
-  ready (`invite-verify-approve.spec.ts`); needs a database.
-- **PHASE-3** — a 200 MB upload completes without the app process RSS moving.
-  INV-10's structural scans prove no route reads bytes, which is the mechanism;
-  nothing measures RSS.
+**PHASE-3's RSS row is closed** — 200 MB uploaded, the app process moved 0.0 MB
+(§4D). It had been open since round 1, and it was never a matter of nobody
+getting to it: with no S3 endpoint anywhere there was no upload to measure. It
+closed the hour storage existed. **PHASE-6's INV-7 regression is closed too** —
+the back-end classified the seven Phase 9 tables, and `access_shadow_disagreements`
+went in as **content** rather than diagnostics-exempt, which is the right call:
+it holds per-project records of who tried to reach what.
+
+**And PHASE-1's row is closed by execution.** *A client session for engagement A
+returns 404 for B* has been written and unrun since round 1 for want of a
+database and then a full e2e pass. It ran:
+`invite-verify-approve.spec.ts > a client session for one engagement cannot
+reach another (INV-6)`, 3.1s, green. INV-6 is the invariant ADR-021 narrows
+rather than retires, so having it executed rather than reasoned about matters
+more now than it did when it was written.
+
 - **PHASE-7** — stamping a template twice produces structurally identical
   graphs. `applyTemplate()` does not exist.
 - **PHASE-8** — deploy and rollback executed once against staging. Not provable
   by a test. No longer blocked on tooling: `railway@^3.11.0` is a devDependency
   under ADR-019 and `.railway/**` is inside tsc and ESLint.
-- **PHASE-6 (regressed)** — INV-7 unskipped and passing. It was proven last
-  round and is red now: the Phase 9 schema added seven tables the purge worker
-  does not classify (DEFECT-12). Nothing about the purge changed; the surface it
-  must cover grew. **Owner: back-end.** This is the row that most repays being
-  re-run rather than remembered.
 - **PHASE-9** — the resolution matrix against the real graph. Deliberately
   deferred rather than missing: written, skipped, and gated to unskip at
-  Phase 10 (§6D). Distinct from the four above in that the test exists and the
+  Phase 10 (§6D). Distinct from the two above in that the test exists and the
   condition for running it is written down; it becomes a genuine hole only if
   Phase 9 exits without the shadow-disagreement count reaching zero.
 
-**And two exit conditions the front-end's agency e2e failures block**, recorded
-here because `tests/e2e/**` is not QA's to edit and a defect reported into a
-handover note is a defect nobody audits:
-
-- **PHASE-7** — the plan surface. DEFECT-13: the portfolio never renders
-  "3 of 3"; the component exists and nothing mounts it. The 402 half of the plan
-  gate is proven; the half a user actually sees is not.
-- **PHASE-8** — the full e2e matrix, agency desktop. DEFECT-13 and DEFECT-14
-  both sit in it, and DEFECT-14 is the INV-10/INV-6 boundary: a client download
-  route reached with an agency session.
+**The two exit conditions the agency e2e failures were blocking are unblocked.**
+PHASE-7's plan surface renders (DEFECT-13) and PHASE-8's full e2e matrix is
+**86/86 with zero skips** — agency 42/42, client 44/44. Recording them here was
+worth it: `tests/e2e/**` is not QA's to edit, and a defect reported only into a
+handover note is a defect nobody audits.
 
 ---
 
