@@ -139,10 +139,16 @@ export function PurgedReceipt({ failure }: { failure: ApiFailure }) {
       )}
 
       <p className={cn('max-w-prose text-14', muted)}>
-        Every file, card, version and approval in this engagement was destroyed on schedule, along
-        with the object bytes behind them. This certificate lists the hashes, the counts and the
-        exact time, and it was issued to your organisation and to the client contact. It is the
-        record of destruction, it is what remains, and it does not expire.
+        Every file, card, version and approval in this engagement was destroyed from live systems
+        on schedule, along with the object bytes behind them, and is erased from encrypted backups
+        within 30 days of that date. This certificate lists the hashes, the counts and the exact
+        time, and it was issued to your organisation and to the client contact. It is the record of
+        destruction, it is what remains, and it does not expire.
+      </p>
+      <p className={cn('max-w-prose text-14', muted)}>
+        The 30-day backup window is stated because a client&rsquo;s legal team will ask, and because
+        a certificate that claimed the bytes were gone everywhere the moment it was issued would be
+        wrong on the day it is most likely to be read. D1/D2, resolved 2026-08-25.
       </p>
 
       {cert?.certificateUrl && (

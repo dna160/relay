@@ -149,8 +149,9 @@ export function PurgedReceipt({
 
       <p className={cn('max-w-prose text-14', muted)}>
         This workspace reached the end of the retention period it carried from the day it opened.
-        Every file, note and approval in it has been permanently destroyed, on the date shown in the
-        notices you were sent.
+        Every file, note and approval in it was destroyed from {agency}&rsquo;s live systems on the
+        date shown in the notices you were sent, and is erased from encrypted backups within 30 days
+        of that date.
       </p>
       <p className={cn('max-w-prose text-14', muted)}>
         This certificate lists what was destroyed, its file hashes and the exact time. It was issued

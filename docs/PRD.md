@@ -426,18 +426,35 @@ Implementation plan, module sequencing, and role-level detail: see
 These are product owner calls, not engineering gaps. Each blocks a specific
 phase.
 
-**D1 — Backups vs certified deletion.** *Blocks Phase 13.* Managed Postgres
+**D1 — Backups vs certified deletion.** ✅ **RESOLVED 2026-08-25 — state the
+backup window honestly.** The certificate says destroyed from live systems on
+the purge date, erased from encrypted backups within 30 days. Both attestations
+in `purged-receipt.tsx` were corrected the same day: they had read "permanently
+destroyed", which was false at the moment of issue. See ADR-022. Original text
+below.
+
+*Blocks Phase 13.* Managed Postgres
 backups keep purged content for the retention window. Either the certificate
 reads "purged from primary systems immediately, from backups within N days," or
 backups must exclude purged content, which is hard and expensive. A client's
 legal team will ask.
 
-**D2 — Tombstone recoverability.** *Blocks Phase 13.* Engineering wants a 30-day
+**D2 — Tombstone recoverability.** ✅ **RESOLVED 2026-08-25 with D1.** The
+30-day tombstone stays, for incident recovery only, and the certificate no
+longer contradicts it. See ADR-022. Original text below.
+
+*Blocks Phase 13.* Engineering wants a 30-day
 soft delete for incident recovery; certified destruction says the bytes are gone.
 Both defensible, mutually contradictory, and the certificate wording depends on
 the answer. Related to D1 — resolve them together.
 
-**D3 — Do org admins get automatic project access?** *Blocks Phase 9.*
+**D3 — Do org admins get automatic project access?** ✅ **RESOLVED 2026-08-25 —
+yes, for `owner` and `admin`, configurable per org at Studio tier.** So
+`resolveAccess()` is `strongest(project_role, org_role → project)`, and Phase 9
+is unblocked. See ADR-022 for the Chinese-wall cost this accepts. Original text
+below.
+
+*Blocks Phase 9.*
 Convenience says yes; least privilege says no, and agencies handling competing
 clients may need Chinese walls between projects in the same org. Currently
 specified as yes for `owner` and `admin`, configurable per org at Studio tier.
