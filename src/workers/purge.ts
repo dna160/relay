@@ -492,25 +492,70 @@ export async function purgeEngagement(
 
     if (!done.has('finalize')) {
       await markStep(deps.db, engagementId, 'finalize', 'running', { now });
-      await deps.db
-        .update(engagements)
-        .set({ status: 'purged' })
-        .where(eq(engagements.id, engagementId));
-      await deps.db.insert(auditLog).values({
-        orgId: engagement.orgId,
-        engagementId,
-        actor: 'system',
-        action: 'purge.completed',
-        subjectType: 'engagement',
-        subjectId: engagementId,
-        metadata: {
-          objectCount: manifest.objectCount,
-          totalBytes: manifest.totalBytes,
-          manifestSha256: sha,
-        },
-        occurredAt: now,
+      /**
+       * The tombstone, the audit record and the checkpoint, one transaction —
+       * for the same reason step 3 is one.
+       *
+       * These were three separate statements. A kill landing between the audit
+       * insert and the checkpoint left `finalize` at `running`, so the rerun
+       * correctly re-entered this block and wrote a **second**
+       * `purge.completed` row. Reproduced: 1 becomes 2.
+       *
+       * INV-7 survived it — the certificate is guarded by its own unique index
+       * and stayed at exactly one — so this is not a breach. It is worse than
+       * cosmetic all the same: `purge.completed` starts with `purge.`, which
+       * `isRetentionAction()` marks as outliving the engagement, so the
+       * duplicate is *permanent*. It lands in the one table that survives the
+       * purge precisely so RUNBOOK §6 can triage against it afterwards, and an
+       * engagement that appears to have been purged twice is exactly the
+       * question that record exists to answer.
+       *
+       * The `running` breadcrumb above stays outside the transaction on
+       * purpose: rolling it back would erase the evidence of where a failed
+       * run stopped, which is the first thing §6 looks at.
+       */
+      await deps.db.transaction(async (tx) => {
+        await tx
+          .update(engagements)
+          .set({ status: 'purged' })
+          .where(eq(engagements.id, engagementId));
+        /**
+         * Guarded as well as transactional. The transaction closes the window
+         * going forward; this closes the one engagement that fell into it
+         * *before* the fix, whose stored checkpoint still says `running` with
+         * an audit row already written. There is no unique index to conflict
+         * on — `audit_log` is deliberately append-only and unconstrained — so
+         * the check is an explicit read inside the same transaction.
+         */
+        const alreadyLogged = await tx
+          .select({ id: auditLog.id })
+          .from(auditLog)
+          .where(
+            and(
+              eq(auditLog.engagementId, engagementId),
+              eq(auditLog.action, 'purge.completed'),
+            ),
+          )
+          .limit(1);
+
+        if (!alreadyLogged[0]) {
+          await tx.insert(auditLog).values({
+            orgId: engagement.orgId,
+            engagementId,
+            actor: 'system',
+            action: 'purge.completed',
+            subjectType: 'engagement',
+            subjectId: engagementId,
+            metadata: {
+              objectCount: manifest.objectCount,
+              totalBytes: manifest.totalBytes,
+              manifestSha256: sha,
+            },
+            occurredAt: now,
+          });
+        }
+        await markStep(tx, engagementId, 'finalize', 'done', { now });
       });
-      await markStep(deps.db, engagementId, 'finalize', 'done', { now });
     }
 
     const certificate = await loadCertificate(deps.db, engagementId);

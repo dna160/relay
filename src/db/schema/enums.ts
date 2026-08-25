@@ -28,3 +28,10 @@ export const ENGAGEMENT_STATUSES = ['draft', 'active', 'archived', 'purged'] as 
 export const AGENCY_ROLES = ['admin', 'member'] as const;
 export const CARD_VISIBILITY_OVERRIDES = ['inherit', 'private'] as const;
 export const DECISIONS = ['approved', 'changes_requested'] as const;
+/**
+ * Which side recorded a decision. Deliberately its own list rather than a reuse
+ * of `possessionEnum`: possession is where the ball currently is, and this is
+ * who acted, once, in the past. They happen to share their two values today and
+ * there is no reason they must forever.
+ */
+export const DECIDER_SIDES = ['client', 'agency'] as const;

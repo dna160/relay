@@ -129,6 +129,18 @@ export async function recordDecision(
         decision: input.decision,
         decidedByContactId: input.actor.kind === 'client' ? input.actor.contactId : null,
         decidedByUserId: input.actor.kind === 'agency' ? input.actor.userId : null,
+        /**
+         * The half that survives erasure. Both FKs above are
+         * `ON DELETE SET NULL`, so deleting the person who decided leaves the
+         * record intact but anonymous; without this column it would also
+         * become unreadable, because "the client approved this" and "the
+         * agency signed it off" are the same empty row.
+         *
+         * Taken from the same discriminated `Actor` as the two ids, so the
+         * three cannot disagree — which is also the write-time half of
+         * `approvals_one_decider` that the database can no longer police.
+         */
+        decidedBySide: input.actor.kind,
         versionSha256: version.sha256,
         note,
         ip: input.ip ?? null,

@@ -282,6 +282,9 @@ export async function resetToFixtures(db: Database, now: Date): Promise<SeedResu
         decision: a.decision,
         decidedByContactId: a.decidedByContactId,
         decidedByUserId: a.decidedByUserId,
+        // Derived rather than added to the fixture shape: the fixtures already
+        // carry exactly one decider, so the side is not a new fact about them.
+        decidedBySide: a.decidedByContactId !== null ? ('client' as const) : ('agency' as const),
         versionSha256: a.versionSha256,
         note: a.note,
         ip: a.ip,

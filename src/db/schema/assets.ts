@@ -26,7 +26,7 @@ import {
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
 import { primaryId, tstz, tstzNow } from './_shared';
-import { DECISIONS } from './enums';
+import { DECIDER_SIDES, DECISIONS } from './enums';
 import { cards } from './board';
 import { engagements, clientContacts } from './engagements';
 import { users } from './tenancy';
@@ -77,6 +77,18 @@ export const approvals = pgTable(
     decidedByUserId: uuid('decided_by_user_id').references(() => users.id, {
       onDelete: 'set null',
     }),
+    /**
+     * Which side decided, recorded independently of the two FKs above.
+     *
+     * The FKs are `ON DELETE SET NULL` so that erasing a person does not
+     * destroy the dispute record they are named in — which is right, and is
+     * what GDPR erasure needs. But once both are NULL the row has lost the
+     * single most load-bearing fact in a dispute: whether *the client
+     * approved this* or *the agency signed it off*. This column is the half
+     * that survives erasure, so an anonymised approval still says what
+     * happened, just not by whom.
+     */
+    decidedBySide: text('decided_by_side', { enum: DECIDER_SIDES }).notNull(),
     /** Copied from the version at decision time (INV-3). Never a join. */
     versionSha256: char('version_sha256', { length: 64 }).notNull(),
     note: text('note'),
@@ -89,9 +101,36 @@ export const approvals = pgTable(
       'approvals_changes_require_note',
       sql`${t.decision} = 'approved' OR ${t.note} IS NOT NULL`,
     ),
-    exactlyOneDecider: check(
+    /**
+     * `num_nonnulls(contact, user) = 1` was the rule here, and it could not
+     * hold. Both FKs are `ON DELETE SET NULL`, so the instant a delete
+     * cascaded a decider to NULL the surviving row violated its own CHECK and
+     * the delete aborted. Reproduced: deleting a client contact, an agency
+     * user, an engagement, or an organisation all failed outright. The
+     * constraint was right and the FK action was right; the *pair* was
+     * impossible.
+     *
+     * Three ways out, and only one of them keeps every promise:
+     *
+     *   - `ON DELETE RESTRICT` — forbids ever deleting a contact who once
+     *     approved something, which is the ordinary case, and hands the same
+     *     impossible choice to every caller instead of solving it.
+     *   - Delete the approval — ruled out. An approval is a dispute record
+     *     that has to survive six months (ADR-004, INV-3).
+     *   - Let the row be anonymised. Erase the person, keep the record.
+     *
+     * So the rule the database enforces is the one that stays true *forever*:
+     * an approval names at most one decider, and whichever FK it carries must
+     * agree with `decided_by_side`. "Exactly one, at write time" is still
+     * guaranteed — by `recordDecision()`, which builds both columns from a
+     * discriminated `Actor` and cannot produce any other shape. The database
+     * cannot enforce that half, because after an erasure it genuinely cannot
+     * tell "never had a decider" from "had one, and they were erased".
+     */
+    deciderAgreesWithSide: check(
       'approvals_one_decider',
-      sql`num_nonnulls(${t.decidedByContactId}, ${t.decidedByUserId}) = 1`,
+      sql`(${t.decidedBySide} = 'client' AND ${t.decidedByUserId} IS NULL)
+       OR (${t.decidedBySide} = 'agency' AND ${t.decidedByContactId} IS NULL)`,
     ),
     byVersion: index('approvals_version_idx').on(t.assetVersionId, t.decidedAt),
   }),
