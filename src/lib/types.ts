@@ -169,6 +169,18 @@ export const ERROR_CODES = {
   VALIDATION_FAILED: 400,
   UNAUTHENTICATED: 401,
   /**
+   * Throttled. Introduced with the client-code rate limit — six digits and a
+   * fifteen-minute window is a guessable space, and before the limit every
+   * unused code stayed live, so a thousand requests shrank it to one in a
+   * thousand.
+   *
+   * Deliberately **not** returned by `POST /api/auth/client/request`: a
+   * distinct code there confirms a live engagement to an unauthenticated
+   * caller, which is the thing the 404-not-403 rule exists to prevent. That
+   * route stays a silent no-op. Only the verify route may answer 429.
+   */
+  RATE_LIMITED: 429,
+  /**
    * The only code that does not describe a decision the product made. It
    * carries no details to the caller — an internal failure explaining itself
    * to a client contact is an information leak with a stack trace attached.
