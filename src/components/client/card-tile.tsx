@@ -9,6 +9,24 @@
  * Rounds are shown because the client is a party to the contracted number and
  * has as much interest in round four of a two-round agreement as the agency
  * does. `--breach` still means only that: exceeded, not "due soon".
+ *
+ * ## Two marks, and deliberately nothing else
+ *
+ * LABEL-SYSTEM.md §5: the client board gets `.dieline` and `.colour-bar` and
+ * **no plate, no barcode, and nothing that costs first paint.** This is the
+ * acquisition surface with a 1.5s-on-4G budget, and both marks are one
+ * pseudo-element of pure paint on a component that stays a server component —
+ * they cost bytes in a stylesheet that was already being fetched and no
+ * JavaScript at all.
+ *
+ * There is no label-attach here either, and that is a decision rather than an
+ * omission. The attach fires on possession changing hands, and `possession` is
+ * agency-only by construction (INV-1, PRD §9) — `ClientCard` cannot express it.
+ * `awaitingYou` is the client-side shadow of the same fact, but animating it
+ * would mean a `'use client'` boundary per card on the one surface in the
+ * product with a paint budget, to dramatise a fact the hue and the `YOUR MOVE`
+ * chip already state plainly. The budget wins; MOTION.md §8 claim 1 is what is
+ * being protected.
  */
 
 import Link from 'next/link';
@@ -26,12 +44,17 @@ export function CardTile({ card, href }: { card: ClientCard; href: string }) {
     <article
       data-card-id={card.id}
       className={cn(
-        'relative bg-paper-2 border border-hairline border-rule px-3 py-2',
+        'dieline relative bg-paper-2 border border-hairline border-rule px-3 py-2',
         card.awaitingYou && 'border-rule-strong',
       )}
     >
       {/* The one place this surface uses the client hue: the card is your move. */}
-      {card.awaitingYou && <span aria-hidden="true" className="absolute inset-y-0 left-0 w-bar bg-client" />}
+      {card.awaitingYou && (
+        <span
+          aria-hidden="true"
+          className="colour-bar absolute inset-y-0 left-0 w-bar bg-client"
+        />
+      )}
 
       <h3 className="text-14 leading-snug text-ink">
         <Link href={href} className="block hover:underline">

@@ -17,6 +17,20 @@
  *
  * "Request changes", never "Reject": the client is asking for work, not
  * refusing it, and the counter this increments is a contracted revision round.
+ *
+ * ## The stamp (COMPONENTS.md §14)
+ *
+ * A decision being recorded is one of the three events that earn `animate-stamp`
+ * — two beats, scale 1.06 to 1, the weight class below the label-attach. It
+ * lands on the **record**: the mono line naming the version and hash the
+ * decision is now bound to. That line is the decision's citable half, and the
+ * mark is applied to it the moment it becomes true.
+ *
+ * It is deliberately not a timestamp rendered from the browser's clock. This
+ * panel is the client's own proof of what they just did, and a time this
+ * component invented is a time no server signed — the same rule that keeps the
+ * purge receipt from filling in a plausible object count. The record that is
+ * true here is the binding, so the binding is what gets stamped.
  */
 
 import { useState } from 'react';
@@ -65,7 +79,7 @@ export function DecisionBar({
     return (
       <section className={cn(surface, 'px-4 py-3')} aria-live="polite">
         <p className="text-14 text-ink">{decide.done}</p>
-        <p className={cn(mono, 'mt-1 text-12', muted)}>
+        <p className={cn(mono, 'animate-stamp mt-1 inline-block text-12', muted)}>
           bound to {binding}
         </p>
       </section>

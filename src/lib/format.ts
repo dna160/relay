@@ -281,6 +281,30 @@ export function formatWrapAge(wrappedAt: string | null, now: number = Date.now()
   return `WRAP +${Math.max(0, Math.floor((now - t) / MS_DAY))}d`;
 }
 
+/**
+ * The two lifecycle records with their own labels removed.
+ *
+ * `formatPurgeCountdown` and `formatWrapAge` each carry their term inside the
+ * string — `PURGE IN 48d`, `WRAP +12d` — which is right for a bare run of mono
+ * on a strip and wrong inside a `Plate`, where the `<dt>` already prints the
+ * term and the reader gets `PURGE  PURGE IN 48d`.
+ *
+ * These are a projection of those two functions and never a second computation
+ * of them: same input, same arithmetic, one label stripped. Deriving rather
+ * than recomputing is the point — two places that both work out how many days
+ * are left is two places that can disagree about it, and this number ends up in
+ * a retention notice.
+ */
+export function purgeCountdownValue(daysToPurge: number | null): string | null {
+  const full = formatPurgeCountdown(daysToPurge);
+  return full === null ? null : full.replace(/^PURGE /, '');
+}
+
+export function wrapAgeValue(wrappedAt: string | null, now: number = Date.now()): string | null {
+  const full = formatWrapAge(wrappedAt, now);
+  return full === null ? null : full.replace(/^WRAP /, '');
+}
+
 /** Plural without the "(s)" apology. */
 export function plural(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`;

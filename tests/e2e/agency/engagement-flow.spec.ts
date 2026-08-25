@@ -18,9 +18,10 @@ const ADMIN = 'sam@northline.test'; // Pro org — room under the plan limit.
 test.describe('agency engagement flow', () => {
   let seed: SeedResult;
 
-  test.beforeEach(async ({ request }) => {
+  test.beforeEach(async ({ page, request }) => {
     seed = await seedFixtures(request);
-    await signInAsAgency(request, ADMIN);
+    // `page` too: the browser has its own cookie jar. See `signInAsAgency`.
+    await signInAsAgency(request, ADMIN, page);
   });
 
   test('create -> stamp -> upload -> publish -> awaiting client', async ({ page }) => {
@@ -112,7 +113,12 @@ test.describe('agency engagement flow', () => {
 
   test('an illegal transition returns 409 INVALID_TRANSITION', async ({ request }) => {
     const response = await request.post(`/api/cards/${seed.cardId}/transition`, {
-      data: { to: 'signed_off' },
+      // `engagementId` per API-CONTRACT amendment A5: an agency mutation names
+      // its engagement in the body so the authorisation check has a subject
+      // before any row is read. Without it the route answers 400
+      // VALIDATION_FAILED and this test asserts the schema rather than the
+      // state machine — it went red for the wrong reason for a whole round.
+      data: { engagementId: seed.engagementId, to: 'signed_off' },
       failOnStatusCode: false,
     });
     expect(response.status()).toBe(409);

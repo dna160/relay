@@ -161,22 +161,87 @@ export async function latestClientCode(
 /**
  * Signs in an agency user without driving the email flow.
  *
+ * **Pass `page` whenever the test then navigates.** Playwright's `request`
+ * fixture is an *isolated* `APIRequestContext` with its own cookie jar; the
+ * browser's jar is `page.request`'s. Signing in through one and then navigating
+ * with the other lands on "Sign in to continue", and a `getByRole` for
+ * something on the portfolio then times out thirty seconds later with a message
+ * about a button rather than about a session — which is the same failure shape
+ * as DEFECT-7: a test that ran, went red or green for its own reasons, and was
+ * never measuring its subject.
+ *
+ * Both jars are signed in rather than one, because a single spec routinely does
+ * both: `request.post('/api/lanes')` for the status code and `page.goto()` for
+ * what the surface says about it. Two sessions for the same user is what the
+ * product would issue for the same person in a second tab.
+ *
  * OWNER: Phase 1. Same token gate; must 404 when the token is unset.
  */
-export async function signInAsAgency(request: APIRequestContext, email: string): Promise<void> {
+export async function signInAsAgency(
+  request: APIRequestContext,
+  email: string,
+  page?: Page,
+): Promise<void> {
   const token = process.env.E2E_SEED_TOKEN;
   if (!token) throw new Error('E2E_SEED_TOKEN is not set; see tests/e2e/_helpers.ts');
-  const response = await request.post('/api/test/session', {
-    headers: { 'x-e2e-seed-token': token },
-    data: { email },
-  });
-  if (!response.ok()) {
-    throw new Error(
-      `POST /api/test/session returned ${response.status()}. Owner: Phase 1 — an e2e sign-in ` +
-        'shortcut gated on E2E_SEED_TOKEN, absent in production.',
-    );
+  const jars = page ? [request, page.request] : [request];
+  for (const jar of jars) {
+    const response = await jar.post('/api/test/session', {
+      headers: { 'x-e2e-seed-token': token },
+      data: { email },
+    });
+    if (!response.ok()) {
+      throw new Error(
+        `POST /api/test/session returned ${response.status()}. Owner: Phase 1 — an e2e sign-in ` +
+          'shortcut gated on E2E_SEED_TOKEN, absent in production.',
+      );
+    }
   }
 }
+
+/**
+ * Drives the real magic-link flow until a verified client session is sitting on
+ * the board, and does not return until the board is the thing on screen.
+ *
+ * **Why every client test that is about the board has to call this.** The client
+ * surface takes its engagement from the cookie; with no cookie, `/e/<token>`
+ * renders the sign-in form and answers 200. A test that navigates there and
+ * then measures anything — a paint, a script list, a scroll width — has
+ * measured one email field. That was DEFECT-7, and it made an FCP budget pass
+ * for the wrong reason for a whole round.
+ *
+ * So this waits on `/board` in the URL **and** on a published fixture lane in
+ * the DOM. The URL alone is not enough: a redirect back to the landing page
+ * would still have `/board` in the history for a moment, and a lane heading is
+ * a thing only the real board can produce.
+ */
+export async function signInAsClient(
+  page: Page,
+  request: APIRequestContext,
+  engagementToken: string,
+  email: string,
+): Promise<void> {
+  await page.goto(`/e/${engagementToken}`);
+  await page.getByLabel(/email/i).fill(email);
+  await page.getByRole('button', { name: /send me a code/i }).click();
+
+  // `click()` resolves when the click dispatches, not when the request it fires
+  // resolves. Reading the code capture before the form reaches the code step is
+  // a race the suite loses roughly always.
+  await expect(page.getByLabel(/code/i)).toBeVisible();
+
+  const code = await latestClientCode(request, engagementToken, email);
+  await page.getByLabel(/code/i).fill(code);
+  await page.getByRole('button', { name: /open the workspace/i }).click();
+  await page.waitForURL(/\/board$/);
+}
+
+/**
+ * A published lane from `tests/fixtures/board.ts`. It exists on the real board
+ * and on nothing else, which is what makes it a proof that the board rendered
+ * rather than a proof that a URL resolved.
+ */
+export const BOARD_MARKER = 'Deliverables';
 
 /* ------------------------------------------------------------- assertions */
 

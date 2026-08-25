@@ -20,19 +20,43 @@
  * a breached commitment; a scheduled deletion stated on screen one, in the
  * footer of the sign-in page, and again here every single visit is the opposite
  * of a breach.
+ *
+ * ## Three marks (LABEL-SYSTEM.md §5)
+ *
+ * **The registration mark** at the head says this document was *issued* — by a
+ * system, at a moment. It is the printer's crosshair where the plates line up,
+ * and it is the only circle in a product whose radius ceiling is 3px.
+ *
+ * **The countdown is a `Plate layout="strip"`.** Hairlines rather than gaps, at
+ * the density the reference sheets have. Nothing new is stated: it is the same
+ * two records this strip already carried, now with their terms printed beside
+ * them, which is also what turns the strip into a `<dl>` a screen reader can
+ * read as terms and values rather than a run of numbers.
+ *
+ * **The hazard band** appears only inside the purge zone, and it has exactly one
+ * referent in this product: the purge boundary. Achromatic, because `--breach`
+ * means `roundsUsed > contractedRounds` and a reservation that bends once is not
+ * a reservation. Diagonals in black and white carry "there is a line here and a
+ * far side to it" without carrying "panic" — and the band never appears without
+ * the countdown beside it saying what the boundary is.
+ *
+ * Nothing here animates. The countdown ticking is on the restraint list
+ * (MOTION.md §5): a number that animates reads as urgency, and ephemerality in
+ * this product is stated, never sprung.
  */
 
 import { hrefs } from '@/lib/api-client.client';
 import {
   formatPurgeCountdown,
   formatPurgeDate,
-  formatWrapAge,
   purgeBand,
+  purgeCountdownValue,
   purgeDateISO,
+  wrapAgeValue,
   type PurgeBand,
 } from '@/lib/format';
-import { Badge, Mono } from '@/components/primitives';
-import { buttonClass, cn, muted } from '@/components/style-tokens';
+import { Badge, Plate, RegistrationMark, Rule, type PlateRow } from '@/components/primitives';
+import { buttonClass, cn } from '@/components/style-tokens';
 
 const RECORD_TONE: Record<PurgeBand, 'muted' | 'ink'> = {
   retained: 'muted',
@@ -57,11 +81,32 @@ export function WrapSlate({
   nowMs: number;
 }) {
   const band = purgeBand(daysToPurge);
-  const wrapAge = formatWrapAge(wrappedAt, nowMs);
+  const wrapAge = wrapAgeValue(wrappedAt, nowMs);
   const countdown = formatPurgeCountdown(daysToPurge);
   const purgeOn = formatPurgeDate(daysToPurge, nowMs);
   const purgeOnISO = purgeDateISO(daysToPurge, nowMs);
   const heavy = band === 'imminent' || band === 'today';
+
+  /**
+   * The strip's records, as plate rows. `RETAINED` stays a `Badge` rather than
+   * becoming a row: a retaining plan is a marker on the workspace, not a
+   * measurement of it, and a badge is what this product stamps a fact with.
+   */
+  const rows: PlateRow[] = [];
+  if (wrapAge) rows.push({ term: 'Wrap', value: wrapAge });
+  if (countdown !== null) {
+    rows.push({
+      term: 'Purge',
+      tone: RECORD_TONE[band],
+      value: (
+        <time dateTime={purgeOnISO ?? undefined} className={heavy ? 'font-semibold' : undefined}>
+          {purgeCountdownValue(daysToPurge)}
+        </time>
+      ),
+      title: purgeOn ? `Everything here is deleted on ${purgeOn}` : undefined,
+    });
+  }
+  if (archived) rows.push({ term: 'Status', tone: 'muted', value: 'READ-ONLY' });
 
   return (
     <aside
@@ -74,44 +119,18 @@ export function WrapSlate({
       )}
     >
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          {wrapAge && (
-            <>
-              <Mono tone="ink" label="Days since wrap">
-                {wrapAge}
-              </Mono>
-              <span aria-hidden="true" className={muted}>
-                ·
-              </span>
-            </>
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+          {/* This workspace was issued, on a date, by a system. */}
+          <RegistrationMark />
+
+          {rows.length > 0 && (
+            <Plate layout="strip" label="Workspace lifecycle" rows={rows} className="py-0.5" />
           )}
 
-          {countdown === null ? (
+          {countdown === null && (
             <Badge tone="neutral" label="Your agency retains this workspace indefinitely">
               RETAINED
             </Badge>
-          ) : (
-            <Mono
-              as="time"
-              dateTime={purgeOnISO ?? undefined}
-              tone={RECORD_TONE[band]}
-              label="Days until this workspace is deleted"
-              title={purgeOn ? `Everything here is deleted on ${purgeOn}` : undefined}
-              className={heavy ? 'font-semibold' : ''}
-            >
-              {countdown}
-            </Mono>
-          )}
-
-          {archived && (
-            <>
-              <span aria-hidden="true" className={muted}>
-                ·
-              </span>
-              <Mono tone="muted" label="This workspace is">
-                READ-ONLY
-              </Mono>
-            </>
           )}
         </div>
 
@@ -132,6 +151,13 @@ export function WrapSlate({
           {purgeOn ? `, ${purgeOn}` : ''}. Export now.
         </p>
       )}
+
+      {/*
+        The purge boundary, and the only place in this product that draws one.
+        `aria-hidden`, and never the only channel: the countdown directly above
+        it says what the line is and when it is crossed.
+      */}
+      {heavy && <Rule weight="hazard" className="mt-1" />}
     </aside>
   );
 }

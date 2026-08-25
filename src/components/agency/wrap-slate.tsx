@@ -23,6 +23,30 @@
  * `nowMs` is a prop rather than a `Date.now()` call. This is a client component
  * whose text is produced on the server first: reading the clock twice puts a
  * hydration mismatch one midnight boundary away from every workspace page.
+ *
+ * ## Three marks (LABEL-SYSTEM.md §5)
+ *
+ * **The registration mark** at the head says this document was *issued* — the
+ * printer's crosshair where the plates line up, and the only circle in a product
+ * whose radius ceiling is 3px.
+ *
+ * **The countdown is a `Plate layout="strip"`** — hairlines rather than gaps,
+ * at the density the reference sheets have, and a `<dl>` a screen reader can
+ * read as terms and values rather than as a run of numbers. Nothing new is
+ * stated; these are the records the strip already carried.
+ *
+ * **The hazard band** appears only inside the purge zone and has exactly one
+ * referent in this product: the purge boundary. Achromatic, because `--breach`
+ * means `roundsUsed > contractedRounds` and nothing else. It never appears
+ * without the countdown beside it saying what the line is.
+ *
+ * `WRAP` stays outside the plate. A plate carries records; `WRAP` here is a
+ * control that starts the countdown, and a button inside a `<dl>` value would be
+ * a control dressed as a measurement.
+ *
+ * Nothing on this strip animates. The countdown ticking is on the restraint
+ * list (MOTION.md §5) — a number that animates reads as urgency, and
+ * ephemerality in this product is stated, never sprung.
  */
 
 import { useRouter } from 'next/navigation';
@@ -30,14 +54,21 @@ import { agencyApi } from '@/lib/api-client.agency';
 import {
   formatPurgeCountdown,
   formatPurgeDate,
-  formatWrapAge,
   purgeBand,
+  purgeCountdownValue,
   purgeDateISO,
+  wrapAgeValue,
   type PurgeBand,
 } from '@/lib/format';
 import { useAction } from '@/lib/hooks/use-action';
-import { Badge, Mono } from '@/components/primitives';
-import { cn, muted } from '@/components/style-tokens';
+import {
+  Badge,
+  Plate,
+  RegistrationMark,
+  Rule,
+  type PlateRow,
+} from '@/components/primitives';
+import { cn } from '@/components/style-tokens';
 import { ExportControl } from './export-control';
 
 export interface WrapSlateProps {
@@ -74,10 +105,28 @@ export function WrapSlate({
   const wrap = useAction(agencyApi.wrap);
 
   const band = purgeBand(daysToPurge);
-  const wrapAge = formatWrapAge(wrappedAt, nowMs);
+  const wrapAge = wrapAgeValue(wrappedAt, nowMs);
   const countdown = formatPurgeCountdown(daysToPurge);
   const purgeOn = formatPurgeDate(daysToPurge, nowMs);
   const purgeOnISO = purgeDateISO(daysToPurge, nowMs);
+
+  const heavy = band === 'imminent' || band === 'today';
+
+  const rows: PlateRow[] = [];
+  if (wrapAge) rows.push({ term: 'Wrap', value: wrapAge });
+  if (countdown !== null) {
+    rows.push({
+      term: 'Purge',
+      tone: RECORD_TONE[band],
+      value: (
+        <time dateTime={purgeOnISO ?? undefined} className={recordWeight(band)}>
+          {purgeCountdownValue(daysToPurge)}
+        </time>
+      ),
+      title: purgeOn ? `Everything here is destroyed on ${purgeOn}` : undefined,
+    });
+  }
+  if (archived) rows.push({ term: 'Status', tone: 'muted', value: 'READ-ONLY' });
 
   return (
     <aside
@@ -87,21 +136,20 @@ export function WrapSlate({
         'sticky top-0 z-slate w-full bg-paper px-3 py-1.5 sm:h-9 sm:py-0',
         'flex flex-col justify-center border-b-hairline',
         // The strip's own border is the fourth band's extra surface area.
-        band === 'imminent' || band === 'today' ? 'border-ink' : 'border-rule-strong',
+        heavy ? 'border-ink' : 'border-rule-strong',
       )}
     >
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          {wrapAge ? (
-            <Mono tone="ink" label="Days since wrap">
-              {wrapAge}
-            </Mono>
-          ) : (
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+          {/* This workspace was issued, on a date, by a system. */}
+          <RegistrationMark />
+
+          {!wrapAge && (
             /*
-             * Not wrapped yet, so the first record is the control that starts
-             * the countdown rather than a reading of it. It is a mutation, so on
-             * an archived engagement it is disabled and says why rather than
-             * failing on submit with a 423.
+             * Not wrapped yet, so the first thing on the strip is the control
+             * that starts the countdown rather than a reading of it. It is a
+             * mutation, so on an archived engagement it is disabled and says why
+             * rather than failing on submit with a 423.
              */
             <button
               type="button"
@@ -125,36 +173,14 @@ export function WrapSlate({
             </button>
           )}
 
-          <span aria-hidden="true" className={muted}>
-            ·
-          </span>
+          {rows.length > 0 && (
+            <Plate layout="strip" label="Engagement lifecycle record" rows={rows} className="py-0.5" />
+          )}
 
-          {countdown === null ? (
+          {countdown === null && (
             <Badge tone="neutral" label="This plan retains this workspace indefinitely">
               RETAINED
             </Badge>
-          ) : (
-            <Mono
-              as="time"
-              dateTime={purgeOnISO ?? undefined}
-              tone={RECORD_TONE[band]}
-              label="Days until purge"
-              title={purgeOn ? `Everything here is destroyed on ${purgeOn}` : undefined}
-              className={recordWeight(band)}
-            >
-              {countdown}
-            </Mono>
-          )}
-
-          {archived && (
-            <>
-              <span aria-hidden="true" className={muted}>
-                ·
-              </span>
-              <Mono tone="muted" label="This engagement is">
-                READ-ONLY
-              </Mono>
-            </>
           )}
         </div>
 
@@ -179,6 +205,13 @@ export function WrapSlate({
           That did not go through. Nothing has changed — try again.
         </p>
       )}
+
+      {/*
+        The purge boundary, and the only place in this product that draws one.
+        `aria-hidden`, and never the only channel: the countdown directly above
+        says what the line is and when it is crossed.
+      */}
+      {heavy && <Rule weight="hazard" className="mt-1" />}
     </aside>
   );
 }

@@ -180,8 +180,14 @@ export const POSSESSION_CLOSED_FILL = 'bg-rule-strong';
 export const POSSESSION_CLOSED_TEXT = 'text-muted';
 
 /**
- * The only motion in the product. `--dur-chip` is 0ms under
- * `prefers-reduced-motion`, so this resolves to an instant swap rather than
- * needing a second code path.
+ * A value replacing a value, over two beats.
+ *
+ * The Tailwind key `duration-chip` is unchanged and still correct; what moved
+ * is the CSS variable behind it. It is no longer a second literal duration
+ * called `--dur-chip` — it is `--time-chip`, which is `calc(var(--dur-beat) *
+ * 2)`. There is exactly one duration token in this product and every other
+ * duration is arithmetic over it, which is what makes reduced motion a single
+ * declaration: `--dur-beat: 0ms` collapses the whole ladder at once, and no
+ * component can forget to opt in. See docs/design/MOTION.md §2.
  */
 export const crossfade = 'transition-opacity duration-chip ease-chip';

@@ -18,10 +18,46 @@
  * `nowMs` is read once here and passed down, so every retention formatter on the
  * page agrees on what "now" is and the one client component in this tree
  * reproduces the server's text exactly.
+ *
+ * ## The path token, checked exactly once
+ *
+ * The client surface takes its engagement from the **cookie** and never from
+ * the path (INV-6) — which is what makes a client session unwidenable, and is
+ * also why the path segment ended up never being looked at at all. Both
+ * `/e/{someone-elses-token}/board` and `/e/garbage/board` used to render *this*
+ * contact's own workspace, with a 200. No other engagement's data was ever
+ * served, so that was not an INV-6 breach, but two things were still wrong with
+ * it: a contact forwarded the wrong link saw a workspace and had nothing on the
+ * page to tell them it was not the one they were sent, and a pre-validated-
+ * *looking* value sat in the path for the next person to read the engagement
+ * out of the URL instead of the session.
+ *
+ * `checkClientPathToken` closes both, and this layout is the one place it is
+ * called — it wraps all six routes under `/e/[token]`, so a per-page check
+ * would be five more places to forget.
+ *
+ * **A mismatch is not a 404, and that is the load-bearing part.** The obvious
+ * rule — the path token must equal the session's engagement or else 404 — is
+ * wrong in a way that only shows up in front of a customer. The same person is
+ * routinely a contact on two engagements: two `client_contacts` rows, and
+ * verifying the second link deliberately *replaces* the cookie rather than
+ * merging it. Under that rule, a contact signed in to engagement A who clicks
+ * their perfectly valid link for engagement B is told the workspace they were
+ * invited to does not exist. So a mismatch means "this cookie is not for this
+ * workspace", and the honest response is the verify path for the engagement the
+ * **link** names — not the session's own workspace under someone else's URL.
+ *
+ * Only a token that does not parse is a 404, and it is a 404 with no session
+ * too: the landing page is where a stranger arrives, and "this is not a link"
+ * is the true answer. 404 and never 403, as everywhere else — which engagement
+ * tokens are real is not a fact an anonymous caller is entitled to.
  */
 
 import type { ReactNode } from 'react';
+import { notFound } from 'next/navigation';
+import { checkClientPathToken } from '@/lib/auth';
 import { cn, display, muted } from '@/components/style-tokens';
+import { AccessForm } from '@/components/client/access-form';
 import { formatPurgeDate, purgeBand, purgeDateISO } from '@/lib/format';
 import { PurgedReceipt } from '@/components/client/purged-receipt';
 import { PurgeTodayDialog } from '@/components/client/purge-today-dialog';
@@ -39,6 +75,38 @@ export default async function ClientWorkspaceLayout({
   params: Promise<{ token: string }>;
 }) {
   const { token } = await params;
+
+  const verdict = await checkClientPathToken(token);
+  if (verdict.state === 'malformed') notFound();
+
+  if (verdict.state === 'other_engagement') {
+    /*
+      Signed in, but to a different workspace. The session's board is emphatically
+      not what belongs under this URL, so `children` is not rendered at all — the
+      page beneath would read the engagement out of the cookie and put engagement
+      A's work on engagement B's address, which is the confusion this whole check
+      exists to end.
+
+      What is rendered instead is the sign-in path for the engagement **this
+      link** names, and a sentence saying so. Nothing here reveals whether that
+      engagement exists or who else is on it: the same form, and the same
+      response, as any other unverified visit.
+    */
+    return (
+      <div className="flex max-w-dialog flex-col gap-4">
+        <div>
+          <h1 className={cn(display, 'text-28 text-ink')}>Open this workspace</h1>
+          <p className={cn('mt-1 text-14', muted)}>
+            You are signed in to a different workspace. This link is for another one — confirm your
+            email to open it. Signing in here replaces the workspace you have open now; the other
+            link still works.
+          </p>
+        </div>
+        <AccessForm engagementToken={token} />
+      </div>
+    );
+  }
+
   const board = await getClientBoard();
 
   if (!board.ok) {

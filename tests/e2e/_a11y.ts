@@ -24,6 +24,7 @@
  * here (that is `invite-verify-approve.spec.ts`'s job, with `RouteRecorder`).
  */
 
+import { createHmac } from 'node:crypto';
 import { expect, type Page } from '@playwright/test';
 import {
   ALLOWED_ANIMATION_NAMES,
@@ -45,8 +46,45 @@ import {
   type TokenName,
 } from '@/styles/a11y-contract';
 
-/** A token, a shell, and no data behind it. */
-export const PROBE_ROUTE = '/e/a11y-probe/verify';
+/**
+ * A token, a shell, and no data behind it.
+ *
+ * The token has to carry a **real signature** now. `/e/[token]/layout.tsx`
+ * calls `checkClientPathToken`, and a segment that does not parse is a 404 —
+ * which is the product behaving correctly (`src/lib/auth.ts`: the landing page
+ * is where a stranger arrives, and "this is not a link" is the true answer). So
+ * the probe moved rather than the rule.
+ *
+ * The engagement id it names does not exist and does not need to. The verify
+ * page renders a form and nothing else, and the layout's board read fails the
+ * way it fails for every unverified reader — children rendered bare. This suite
+ * therefore keeps the property it was built for: **it touches no database and
+ * waits on no seed endpoint**, which is what lets the accessibility floor stay
+ * checkable while the rest of the e2e suite is red.
+ *
+ * The HMAC is restated here rather than imported. `engagementToken()` lives in
+ * `src/lib/auth.ts` next to `next-auth` and `next/headers`, neither of which
+ * loads under Playwright's ESM loader. If the derivation in `auth.ts` ever
+ * moves, this probe 404s and every assertion in both a11y suites fails at
+ * `assertShellLoaded` — loudly, and naming the route.
+ */
+const PROBE_ENGAGEMENT = '00000000-0000-7000-8000-0000a11a11ce';
+
+function probeToken(): string {
+  const secret = process.env.CLIENT_LINK_SECRET;
+  if (!secret) {
+    throw new Error(
+      'CLIENT_LINK_SECRET is not set; the a11y probe route needs it to mint a parseable ' +
+        'client link token. See PROBE_ROUTE in tests/e2e/_a11y.ts.',
+    );
+  }
+  const signature = createHmac('sha256', Buffer.from(secret, 'utf8'))
+    .update(`engagement:${PROBE_ENGAGEMENT}`)
+    .digest('base64url');
+  return `${PROBE_ENGAGEMENT}.${signature}`;
+}
+
+export const PROBE_ROUTE = `/e/${probeToken()}/verify`;
 
 /**
  * Chrome the dev server injects, which is not the product.

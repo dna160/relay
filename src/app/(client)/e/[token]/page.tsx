@@ -8,6 +8,7 @@
 
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
+import { checkClientPathToken } from '@/lib/auth';
 import { cn, display, muted } from '@/components/style-tokens';
 import { AccessForm } from '@/components/client/access-form';
 import { getClientBoard } from '../../_lib/reads';
@@ -20,8 +21,20 @@ export default async function ClientLandingPage({
   params: Promise<{ token: string }>;
 }) {
   const { token } = await params;
+  /*
+    The redirect is gated on the path token naming *this* session's engagement.
+    Without that gate, a contact signed in to engagement A who opens their valid
+    link for engagement B is bounced to B's board URL carrying A's cookie —
+    where the layout would then correctly refuse to serve it, having already
+    thrown away the landing page that could have explained why. The layout is
+    still the authority; this only stops the page racing it.
+
+    A page in a route group renders in parallel with its layout, so a `redirect()`
+    here fires even when the layout discards these children.
+  */
+  const verdict = await checkClientPathToken(token);
   const board = await getClientBoard();
-  if (board.ok) redirect(`/e/${token}/board`);
+  if (board.ok && verdict.state === 'ok') redirect(`/e/${token}/board`);
 
   return (
     <div className="flex max-w-dialog flex-col gap-4">

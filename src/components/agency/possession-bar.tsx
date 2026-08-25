@@ -1,9 +1,33 @@
+'use client';
+
 /**
  * PossessionBar — the signature element (DESIGN-SYSTEM.md).
  *
  * A 3px bar along a card's leading edge, filled in `--agency` or `--client`,
  * with a mono label giving elapsed time in that possession. At board level the
  * bars form a column of who is holding the work.
+ *
+ * ## The printed colour bar, and the second pass of ink
+ *
+ * `.colour-bar` (globals.css §7) reads the bar as a press control strip rather
+ * than as a border: one knockout notch 5px from the head. That static mark is
+ * what makes the bar read as ink laid *on* the card, and it is the reason the
+ * motion below is a wipe and not a fade.
+ *
+ * When possession changes hands the bar is re-keyed and redrawn top to bottom
+ * with `animate-bar-draw origin-head` — three beats, delayed two so it begins
+ * on the beat the label-attach strike lands (MOTION.md §3 R3). **The hue is
+ * already the new one when this runs.** Nothing crossfades: a fade says "this
+ * value was replaced", a wipe says "this mark was applied", and possession
+ * changing hands is the one event in the product that has earned the second
+ * reading.
+ *
+ * This module is `'use client'` for exactly one reason: knowing that possession
+ * *changed* requires memory of what it was, and the server has none. Nothing
+ * animates on first render — `useOneEvent` reports no event until it has seen
+ * one — so the server-rendered board is still and the FCP budget is untouched.
+ * The file is imported only from `components/agency/`, so none of this reaches
+ * the client bundle, where the budget actually lives.
  *
  * Agency surface only. Possession is internal-only in v1 (PRD §9) and this file
  * lives under `components/agency/` so that importing it into the client bundle
@@ -37,6 +61,7 @@
 import { POSSESSION } from '@/domain/card/state-machine';
 import type { CardState, Possession, PossessionSplit } from '@/lib/types';
 import { formatDuration, formatPossession } from '@/lib/format';
+import { useOneEvent } from '@/lib/hooks/use-one-event';
 import {
   POSSESSION_CLOSED_FILL,
   POSSESSION_CLOSED_TEXT,
@@ -77,7 +102,20 @@ export function PossessionEdge({
 }) {
   const { side } = heldBy(possession, state);
   const fill = side ? POSSESSION_FILL[side] : POSSESSION_CLOSED_FILL;
-  return <span aria-hidden="true" className={cn('absolute inset-y-0 left-0 w-bar', fill)} />;
+  const drawn = useOneEvent([['possession', side]] as const);
+  return (
+    <span
+      // A changed key is the whole mechanism: React remounts the bar and the
+      // CSS animation runs from zero. MOTION.md §4c, step 2.
+      key={drawn.seq}
+      aria-hidden="true"
+      className={cn(
+        'colour-bar absolute inset-y-0 left-0 w-bar',
+        fill,
+        drawn.kind === 'possession' && 'animate-bar-draw origin-head',
+      )}
+    />
+  );
 }
 
 /** `client · 6d`. Mono, because it is a record of who held the work. */
@@ -122,6 +160,7 @@ export function PossessionBar({
 }) {
   const { side, unstarted } = heldBy(possession, state);
   const fill = side ? POSSESSION_FILL[side] : POSSESSION_CLOSED_FILL;
+  const drawn = useOneEvent([['possession', side]] as const);
   const split = unstarted
     ? UNSTARTED_TITLE
     : `agency ${formatDuration(possession.agencyMs)} · client ${formatDuration(
@@ -129,7 +168,15 @@ export function PossessionBar({
       )}`;
   return (
     <span className="inline-flex items-center gap-2" title={split}>
-      <span aria-hidden="true" className={cn('block h-4 w-bar', fill)} />
+      <span
+        key={drawn.seq}
+        aria-hidden="true"
+        className={cn(
+          'colour-bar block h-4 w-bar',
+          fill,
+          drawn.kind === 'possession' && 'animate-bar-draw origin-head',
+        )}
+      />
       <PossessionLabel possession={possession} state={state} />
     </span>
   );
