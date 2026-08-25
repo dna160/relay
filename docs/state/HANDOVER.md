@@ -1,100 +1,63 @@
-# HANDOVER — written after phases 0–4, for the Phase 5/6 session
+# HANDOVER — after Phase 9's build, for the session that closes the shadow window
 
-> Overwrite this file each session. It is a note to the next session, not a log.
-> What is true now / what I changed / what will bite you / start here.
+> What is true now / what changed / what will bite you / start here.
 
 ## What is true now
 
-`npm run verify:all` is green: typecheck, lint, `next build`, 341 unit tests and
-113 invariant assertions across 9 of 10 enforcing suites. Phases 0–4 are
-complete, 5 and 7 are partial by deliberate choice (see PROGRESS.md).
+`npm run verify` green — **632 assertions** (487 unit, 145 invariant).
+`npm run test:db` 40 passed. `next build` clean. e2e **86/86** with object
+storage present; two tests refuse to conclude without it rather than passing
+vacuously.
 
-Both surfaces exist and build. The client board and queue ship **178 B** of
-route JS on a 103 kB shared baseline — server components end to end, which is
-how the 1.5s-on-4G budget is met. The agency and client bundles are provably
-separate: the audit is negative-controlled, and reintroducing the leak produces
-12 hits including the entire agency route map inlined into a client chunk.
+Phases 0–6 are complete, 5 and 7 partial, 8 not started. **Phase 9 is built but
+not done** — see below. Phases 10–13 are specified with phase files.
+
+## Phase 9 is not finished, and it is not supposed to look finished
+
+The schema, backfill, `resolveAccess()` and the shadow harness are all in and
+measured. `resolveAccess()` p99 is **1.024 ms** against a 5 ms NFR, on 275,000
+project memberships, with no sequential scan. The backfill is idempotent and
+reversible, proven by an md5 census of all 26 tables being byte-identical
+before a run and after its rollback.
+
+**None of that is the exit condition.** The exit condition is seven consecutive
+days at zero shadow disagreements, then deleting the old path, then unskipping
+INV-11's behavioural half. `npm run access:shadow` is the gate and it says
+`NOT YET`.
+
+Do not shorten this. The v1.1 handover named it as the trap, and the reason is
+that everything about the new code looks right — which is exactly the state in
+which people delete the thing that would have told them otherwise.
 
 ## What will bite you
 
-Read these before you touch anything.
-
-1. **No Postgres has ever run this code.** Docker Hub was unreachable on the
-   build machine. The three migrations, the seed's insert ordering, the
-   `LISTEN`/`NOTIFY` reconnect path, the Auth.js session cookie name,
-   `FOR UPDATE` locking, and both `approvals` CHECK constraints are compile- and
-   SQL-compile verified and **never executed**. Your first task is
-   `docker compose up -d db && npm run db:migrate`, and you should expect to find
-   something. The likeliest single point of failure is the Auth.js cookie name —
-   `authjs.session-token` versus the `__Secure-` prefix. Both are set.
-
-2. **The handover gate is `npm run verify:all`, not `npm run verify`.** Plain
-   `verify` does not run the build. A `'use server'` file exporting a non-async
-   const passes typecheck and lint and fails page-data collection — that shipped
-   in round 3 and only the build caught it. `verify:all` needs dummy env:
-   `DATABASE_URL`, `AUTH_SECRET`, `CLIENT_LINK_SECRET`, `NEXT_PUBLIC_APP_URL`.
-
-3. **`docs/API-CONTRACT.md` has an Amendments section, A1–A12, and it
-   supersedes the body of that document.** A1 in particular corrects a
-   contract-level INV-6 violation: the frozen contract specified one SSE stream
-   taking `?engagementId=`, which for a client session is precisely what INV-6
-   forbids. Do not implement from the body alone.
-
-4. **The visibility guard enumerates by reachability, not signature.** Any query
-   transitively reachable from `src/app/api/client/**` needs a case in
-   `visibility.spec.ts`. It was originally signature-based ("takes a
-   `ClientScope`") and that turned out to be escapable by composing a read out of
-   already-registered pieces. Do not "fix" a failure by removing the
-   `ClientScope` parameter — that is the hole it was rebuilt to close.
-
-5. **Never edit `tests/invariants/` to make a build pass.** There is a CI gate,
-   `check-invariant-weakening`, that diffs against the PR base and fails on any
-   removed assertion or newly-added `.skip`. Adding and tightening pass silently.
-   A new `.skip` in that directory trips it even legitimately — put phase-gated
-   skips in `tests/unit/` instead, as `comment-writer.spec.ts` does.
-
-6. **`src/domain/card/transition-card.ts` is hardcoded into the INV-2 scan.**
-   Moving the persister fails the build. That is intentional.
-
-7. **Colour encodes possession, never urgency.** `--breach` is exhaustively one
-   thing: `roundsUsed > contractedRounds`. Not overdue dates, not validation
-   errors, not server errors — all of those are bold `--ink` with a leading rule
-   and `role="alert"`. A reservation is only worth something if it is absolute.
-
-8. **A contrast assertion cannot catch a wrong-but-legible colour.** This bit
-   twice. `UNTENANTED_AGENCY` in `src/styles/a11y-contract.ts` asserts exact
-   painted values per mode; keep it, and add to it rather than relying on ratios.
-
-## What changed from the frozen delivery package
-
-- Product renamed **Handoff → Relay**, recorded in the PRD with its date.
-- Agency engagement routes are `/w/[id]`, not `/e/[id]` — a real Next.js route
-  collision with the client's `/e/[token]`, which could not move because it is
-  the link printed in emails. ARCHITECTURE.md corrected.
-- Round counting increments in `transitionCard`, not `record-decision.ts` where
-  PHASE-3 put it. An agency member can take the same edge via the transition
-  route; two sites would disagree and that number ends up in an invoice dispute.
-- **One npm dependency added** in the whole build: `railway`, under ADR-019,
-  because Railway deprecated Config as Code with a hard 2026-12-01 cutoff and
-  new services cannot opt in. `.railway/**` is now in tsconfig and eslint —
-  dot-directories are skipped by both by default, and it was the only TypeScript
-  here that nothing checked.
-- Eight ADRs (012–019) were produced by the build itself, on top of the original
-  eleven.
+1. **The harness has no flag that returns the new answer.** That is deliberate:
+   a wrapper with one is a wrapper someone flips during an incident. If you want
+   the new answer in production, you have finished the window.
+2. **`daysLive` is 0 until a row exists.** An empty table cannot distinguish a
+   clean week from an unwired harness, so the dashboard refuses to unlock on
+   emptiness alone. Do not "fix" this.
+3. **Explicit `project_memberships` were written only for v1 `member`s.** Admins
+   derive under D3. A row for everybody was simpler and would have made the
+   harness agree trivially — with the org-derived branch never executing, so
+   seven clean days would prove only that the backfill ran.
+4. **Reviewers are not shadowed**, deliberately: `resolveAccess()` answers for
+   accounts, and a reviewer is a `client_contacts` row with no account. Stated
+   in the file so the gap is a decision rather than an omission.
+5. **The deprecated positional overloads** on `countActiveEngagements` /
+   `evaluatePlanGate` / `assertCanOpenEngagement` are dated to the same step 4.
+   The shim throws if its rows span more than one organization, so it cannot
+   become the silent cross-tenant count it is being retired for.
+6. **`engagement` in code is `project` in the PRD.** Still the same object.
+   Phase 11 at the earliest, and only if free.
 
 ## Start here
 
-1. `CLAUDE.md`, this file, `docs/state/PROGRESS.md`, then
-   `docs/phases/PHASE-6.md`. Nothing else until a task names it.
-2. `docker compose up -d db && npm run db:migrate`. Fix what that finds before
-   writing anything new — every phase after this one inherits it.
-3. Run the e2e suite. 22 tests exist and have never executed. They are the real
-   check on phases 1–4, and until they run those phases are complete only in the
-   sense that a compiler agrees with them.
-4. **Then** Phase 6. It is the one with the largest blast radius: purge is
-   irreversible by design, so build `purge:plan` and the four warnings before
-   anything that deletes. INV-7 is the last skipped suite.
-5. Before Phase 6 writes the certificate, get PRD §9's tombstone-vs-certified-
-   destruction decision resolved. The certificate's legal wording depends on it
-   and it is cheaper to answer now than to reword a compliance artifact that has
-   already been emitted to a client's legal team.
+1. `npm run access:shadow`. If it says `NOT YET`, Phase 9 is not done and the
+   answer is to leave it running, not to work around it.
+2. While it runs, Phase 10 (auth and invites) is unblocked and independent —
+   `docs/phases/PHASE-10.md`. Its trap is the mail scanner: a GET on the sign-in
+   link twice, before any human acts, must leave the token valid.
+3. D4 and D5 still block Phase 12. D1/D2/D3 are answered in ADR-022.
+4. **Deploy and rollback have still never been executed.** Carried since Phase
+   8, and the largest open risk in the build.

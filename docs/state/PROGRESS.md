@@ -20,7 +20,7 @@
 | 7 | Templates, white-label, plan gates | 🟡 partial — white-label lock shipped; `applyTemplate()` does not exist |
 | 8 | Hardening & deploy | ⬜ not started |
 | — | *v1.1 platform layer below — specified, not started* | |
-| 9 | Identity and tenancy migration | 🟡 in progress — D3 answered (ADR-022) |
+| 9 | Identity and tenancy migration | 🟡 built — awaiting the shadow window |
 | 10 | Auth and invites | ⬜ not started |
 | 11 | Multi-org navigation and teams | ⬜ not started |
 | 12 | Document ingestion | 🔴 blocked on D4, D5 |
@@ -93,6 +93,20 @@ Phase files now exist for all of 9–13. The package shipped 9 and 12; 10, 11 an
 **D1, D2 and D3 are resolved** (ADR-022, 2026-08-25), which unblocks Phases 9
 and 13. D4 and D5 still block Phase 12 — the model sub-processor default, and
 what a low-confidence extraction should do.
+
+## The shadow window — Phase 9's real exit condition
+
+Phase 9's code is built, measured and green. It is **not** done, and the
+difference is the point of the phase.
+
+`npm run access:shadow` is the gate. Every agency permission check now runs the
+old inline logic **and** `resolveAccess()`, returns the old answer, and records
+disagreements. The old path may be deleted only after seven consecutive days at
+zero — and INV-11's behavioural half is unskipped only after that deletion.
+
+The dashboard currently reads `NOT YET`, correctly: 60 clean days but **no rows
+yet**, and an empty table means either a clean week or a harness nobody wired
+up. Those must not look the same, so `daysLive` stays 0 until a row exists.
 
 ## Open product decisions
 

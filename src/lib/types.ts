@@ -8,8 +8,22 @@
  */
 
 import type { CardState, Possession } from '@/domain/card/state-machine';
+import type { AccessResult, AccessVia, OrgRole, ProjectRole } from '@/domain/access/roles';
 
 export type { CardState, Possession };
+
+/**
+ * The permission graph's vocabulary (ADR-021), re-exported so both sides import
+ * it from one place and neither redeclares it.
+ *
+ * `Session` deliberately does **not** gain ADR-021 §4's `'account'` and
+ * `'reviewer'` variants yet. They belong to Phase 10, when auth can actually
+ * produce one: adding them now would force every existing `switch` to handle
+ * kinds nothing can construct, and the Phase 9 shadow window needs the old
+ * session shape unchanged so the two permission paths stay comparable. A union
+ * that grows before its constructors is a union everyone widens a default for.
+ */
+export type { AccessResult, AccessVia, OrgRole, ProjectRole };
 
 /* ------------------------------------------------------------------ session */
 
