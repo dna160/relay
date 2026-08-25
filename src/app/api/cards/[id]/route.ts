@@ -15,7 +15,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { db } from '@/db/client';
 import { loadEngagementDetail } from '@/db/queries/engagements';
-import { reorderCards, updateCard } from '@/domain/card/mutate';
+import { updateAndPlaceCard, updateCard } from '@/domain/card/mutate';
 import { assertWritable } from '@/domain/engagement/lifecycle';
 import { validationFailed } from '@/domain/errors';
 import { toErrorResponse } from '@/lib/errors';
@@ -66,20 +66,20 @@ export async function PATCH(
     const { engagementId: _engagementId, laneId, position, ...patch } = body;
 
     if (laneId !== undefined || position !== undefined) {
-      const card = await updateCard(db, engagement.id, id, patch, now);
-      await reorderCards(
+      // One transaction: an edit that names an unreachable lane must leave the
+      // prose unwritten too, or the 404 it returns is a lie about what happened.
+      const card = await updateAndPlaceCard(
         db,
         engagement.id,
-        [{ cardId: id, laneId: laneId ?? card.laneId, position: position ?? card.position }],
+        id,
+        patch,
+        {
+          ...(laneId === undefined ? {} : { laneId }),
+          ...(position === undefined ? {} : { position }),
+        },
         now,
       );
-      return NextResponse.json({
-        card: {
-          ...card,
-          laneId: laneId ?? card.laneId,
-          position: position ?? card.position,
-        },
-      });
+      return NextResponse.json({ card });
     }
 
     const card = await updateCard(db, engagement.id, id, patch, now);

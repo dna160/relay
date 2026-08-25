@@ -13,8 +13,8 @@
  * radius.
  */
 
-import { createHmac, randomInt, timingSafeEqual, createHash } from 'node:crypto';
-import { and, eq, lt } from 'drizzle-orm';
+import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
+import { and, count, eq, lt } from 'drizzle-orm';
 import NextAuth, { type NextAuthConfig } from 'next-auth';
 import Resend from 'next-auth/providers/resend';
 import { DrizzleAdapter } from '@auth/drizzle-adapter';
@@ -27,6 +27,10 @@ import {
   clientContacts,
   users,
 } from '@/db/schema';
+import {
+  clientCodeIdentifier,
+  clientThrottleIdentifier,
+} from '@/domain/engagement/client-token-identity';
 import type { AgencyRole, Session } from '@/lib/types';
 
 /* ------------------------------------------------------------------ agency */
@@ -188,6 +192,75 @@ export function verifyClientSession(raw: string, now: Date): ClientSessionPayloa
   return { contactId, engagementId, exp };
 }
 
+/* ------------------------------------------------- the token in the URL bar */
+
+/**
+ * What the `[token]` segment of a `/e/{token}/…` URL means for this request.
+ *
+ * The client surface takes its engagement from the cookie and never from the
+ * path (INV-6) — which is what makes the session unwidenable, and is also why
+ * the path segment ended up never being looked at at all.
+ * `/e/{someone-elses-token}/board` and `/e/garbage/board` both render *this*
+ * contact's own workspace, with a 200.
+ *
+ * No other engagement's data is ever served, so this is not an INV-6 breach.
+ * Two things are still wrong with it:
+ *
+ *   - A contact forwarded the wrong link sees a workspace, believes it is the
+ *     one they were sent, and has nothing on the page to tell them otherwise.
+ *     In a product whose whole access model is "one contract, one link", a link
+ *     that silently means nothing is its own kind of failure.
+ *   - It leaves a pre-validated-*looking* value sitting in the path. The next
+ *     person to read the engagement from the URL instead of the session
+ *     inherits something that was never checked, and that mistake would be a
+ *     real INV-6 breach.
+ *
+ * ## Why a mismatch is not a 404
+ *
+ * The obvious rule — "the path token must equal the session's engagement, else
+ * 404" — is wrong, and wrong in a way that would only show up in front of a
+ * customer. The same person is routinely a contact on two engagements: they are
+ * two `client_contacts` rows, and verifying the second link deliberately
+ * *replaces* the cookie rather than merging it. Under that rule, a contact
+ * signed in to engagement A who clicks their perfectly valid link for
+ * engagement B gets "not found" for a workspace they were invited to.
+ *
+ * So a mismatch is not an error at all. It means "this cookie is not for this
+ * workspace", and the honest response is the one the surface already has for
+ * that: the verify path for the engagement the *link* names. Only a token that
+ * does not parse is a 404 — and that one is a 404 even with no session, because
+ * the landing page is where a stranger arrives and "this is not a link" is the
+ * true answer.
+ *
+ * 404 and never 403, as everywhere else: which engagement tokens are real is
+ * not a fact an anonymous caller is entitled to.
+ */
+export type PathTokenVerdict =
+  /** Serve the workspace: either no client session yet, or it names this one. */
+  | { state: 'ok'; engagementId: string }
+  /** 404. The segment is not a signed token at all. */
+  | { state: 'malformed' }
+  /**
+   * Render the **verify path for `engagementId`**. Do not 404, and do not serve
+   * the session's own workspace under this URL.
+   */
+  | { state: 'other_engagement'; engagementId: string };
+
+export async function checkClientPathToken(
+  pathToken: string,
+  now = new Date(),
+): Promise<PathTokenVerdict> {
+  const named = readEngagementToken(pathToken);
+  if (!named) return { state: 'malformed' };
+
+  const session = await getSession(now);
+  if (!session || session.kind !== 'client') return { state: 'ok', engagementId: named };
+
+  return named === session.engagementId
+    ? { state: 'ok', engagementId: named }
+    : { state: 'other_engagement', engagementId: named };
+}
+
 export const clientCookieName = CLIENT_COOKIE;
 
 export function clientCookieOptions(maxAge: number) {
@@ -207,9 +280,8 @@ export function newClientCode(): string {
   return String(randomInt(0, 1_000_000)).padStart(6, '0');
 }
 
-function codeIdentifier(engagementId: string, email: string): string {
-  return `client:${engagementId}:${email.toLowerCase()}`;
-}
+/** Shared with the purge worker, which deletes these rows. */
+const codeIdentifier = clientCodeIdentifier;
 
 /** Only the hash is stored. A database dump is not a set of live magic links. */
 function codeHash(engagementId: string, email: string, code: string): string {
@@ -225,16 +297,19 @@ export async function storeClientCode(
   now: Date,
 ): Promise<void> {
   const identifier = codeIdentifier(engagementId, email);
-  // Expired rows for this identifier are swept on the way past, so the table
-  // does not grow one row per abandoned attempt forever.
+  /**
+   * **Every** prior code for this identifier goes, not just the expired ones.
+   *
+   * Sweeping only expired rows left every requested-but-unused code live at
+   * once, and a six-digit code is only as strong as the number of them that
+   * would be accepted: requesting a thousand codes turned a 1-in-10^6 guess
+   * into 1-in-10^3 without any of them ever being used. Exactly one code is
+   * live per contact per engagement, which is also what "we sent you a new
+   * code" means to the person reading the email.
+   */
   await db
     .delete(authVerificationTokens)
-    .where(
-      and(
-        eq(authVerificationTokens.identifier, identifier),
-        lt(authVerificationTokens.expires, now),
-      ),
-    );
+    .where(eq(authVerificationTokens.identifier, identifier));
   await db.insert(authVerificationTokens).values({
     identifier,
     token: codeHash(engagementId, email, code),
@@ -262,6 +337,114 @@ export async function consumeClientCode(
   const row = deleted[0];
   if (!row) return false;
   return row.expires.getTime() > now.getTime();
+}
+
+/* ------------------------------------------------------------- throttling */
+
+/**
+ * Rate limiting on the one surface that has no password behind it.
+ *
+ * A client contact proves themselves with six digits. Six digits is 10^6, a
+ * 15-minute window is 900 seconds, and an attacker who can put a thousand
+ * requests a second at `POST /api/auth/client/verify` walks the whole space
+ * inside one code's lifetime. Without a limit the link is not protected by the
+ * code at all; it is protected by nobody having tried. That is the whole of
+ * INV-6's practical strength, so the limit is not optional.
+ *
+ * ## Why the counters live in `auth_verification_tokens`
+ *
+ * They need to be shared across app replicas — an in-process counter is
+ * defeated by a second container, which is the deployment shape Railway gives
+ * us — and they need to expire on their own. That is exactly what this table
+ * already is: `(identifier, token)` unique, `expires` timestamped, rows nobody
+ * mourns. A dedicated table would need a migration, a `TABLE_DISPOSITION`
+ * entry, and its own sweeper, to store strictly less. The identifiers are
+ * namespaced so a throttle row can never collide with a code row.
+ *
+ * ## Why the attempt is recorded *before* it is counted
+ *
+ * Count-then-insert has a window: N concurrent guesses all read the same count
+ * and all pass. Insert-then-count closes it, because every concurrent attempt
+ * is already visible to the others by the time any of them counts. The bound
+ * holds under a burst, which is the only kind of attempt that matters here.
+ */
+
+/** Guesses per contact per engagement per window. Cleared on success. */
+export const CLIENT_VERIFY_MAX_ATTEMPTS = 10;
+/** Codes sent to one address for one engagement per window. */
+export const CLIENT_REQUEST_MAX = 5;
+/** Matches the code TTL: a budget that outlives the code it guards is not one. */
+export const CLIENT_THROTTLE_WINDOW_MINUTES = CLIENT_CODE_TTL_MINUTES;
+
+/**
+ * Records one occurrence and returns how many are live in the window,
+ * this one included. Expired rows for the identifier are swept on the way past
+ * so the table does not accumulate.
+ */
+async function recordAndCount(identifier: string, now: Date): Promise<number> {
+  const expires = new Date(now.getTime() + CLIENT_THROTTLE_WINDOW_MINUTES * 60 * 1000);
+
+  await db
+    .delete(authVerificationTokens)
+    .where(
+      and(
+        eq(authVerificationTokens.identifier, identifier),
+        lt(authVerificationTokens.expires, now),
+      ),
+    );
+
+  // The token column is the unique half of the key, so each occurrence needs a
+  // value of its own. It is never read back — only counted.
+  await db.insert(authVerificationTokens).values({
+    identifier,
+    token: randomBytes(16).toString('base64url'),
+    expires,
+  });
+
+  const rows = await db
+    .select({ n: count() })
+    .from(authVerificationTokens)
+    .where(eq(authVerificationTokens.identifier, identifier));
+  return rows[0]?.n ?? 0;
+}
+
+/**
+ * @returns false when this attempt is over budget and must not be allowed to
+ * test a code. The attempt is still charged — an attacker does not get free
+ * guesses by being over the limit.
+ */
+export async function chargeVerifyAttempt(
+  engagementId: string,
+  email: string,
+  now: Date,
+): Promise<boolean> {
+  const used = await recordAndCount(clientThrottleIdentifier('verify', engagementId, email), now);
+  return used <= CLIENT_VERIFY_MAX_ATTEMPTS;
+}
+
+/**
+ * Only a *successful* verification clears the budget. Requesting a fresh code
+ * deliberately does not: otherwise the attacker resets their own allowance by
+ * asking for a code they never receive.
+ */
+export async function clearVerifyAttempts(engagementId: string, email: string): Promise<void> {
+  await db
+    .delete(authVerificationTokens)
+    .where(eq(authVerificationTokens.identifier, clientThrottleIdentifier('verify', engagementId, email)));
+}
+
+/**
+ * @returns false when this address has already been sent its allowance of codes
+ * for this engagement. Charged whether or not the address is a real contact, so
+ * the throttle cannot be used to tell the two apart.
+ */
+export async function chargeCodeRequest(
+  engagementId: string,
+  email: string,
+  now: Date,
+): Promise<boolean> {
+  const used = await recordAndCount(clientThrottleIdentifier('request', engagementId, email), now);
+  return used <= CLIENT_REQUEST_MAX;
 }
 
 /* --------------------------------------------------------------- resolution */

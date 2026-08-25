@@ -43,8 +43,12 @@ import { sha256Hex } from './certificate';
  *   tombstone window (ADR-007). Scheduling its removal is blocked on PRD §9.
  * - `retained` — rows survive on purpose, because they are the evidence that
  *   the purge happened. Deleting these is the one unrecoverable outcome.
- * - `partial` — some rows go, some stay. `audit_log` is the only one: retention
- *   actions outlive the engagement, everything else goes with it (DATA-MODEL).
+ * - `partial` — some rows go, some stay. `audit_log`: retention actions outlive
+ *   the engagement, everything else goes with it (DATA-MODEL).
+ *   `auth_verification_tokens`: the rows keyed to this engagement's client
+ *   contacts go, because their identifiers contain those contacts' email
+ *   addresses; every other row in that table belongs to an agency magic link
+ *   and has nothing to do with any engagement.
  * - `unscoped` — the table has no engagement, so a purge has nothing to do here.
  */
 export type TableDisposition = 'content' | 'tombstone' | 'retained' | 'partial' | 'unscoped';
@@ -71,10 +75,16 @@ export const TABLE_DISPOSITION: Readonly<Record<string, TableDisposition>> = {
   purge_certificates: 'retained',
   purge_manifest: 'retained',
 
+  /**
+   * Client one-time codes and their rate-limit counters are keyed by
+   * `client:{engagementId}:{email}` and go with the engagement; agency
+   * magic-link rows in the same table do not.
+   */
+  auth_verification_tokens: 'partial',
+
   /* Not engagement-scoped; a purge has no business here. */
   auth_accounts: 'unscoped',
   auth_sessions: 'unscoped',
-  auth_verification_tokens: 'unscoped',
   organizations: 'unscoped',
   templates: 'unscoped',
   users: 'unscoped',

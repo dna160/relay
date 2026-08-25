@@ -11,5 +11,16 @@ export { Field, Textarea, type FieldProps, type TextareaProps } from './Field';
 export { Dialog, type DialogProps } from './Dialog';
 export { Badge, type BadgeProps, type BadgeTone } from './Badge';
 export { Mono, type MonoProps } from './Mono';
+export { Plate, type PlateProps, type PlateRow } from './Plate';
+export {
+  Barcode,
+  code39Path,
+  normaliseForCode39,
+  type BarcodeProps,
+} from './Barcode';
+export {
+  RegistrationMark,
+  type RegistrationMarkProps,
+} from './RegistrationMark';
 export { Rule, type RuleProps } from './Rule';
 export { Stack, Row, type StackProps, type RowProps, type Gap } from './Stack';

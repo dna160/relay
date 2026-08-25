@@ -46,12 +46,13 @@
  * that is the failure this whole subsystem exists to prevent.
  */
 
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, like, sql } from 'drizzle-orm';
 import type { Database, Executor } from '@/db/types';
 import {
   approvals,
   assetVersions,
   auditLog,
+  authVerificationTokens,
   cards,
   clientContacts,
   comments,
@@ -65,6 +66,7 @@ import {
   type PurgeStep,
   type PurgeStepStatus,
 } from '@/db/schema';
+import { clientTokenIdentifierPrefixes } from '@/domain/engagement/client-token-identity';
 import {
   canSignCertificates,
   signCertificate,
@@ -632,6 +634,24 @@ async function destroyContent(tx: Executor, engagementId: string): Promise<void>
   await tx.delete(lanes).where(eq(lanes.engagementId, engagementId));
   await tx.delete(referenceFiles).where(eq(referenceFiles.engagementId, engagementId));
   await tx.delete(clientContacts).where(eq(clientContacts.engagementId, engagementId));
+
+  /**
+   * The client contact's email address survives in `auth_verification_tokens`
+   * otherwise — the identifier of an outstanding one-time code, or of a
+   * rate-limit counter, is literally `client:{engagementId}:{email}`.
+   *
+   * `client_contacts` is destroyed two lines above and the certificate says
+   * every trace of the engagement is gone, so leaving these makes the
+   * certificate false in the most sensitive column available. It is not a
+   * fifteen-minute window either: rows for one identifier are swept only when
+   * that same identifier is used again, and after a purge it never is, so an
+   * abandoned code outlives the engagement for as long as the table does.
+   */
+  for (const prefix of clientTokenIdentifierPrefixes(engagementId)) {
+    await tx
+      .delete(authVerificationTokens)
+      .where(like(authVerificationTokens.identifier, `${prefix}%`));
+  }
 
   /**
    * The audit log goes with the engagement **except for retention actions**

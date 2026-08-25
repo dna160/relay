@@ -67,6 +67,90 @@ export function linesMatching(file: SourceFile, re: RegExp): string[] {
 }
 
 /* -------------------------------------------------------------------------- */
+/* The line-wrapping escape, closed.                                          */
+/*                                                                            */
+/* `linesMatching` reads one physical line at a time, and every structural     */
+/* invariant in this directory was built on it. That is a hole with the same   */
+/* shape as the signature-based one `queriesImportedByClientRoutes` exists to  */
+/* close: the guard reads something narrower than the invariant claims, and    */
+/* the way around it is not a trick — it is this codebase's own house style.   */
+/*                                                                            */
+/*     await db                                                               */
+/*       .insert(cards)          <- INV-9's route scan wants `db` and          */
+/*       .values({ ... })           `.insert(` on one line, and never sees it. */
+/*                                                                            */
+/*     .set({                                                                 */
+/*       state: 'approved',      <- INV-2's scan wants `.set({` and `state:`   */
+/*     })                           on one line, and never sees it.            */
+/*                                                                            */
+/* Neither escape needs anyone to be clever. Both are what prettier does to a  */
+/* long chain. So the scans below read *statements* rather than lines.         */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The file re-split on statement boundaries, with each statement's internal
+ * newlines and indentation collapsed to single spaces.
+ *
+ * A statement ends at a `;` or at a newline taken while every bracket opened on
+ * this statement is closed. Brackets are counted, strings are not parsed —
+ * comments are already gone, and a `;` inside a string can only merge two
+ * statements into one, which widens what a "must not contain" scan sees rather
+ * than narrowing it.
+ *
+ * Function bodies stay whole, because `{` holds the depth open. That is
+ * deliberate: it keeps a bounded pattern like `\.set\(\{[^}]*state:` scoped to
+ * one object literal, and it is why the unbounded `[\s\S]*` patterns in this
+ * directory keep reading lines instead.
+ */
+export function statements(file: SourceFile): string[] {
+  const lines = file.text.split('\n');
+  const out: string[] = [];
+  let current = '';
+  let depth = 0;
+
+  const flush = (): void => {
+    const text = current.replace(/\s+/g, ' ').trim();
+    if (text !== '') out.push(text);
+    current = '';
+  };
+
+  for (const [index, line] of lines.entries()) {
+    current += (current === '' ? '' : ' ') + line.trim();
+    for (const ch of line) {
+      if (ch === '(' || ch === '[' || ch === '{') depth += 1;
+      else if (ch === ')' || ch === ']' || ch === '}') depth = Math.max(0, depth - 1);
+    }
+    if (depth > 0) continue;
+
+    // Depth is closed, but the statement may still be mid-chain. `await db`
+    // followed by `.update(cards)` is one statement wearing two lines, and
+    // splitting it here would rebuild the exact hole this function exists to
+    // close. So a line that *starts* like a continuation joins the previous one.
+    const next = lines[index + 1]?.trim() ?? '';
+    if (CONTINUATION.test(next)) continue;
+
+    flush();
+  }
+  flush();
+  return out;
+}
+
+/** Line openers that mean "this is the rest of the statement above". */
+const CONTINUATION = /^(\.|\?\.|\)|\]|\}|,|:|\?\?|&&|\|\||=>|\+|=(?!=))/;
+
+/**
+ * `linesMatching`, but immune to where the formatter chose to wrap.
+ *
+ * Use this for every bounded "this must not appear" pattern. Anything relying
+ * on an unbounded `[\s\S]*` should stay on `linesMatching`, because a
+ * collapsed function body would let such a pattern match two unrelated
+ * statements and fail the build for the wrong reason.
+ */
+export function statementsMatching(file: SourceFile, re: RegExp): string[] {
+  return statements(file).filter((s) => re.test(s));
+}
+
+/* -------------------------------------------------------------------------- */
 /* ADR-006's guard, made mechanical.                                          */
 /*                                                                            */
 /* "Every new query function that can be reached by a client contact needs a   */

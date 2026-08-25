@@ -115,6 +115,13 @@ possession (`client · 6d`). At the board level the bars form a visible column o
 who is holding the work. It makes the product's core insight legible in a glance
 and it is the thing a screenshot will be recognised by.
 
+**The label-attach.** The signature *moment*, added in round 3 and the answer
+to "make it feel alive": when possession changes hands, the state plate is
+struck and seated onto the card and the possession bar is printed down over the
+old one, top to bottom, in the new hue. Five beats, 300ms, compositor-only, no
+JavaScript. It is the product's central event and it is the only thing in the
+interface that gets that weight. `docs/design/MOTION.md` §4.
+
 **The wrap slate.** A persistent mono strip in the workspace header:
 `WRAP +12d · PURGE IN 48d · EXPORT`. Ephemerality is stated, never sprung. It is
 also the conversion surface, and it must never be dismissible.
@@ -137,6 +144,19 @@ also the conversion surface, and it must never be dismissible.
 - `StreamStatus` — the live/stale/offline state of the event stream, in the one
   place a person is already looking
 
+Round 3 adds four primitives that carry the spec-label vernacular. They are
+primitives rather than components because none of them knows what an engagement
+is — see `docs/design/LABEL-SYSTEM.md`:
+
+- `Plate` — the batch/serial block: a dense mono `<dl>` on a recessed ground,
+  `stack` or `strip`. A layout for facts the product already publishes
+- `Barcode` — Code 39, encoding the value printed beneath it. Certificate,
+  export header and version detail only; never the board
+- `RegistrationMark` — a printer's crosshair marking where a document was
+  issued
+- `Rule weight="hazard"` — achromatic diagonals. One referent: the purge
+  boundary
+
 ## Copy rules
 
 Name things by what people control. "Request changes," not "Reject." An action
@@ -148,8 +168,13 @@ states the date, the count, and the one action that prevents it.
 ## Quality floor
 
 Responsive to 360px. Visible keyboard focus on every interactive element.
-`prefers-reduced-motion` respected — the only motion is a 120ms state-chip
-crossfade on transition. Contrast: possession hues meet 4.5:1 on **both**
+`prefers-reduced-motion` respected — honoured **at the token**, never at a call
+site. Round 3 replaced the one-crossfade budget with a motion *system* without
+weakening that: every duration in the product is an integer number of beats
+written as a `calc()` over the single `--dur-beat` token, so one declaration in
+one media query still silences everything. `docs/design/MOTION.md` is the
+specification; the 120ms state-chip crossfade survives inside it, unchanged, as
+two beats. Contrast: possession hues meet 4.5:1 on **both**
 `--paper` and `--paper-2`, in both modes. `--paper-2` is the binding ground —
 cards sit on it — and a token that passes only on `--paper` has not passed.
 
@@ -218,8 +243,20 @@ painted, not only as the colour declared — see ACCESSIBILITY.md §2.
 the quiet chip grounds), `--agency-hover` / `--client-hover` / `--paper-hover`
 (mixed 88–94% toward `--ink`, which moves away from the ground in both modes),
 `--field`, `--scrim`, `--focus` (= `--ink`), `--radius-1` 2px, `--radius-2` 3px,
-`--bar-width` 3px, `--hairline` 1px, `--dur-chip` 120ms (0ms under
-`prefers-reduced-motion`), `--ease-chip`.
+`--bar-width` 3px, `--hairline` 1px.
+
+Motion (round 3, full specification in `docs/design/MOTION.md`): one duration
+token `--dur-beat` 60ms — 0ms under `prefers-reduced-motion` — and a ladder of
+`calc()` multiples of it (`--time-tick` 1, `--time-chip` 2, `--time-strike` 2,
+`--time-stamp` 2, `--time-seat` 3, `--time-sheet` 3, `--time-step` 0.5,
+`--time-attach` 5). Four easings named for what the motion does (`--ease-chip`,
+`--ease-strike`, `--ease-seat`, `--ease-stamp`) and five amplitudes that are
+also zeroed under reduce (`--dist-strike`, `--dist-seat`, `--dist-nudge`,
+`--scale-stamp`, `--tilt-strike`), plus `--stagger-index` / `--stagger-cap`.
+
+`--dur-chip` no longer exists as a token; `--time-chip` is the same 120ms
+expressed as two beats, and the Tailwind key `duration-chip` is unchanged, so
+nothing that already wrote it had to move.
 
 ## Appendix B — How the white-label lock works
 
@@ -323,4 +360,6 @@ client board's critical path, which matters against a 1.5s FCP budget on 4G.
 | `docs/design/ACCESSIBILITY.md` | Every contrast ratio, computed. Focus order. The required-note affordance. Reduced motion. The exhaustive list of one for `--breach`. |
 | `docs/design/A11Y-ASSERTIONS.md` | The accessibility floor as executable Playwright specs, for QA to lift into `tests/`. |
 | `src/styles/a11y-contract.ts` | The same floor as importable data: contrast pairs, `contrastRatio()`, focus-ring expectations, the motion contract, the forbidden-pattern list. |
-| `src/components/primitives/` | `Button`, `Chip`, `Field`/`Textarea`, `Dialog`, `Badge`, `Mono`, `Rule`, `Stack`/`Row`, `cn`. |
+| `docs/design/MOTION.md` | The motion system: the beat and the duration ladder, the easings and amplitudes, the label-attach specified stop by stop, the named inventory, the restraint list with a reason per entry, orchestration and staggering, the reduced-motion equivalent of every entry, and the measured cost against the FCP budget. |
+| `docs/design/LABEL-SYSTEM.md` | The spec-label vernacular: what ships, where each piece goes, and — the more useful half — what was rejected and why. |
+| `src/components/primitives/` | `Button`, `Chip`, `Field`/`Textarea`, `Dialog`, `Badge`, `Mono`, `Rule`, `Stack`/`Row`, `Plate`, `Barcode`, `RegistrationMark`, `cn`. |

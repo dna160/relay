@@ -976,3 +976,143 @@ One implementation, used by every component above.
 that reads as strongly as content produces a page that appears to be full of
 data that then changes. Wrap the region in `aria-busy="true"` with a single
 visually hidden "Loading …" — not one per block.
+
+---
+
+# Round 3 — the label primitives and the motion hooks
+
+Two new documents sit behind this section: `docs/design/LABEL-SYSTEM.md` (what
+the spec-label vernacular is, what ships, and what was rejected) and
+`docs/design/MOTION.md` (the motion system, the label-attach, the restraint
+list). This section is the part the front-end implements against.
+
+## 10. `Plate`
+
+The batch/serial block off an industrial spec label: a dense mono `<dl>` on a
+recessed ground, carrying values that are already records.
+
+### Anatomy
+
+```
+┌──────────────────────────────┐   layout="stack"
+│ CARD          01H8QK…        │   dt: text-eyebrow uppercase --muted
+│ VERSION       v4             │   dd: Mono, --ink (or a tone)
+│ SHA           3a91f2…        │
+│ ROUNDS        3/2            │   tone="breach" only when over contract
+└──────────────────────────────┘
+
+┌─────────────────────────────────────────────┐   layout="strip"
+│ WRAP +12d │ PURGE 2026-09-14 │ OBJECTS 148  │   hairline-divided, one line
+└─────────────────────────────────────────────┘
+```
+
+### Props
+
+`rows: readonly PlateRow[]` — `{ term, value, title?, tone? }`.
+`layout: 'stack' | 'strip'` (default `stack`), `label`, `dieline`, `className`.
+
+### Tokens
+
+| Part | Token |
+|---|---|
+| ground | `--paper` (via `.plate`) — one step recessed on a `--paper-2` card, in both modes |
+| border | `--rule`, hairline, `--radius-1` |
+| term | `text-eyebrow` uppercase, `--muted` |
+| value | `Mono`, `--ink` by default |
+| strip dividers | `--rule` |
+
+**No new contrast pair.** `--muted` and `--ink` on `--paper` are both already
+in `CONTRAST_PAIRS`, in both modes. That was a constraint on the design, not a
+happy result — a bespoke ground here would have been an unmeasured pair, which
+is exactly how the old `--muted` shipped at 4.14:1.
+
+### Rules
+
+- `tone="breach"` on a row **only** for `roundsUsed > contractedRounds`. Never
+  for "soon", never for a near purge date.
+- `title` carries the unabbreviated value behind any truncation — the full
+  hash, the full ISO timestamp. `Plate` passes it through to `Mono`.
+- A plate is not a table of prose. Terms are one or two words.
+
+### 360
+
+`layout="stack"` is the fallback: `strip` wraps, and below `xs` a strip of more
+than three pairs should be rendered as a stack instead.
+
+## 11. `Barcode`
+
+Code 39, encoding the value printed beneath it. **Not decoration** — the design
+system's rule is that mono marks a record, and a barcode that encodes nothing
+is decoration wearing a record's clothes. The argument, and the rejection of
+QR, is `LABEL-SYSTEM.md` §3b.
+
+### Where it may appear
+
+The purge certificate, the export header, an expanded version-detail row.
+**Never `CardTile`, never a version-stack row, never the board.** An
+8-character prefix is ~50 subpaths; that is cheap once per document and
+indefensible forty times on the surface with a 1.5s FCP budget.
+
+### Props
+
+`value` (normalised to `0-9 A-F -`; anything else is dropped), `label`,
+`height` (28 on a certificate, 20 in a record row), `showValue` (default true),
+`className`.
+
+### Name / role
+
+The `<svg>` is `aria-hidden` and `focusable="false"`. The accessible content is
+the `Mono` line beneath it, named by `label`. A reader who heard both would
+hear the same hash twice.
+
+## 12. `RegistrationMark`
+
+A printer's crosshair marking where a document was *issued*. One per document:
+the head of the wrap slate, the head of a certificate, an export header.
+
+`aria-hidden` unless given `label`, which it should not need. It is the only
+circle in a product whose radius ceiling is 3px — a registration mark is a
+circle by definition, and the exception is deliberate.
+
+## 13. `Rule weight="hazard"`
+
+A 6px band of achromatic `--ink` diagonals. **One referent: the purge
+boundary.** The reference sheets draw hazard stripes in alert red; Relay cannot,
+because `--breach` means one thing. `aria-hidden`, and never rendered without
+text beside it saying what the boundary is.
+
+## 14. Motion hooks, per component
+
+Everything below is CSS. There is no JS timeline, no library, no
+`requestAnimationFrame`, and no `motion-reduce:` variant anywhere. The
+front-end's whole job is to make the right element *new* at the right moment.
+
+| Component | Add | When |
+|---|---|---|
+| `CardTile` | `dieline` class on the card | always |
+| `PossessionBar` | `colour-bar` class on the filled bar | always |
+| `PossessionBar` | `animate-bar-draw origin-head`, and change the element's `key` | **possession changes hands.** Paint the new hue immediately; do not transition the colour — the new bar is printed *over* the old one, not faded into it |
+| `StateChip` → `Chip` | pass `attach` | **possession changes hands**, and only then |
+| `VersionStack` row | `animate-stamp` on the version pip | a version is published |
+| `VersionStack` | `animate-seat stagger` + `style={{ '--stagger-index': i }}` on rows | the stack *gains* rows. Not on first render |
+| `DecisionBar` | `animate-stamp` on the decision timestamp | a decision is recorded |
+| `CardTile` rounds counter | `animate-stamp` | a round is consumed |
+| `Dialog` | nothing — the primitive already carries `animate-sheet-in` and `backdrop:animate-scrim-in` | — |
+| `Button` | nothing — the primitive already carries the one-beat press | — |
+| Purge certificate | **nothing.** No motion, in either mode | — |
+| Lane re-sort, board first paint, route change, hover | **nothing.** `MOTION.md` §5 | — |
+
+Rule R1 from `MOTION.md` §3 governs all of it: **one event, one motion.** A
+possession change animates the bar and the chip. It does not also animate the
+card, the lane, the counter or the board. If a reader's eye has to choose where
+to look, the motion has failed at the thing it was for.
+
+### Two things to delete while you are in there
+
+- `src/components/agency/card-tile.tsx` carries
+  `motion-reduce:transition-none`, allowlisted in
+  `tests/unit/a11y-source.spec.ts` as a round-2 defect. With the token system in
+  place the fix is to delete the variant; `--dur-beat` already does it.
+- `src/components/style-tokens.ts` and the same file's comments still refer to
+  `--dur-chip`, which no longer exists. The Tailwind key `duration-chip` is
+  unchanged and still correct — only the prose and the CSS variable name moved.

@@ -290,3 +290,30 @@ export function assertWritable(row: Pick<EngagementRow, 'status'>): void {
   if (row.status === 'purged') throw engagementPurged();
   if (row.status === 'archived') throw engagementArchived();
 }
+
+/**
+ * The read guard. Archived is fine — archived is read-only, and a read is a
+ * read; export is the whole point of the archive. Purged is 410.
+ *
+ * A purged engagement's row survives as a tombstone (ADR-007) and, until this
+ * existed, reading it returned a cheerful 200 describing a workspace with no
+ * lanes, no cards and no files in it. Three separate things in this codebase
+ * already assumed otherwise:
+ *
+ *   - API-CONTRACT: `ENGAGEMENT_PURGED` | 410 | "Gone. Points at the
+ *     certificate". A 410 is the whole mechanism by which a caller is pointed
+ *     at the certificate, and nothing was emitting one on a read.
+ *   - Both surfaces branch on it. The client layout renders `<PurgedReceipt>`
+ *     when the board read comes back `ENGAGEMENT_PURGED`, and the agency side
+ *     has its own receipt component. Neither could ever fire.
+ *   - `tests/e2e/agency/plan-and-lifecycle.spec.ts` asserts it outright.
+ *
+ * The consequence of the 200 was not cosmetic. The receipt is the last thing a
+ * client ever sees of the workspace, and it is doing reputational work for the
+ * agency: a client who lands on an empty board concludes their files were lost,
+ * and a client who lands on a certificate concludes their agency runs a
+ * process. An empty 200 is the first of those.
+ */
+export function assertReadable(row: Pick<EngagementRow, 'status'>): void {
+  if (row.status === 'purged') throw engagementPurged();
+}

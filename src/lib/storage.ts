@@ -23,7 +23,7 @@ import {
   UploadPartCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { uuidv7 } from 'uuidv7';
+import { engagementPrefix, safeFilename } from '@/domain/storage/keys';
 
 /** Above this, the browser must use multipart. Below it, one PUT. */
 export const MULTIPART_THRESHOLD_BYTES = 100 * 1024 * 1024;
@@ -67,20 +67,21 @@ export function bucket(): string {
   return name;
 }
 
-/** Strips anything that would let a filename escape its prefix. */
-export function safeFilename(filename: string): string {
-  const base = filename.split(/[\\/]/).pop() ?? 'file';
-  const cleaned = base.replace(/[^\w.\-]+/g, '_').slice(0, 180);
-  return cleaned.length > 0 ? cleaned : 'file';
-}
-
-export function versionKey(engagementId: string, cardId: string, filename: string): string {
-  return `engagements/${engagementId}/cards/${cardId}/${uuidv7()}/${safeFilename(filename)}`;
-}
-
-export function shelfKey(engagementId: string, filename: string): string {
-  return `engagements/${engagementId}/shelf/${uuidv7()}/${safeFilename(filename)}`;
-}
+/**
+ * Key construction and key validation are domain rules (INV-7 enumerates by
+ * prefix; INV-6 depends on one engagement's objects being unreachable from
+ * another's rows), so they live in `src/domain/storage/keys.ts`. They are
+ * re-exported here because this is where callers that sign URLs expect to find
+ * them, and because `src/domain/**` may not import this file (INV-9).
+ */
+export {
+  engagementPrefix,
+  isShelfKeyFor,
+  isVersionKeyFor,
+  safeFilename,
+  shelfKey,
+  versionKey,
+} from '@/domain/storage/keys';
 
 export function partSizeFor(sizeBytes: number): number {
   // Keep the part count under 1000 even at the 5 GB ceiling.
@@ -206,7 +207,7 @@ export async function presignDownload(input: {
 export async function listEngagementObjects(engagementId: string): Promise<string[]> {
   const s3 = storageClient();
   const Bucket = bucket();
-  const Prefix = `engagements/${engagementId}/`;
+  const Prefix = engagementPrefix(engagementId);
   const keys: string[] = [];
   let ContinuationToken: string | undefined;
   do {

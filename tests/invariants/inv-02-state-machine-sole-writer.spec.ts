@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { except, linesMatching, sourceFiles } from './_source';
+import { except, linesMatching, sourceFiles, statementsMatching } from './_source';
 
 /** The one file permitted to decide a card's next state. */
 const SOLE_WRITER = 'src/domain/card/state-machine.ts';
@@ -21,13 +21,25 @@ const SOLE_WRITER = 'src/domain/card/state-machine.ts';
  */
 const SOLE_PERSISTER = 'src/domain/card/transition-card.ts';
 
+/**
+ * A drizzle `.set({ ... state: ... })` against any table. Exported so that
+ * `tests/unit/invariant-scans-are-not-escapable.spec.ts` can plant violations
+ * against the real pattern rather than against a copy of it that drifts.
+ */
+export const STATE_WRITE = /\.set\s*\(\s*\{[^}]*\bstate\s*:/;
+
 describe('INV-2 the state machine is the sole writer of cards.state', () => {
   it('no file outside the state machine performs a drizzle update of cards.state', () => {
     const offenders: string[] = [];
     for (const file of except(sourceFiles(), SOLE_WRITER, SOLE_PERSISTER)) {
       // `.set({ ... state ... })` — a drizzle update touching the state column.
-      const hits = linesMatching(file, /\.set\s*\(\s*\{[^}]*\bstate\s*:/);
-      for (const line of hits) offenders.push(`${file.path}: ${line}`);
+      //
+      // Read as a statement, not as a line. The house style wraps a long
+      // drizzle chain across four lines, and a line-based scan cannot see
+      // `state:` sitting on its own inside a `.set({` that opened one line
+      // earlier. Nobody has to intend that escape for it to happen.
+      const hits = statementsMatching(file, STATE_WRITE);
+      for (const line of hits) offenders.push(`${file.path}: ${line.slice(0, 160)}`);
     }
     expect(offenders, 'cards.state written outside the state machine').toEqual([]);
   });

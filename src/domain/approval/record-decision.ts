@@ -67,6 +67,35 @@ export async function recordDecision(
   }
 
   return db.transaction(async (tx) => {
+    /**
+     * The card is locked first, then the version.
+     *
+     * `recordVersion()` already takes them in that order — it locks the card to
+     * allocate `version_no`, then updates the previous version row to set
+     * `superseded_by`. Locking the version first here would make the two paths
+     * an ABBA pair: an agency upload on card X racing a client approval of X's
+     * current version deadlocks, Postgres kills one of them with 40P01, and one
+     * of the two people gets a 500 on the single most consequential button in
+     * the product. Both orders are now card -> version, so they queue instead.
+     *
+     * Re-locking the same card inside `transitionCard()` below costs nothing;
+     * the lock is already held by this transaction.
+     */
+    const owner = await tx
+      .select({ cardId: assetVersions.cardId })
+      .from(assetVersions)
+      .where(eq(assetVersions.id, input.versionId))
+      .limit(1);
+    const ownerRow = owner[0];
+    if (!ownerRow) throw notVisible('Version not found');
+
+    await tx
+      .select({ id: cards.id })
+      .from(cards)
+      .where(eq(cards.id, ownerRow.cardId))
+      .for('update')
+      .limit(1);
+
     // The version and its hash, locked, inside the same transaction that will
     // copy the hash. Nothing can slip between the read and the write.
     const rows = await tx

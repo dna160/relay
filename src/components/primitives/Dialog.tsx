@@ -81,7 +81,11 @@ export function Dialog({
       aria-describedby={description ? descId : undefined}
       className={cn(
         'm-auto w-[calc(100vw-32px)] max-w-dialog p-0 bg-transparent',
-        'backdrop:bg-scrim',
+        // A document laid on the desk: it settles onto the surface it was
+        // already on, it does not fly in from an edge. Three beats, and the
+        // scrim comes up in one so the page behind is out of the way first.
+        'animate-sheet-in',
+        'backdrop:bg-scrim backdrop:animate-scrim-in',
       )}
     >
       <div

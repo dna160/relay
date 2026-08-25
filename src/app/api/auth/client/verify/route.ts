@@ -13,6 +13,8 @@ import { db } from '@/db/client';
 import { findContact, loadLinkableEngagement } from '@/db/queries/client-auth';
 import { markContactVerified } from '@/domain/engagement/verify-contact';
 import {
+  chargeVerifyAttempt,
+  clearVerifyAttempts,
   clientCookieName,
   clientCookieOptions,
   consumeClientCode,
@@ -39,11 +41,29 @@ export async function POST(request: Request): Promise<NextResponse> {
     const engagement = await loadLinkableEngagement(db, engagementId);
     if (!engagement || engagement.status === 'purged') throw notVisible('Not found');
 
+    /**
+     * The rate limit, charged before the code is tested.
+     *
+     * Six digits is 10^6 and a code lives fifteen minutes; an attacker who can
+     * reach this route a thousand times a second exhausts the space inside one
+     * code's lifetime, and a client workspace has no password behind it to fall
+     * back on. Over budget the code is *not* consumed and *not* compared — the
+     * attempt buys nothing at all.
+     */
+    if (!(await chargeVerifyAttempt(engagementId, body.email, now))) {
+      throw validationFailed(
+        'Too many attempts. Request a new code and try again in a few minutes.',
+      );
+    }
+
     const contact = await findContact(db, engagementId, body.email);
     // The code is consumed either way, so a wrong address cannot be used to
     // keep a valid code alive for another attempt.
     const ok = await consumeClientCode(engagementId, body.email, body.code, now);
     if (!contact || !ok) throw validationFailed('That code is not valid or has expired');
+
+    // Only a success returns the budget. A failed guess stays charged.
+    await clearVerifyAttempts(engagementId, body.email);
 
     await markContactVerified(db, contact.id, now);
 

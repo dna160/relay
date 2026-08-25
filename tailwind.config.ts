@@ -155,8 +155,36 @@ const config: Config = {
       minWidth: { card: '256px' },
       maxWidth: { prose: '68ch', dialog: '520px' },
 
-      transitionDuration: { chip: 'var(--dur-chip)' },
-      transitionTimingFunction: { chip: 'var(--ease-chip)' },
+      /* MOTION. Every duration is a multiple of the one beat token; see
+         globals.css §5 and docs/design/MOTION.md. `chip` is kept as a key so
+         nothing that already writes `duration-chip` has to change — the value
+         behind it is now two beats rather than a second literal. */
+      transitionDuration: {
+        beat: 'var(--dur-beat)',
+        tick: 'var(--time-tick)',
+        chip: 'var(--time-chip)',
+        strike: 'var(--time-strike)',
+        seat: 'var(--time-seat)',
+        stamp: 'var(--time-stamp)',
+        sheet: 'var(--time-sheet)',
+      },
+      transitionTimingFunction: {
+        chip: 'var(--ease-chip)',
+        strike: 'var(--ease-strike)',
+        seat: 'var(--ease-seat)',
+        stamp: 'var(--ease-stamp)',
+      },
+      transitionDelay: { step: 'var(--time-step)' },
+
+      /* The amplitudes, so a call site can write `translate-y-strike` rather
+         than an arbitrary value that the reduced-motion query cannot reach. */
+      translate: {
+        nudge: 'var(--dist-nudge)',
+        seat: 'var(--dist-seat)',
+        strike: 'var(--dist-strike)',
+      },
+      scale: { stamp: 'var(--scale-stamp)' },
+      rotate: { strike: 'var(--tilt-strike)' },
 
       outlineWidth: { focus: 'var(--focus-width)' },
       outlineOffset: { focus: 'var(--focus-offset)' },
@@ -176,16 +204,103 @@ const config: Config = {
         xs: '360px',
       },
 
+      /* THE SANCTIONED KEYFRAMES. Eight, named in
+         `src/styles/a11y-contract.ts` as `ALLOWED_ANIMATION_NAMES`; a ninth
+         appearing on a page is a spec violation the e2e suite fails on.
+
+         TWO RULES HOLD FOR EVERY ENTRY:
+         (1) Compositor-only. `transform` and `opacity`, nothing else. Nothing
+             here reads or writes a layout property, so none of it can thrash.
+         (2) 100% IS THE RESTING STATE. Every keyframe resolves to the pixel
+             the element occupies when nothing is happening. That is what makes
+             a 0ms beat under prefers-reduced-motion correct rather than merely
+             fast: the element lands exactly where it belongs, with `both` fill
+             holding it there. A keyframe that ends anywhere else would leave
+             the interface wrong for a reduced-motion reader. */
       keyframes: {
-        /* The only motion in the product: a state chip crossfading when a card
-           transitions. `--dur-chip` is 0ms under prefers-reduced-motion, so
-           both halves resolve instantly rather than being disabled piecemeal. */
+        /* The state-chip crossfade. Unchanged from round 1. */
         'chip-in': { from: { opacity: '0' }, to: { opacity: '1' } },
         'chip-out': { from: { opacity: '1' }, to: { opacity: '0' } },
+
+        /* THE SIGNATURE MOMENT — possession changing hands.
+           Two phases in one animation, so they cannot drift apart:
+             0%  → 40%  STRIKE, `--ease-strike`, accelerating. The plate is
+                        thrown at the surface from `--dist-strike` off its
+                        seat, over-scaled and off-square.
+             40% → 100% SEAT, `--ease-seat`, hard decelerate. It arrives
+                        `--dist-seat` past true and settles back against the
+                        stop, square and at scale.
+           40% is strike:seat = 2:3 and is LOCKED to `--time-attach`. Change a
+           beat count and this percentage changes with it. */
+        'label-attach': {
+          '0%': {
+            opacity: '0',
+            transform:
+              'translate3d(0, calc(var(--dist-strike) * -1), 0) rotate(var(--tilt-strike)) scale(var(--scale-stamp))',
+            animationTimingFunction: 'var(--ease-strike)',
+          },
+          '40%': {
+            opacity: '1',
+            transform:
+              'translate3d(0, var(--dist-seat), 0) rotate(calc(var(--tilt-strike) * 0.25)) scale(1)',
+            animationTimingFunction: 'var(--ease-seat)',
+          },
+          '100%': {
+            opacity: '1',
+            transform: 'translate3d(0, 0, 0) rotate(0deg) scale(1)',
+          },
+        },
+
+        /* The possession bar being printed: a stroke drawn from the head of
+           the card downward. The colour is already the new one when this runs,
+           so the old possession is covered rather than faded — a second pass
+           of ink, not a dissolve. */
+        'bar-draw': {
+          from: { transform: 'scale3d(1, 0, 1)' },
+          to: { transform: 'scale3d(1, 1, 1)' },
+        },
+
+        /* A mark being applied: the version pip on publish, the decision
+           timestamp on record, the rounds counter when a round is consumed. */
+        stamp: {
+          from: { opacity: '0', transform: 'scale(var(--scale-stamp))' },
+          to: { opacity: '1', transform: 'scale(1)' },
+        },
+
+        /* A record appended to a list — a new version row. The modest one. */
+        seat: {
+          from: {
+            opacity: '0',
+            transform: 'translate3d(0, var(--dist-strike), 0)',
+          },
+          to: { opacity: '1', transform: 'translate3d(0, 0, 0)' },
+        },
+
+        /* A dialog. A document laid on the desk: it does not fly in from an
+           edge, it settles onto the surface it was already on. */
+        'sheet-in': {
+          from: { opacity: '0', transform: 'scale(0.985)' },
+          to: { opacity: '1', transform: 'scale(1)' },
+        },
+        'scrim-in': { from: { opacity: '0' }, to: { opacity: '1' } },
       },
       animation: {
-        'chip-in': 'chip-in var(--dur-chip) var(--ease-chip) both',
-        'chip-out': 'chip-out var(--dur-chip) var(--ease-chip) both',
+        'chip-in': 'chip-in var(--time-chip) var(--ease-chip) both',
+        'chip-out': 'chip-out var(--time-chip) var(--ease-chip) both',
+        /* `linear` at the top level is deliberate and inert: both segments
+           declare their own timing function inside the keyframes. */
+        'label-attach': 'label-attach var(--time-attach) linear both',
+        'bar-draw':
+          'bar-draw var(--time-seat) var(--ease-seat) var(--time-strike) both',
+        stamp: 'stamp var(--time-stamp) var(--ease-stamp) both',
+        seat: 'seat var(--time-seat) var(--ease-seat) both',
+        'sheet-in': 'sheet-in var(--time-sheet) var(--ease-seat) both',
+        'scrim-in': 'scrim-in var(--time-tick) var(--ease-chip) both',
+      },
+
+      transformOrigin: {
+        /* `bar-draw` scales from the head of the card, never from centre. */
+        head: 'top center',
       },
     },
   },

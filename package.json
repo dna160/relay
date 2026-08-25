@@ -22,7 +22,9 @@
     "db:up": "docker compose up -d db",
     "purge:plan": "tsx src/workers/purge-cli.ts --plan",
     "verify:build": "next build",
-    "verify:all": "npm run verify && npm run verify:build"
+    "verify:all": "npm run verify && npm run verify:build",
+    "test:db": "vitest run --config vitest.db.config.ts",
+    "verify:db": "npm run verify && npm run test:db"
   },
   "dependencies": {
     "@auth/drizzle-adapter": "^1.7.4",

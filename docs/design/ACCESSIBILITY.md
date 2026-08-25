@@ -336,27 +336,70 @@ its text — never by colour, which WCAG 1.4.1 requires anyway.
 
 ## 7. Reduced motion
 
-The only motion in Relay is a 120ms crossfade on the state chip when a card
-transitions.
+**Round 3 replaced the one-crossfade motion budget with a motion system. The
+mechanism did not change, and this section is the proof that it did not.**
 
-It is removed at the **token**, not per component:
+Full specification: `docs/design/MOTION.md`. What matters here is the single
+guarantee.
+
+Every duration in Relay is an integer number of beats, written as a `calc()`
+over one token and never as a literal:
+
+```css
+--dur-beat: 60ms;
+--time-chip: calc(var(--dur-beat) * 2);   /* the 120ms crossfade, unchanged */
+--time-attach: calc(var(--time-strike) + var(--time-seat));  /* five beats */
+```
+
+So reduced motion is still one declaration, and it still cannot be forgotten:
 
 ```css
 @media (prefers-reduced-motion: reduce) {
-  :root, [data-relay-root] { --dur-chip: 0ms; }
+  :root, [data-relay-root] {
+    --dur-beat: 0ms;
+    --dist-strike: 0px;
+    --dist-seat: 0px;
+    --dist-nudge: 0px;
+    --scale-stamp: 1;
+    --tilt-strike: 0deg;
+  }
 }
 ```
 
-`Chip`, `Button`'s colour transition, and the `chip-in` / `chip-out` keyframes
-all read `--dur-chip`, so a single declaration silences all of them and there is
-no component that can forget to opt in. Adding a new animation means adding a
-new duration token under the same query — not a new `motion-reduce:` variant at
-a call site.
+Zero the beat and every multiple collapses arithmetically. **The proof is still
+"one token, one assertion"** no matter how many named durations sit on top of
+it, which is why `tests/unit/a11y-source.spec.ts` may keep asserting that
+exactly one `--dur-*` token exists in `globals.css`. That assertion was read in
+round 1 as a budget on how much motion there is. It is not — it is a proof that
+there is one switch, and it survives round 3 unrelaxed.
 
-Explicitly not present anywhere in the product: parallax, auto-playing carousels,
-entrance animations on scroll, skeleton shimmer, hover lift or scale, spinners
-that rotate (`Button`'s loading state is three static mono dots plus a visually
-hidden label), toast slide-ins, page transitions.
+The amplitudes are zeroed alongside the beat as belt and braces: a transition
+that somehow fires with a literal duration still has nowhere to travel.
+
+**Under reduce the interface is deliberate, not frozen, and the reason is
+structural.** Every keyframe in the product resolves to the element's resting
+state at 100% and runs with `animation-fill-mode: both`, so at 0ms the element
+lands on exactly the pixel, opacity, scale and angle it occupies when nothing
+is happening. Nothing is left mid-flight, invisible, or off-square. And no
+motion in Relay carries information the static frame does not also carry:
+possession is a hue and a mono label before it is a gesture, a published
+version is a row and a pip, a breach is a colour and a number. Removing the
+motion removes the reveal, not the artifact.
+
+Adding a new animation means adding a `calc()` over `--dur-beat` — **never** a
+new root duration, and **never** a `motion-reduce:` variant at a call site. The
+latter is a component opting in by hand, which means the next component can
+forget and nothing catches it. One such call site is on record and allowlisted
+in `tests/unit/a11y-source.spec.ts` (`src/components/agency/card-tile.tsx`); it
+is a round-2 defect and the fix is to delete the variant and let the token do
+it.
+
+Explicitly not present anywhere in the product: parallax, auto-playing
+carousels, entrance animations on scroll, skeleton shimmer, hover lift or
+scale, spinners that rotate (`Button`'s loading state is three static mono dots
+plus a visually hidden label), toast slide-ins, page transitions. The full
+restraint list — twelve entries, each with the reason that thing stays still —
+is `MOTION.md` §5 and `FORBIDDEN_MOTION` in `src/styles/a11y-contract.ts`.
 
 ---
 

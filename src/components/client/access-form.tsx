@@ -102,7 +102,24 @@ export function AccessForm({
           email: email.trim(),
           code: code.trim(),
         });
-        if (r.ok) router.replace(`/e/${engagementToken}/board`);
+        if (r.ok) {
+          router.replace(`/e/${engagementToken}/board`);
+          // Verifying just changed who the server thinks we are, and the
+          // Router Cache does not know that. `/e/[token]/layout.tsx` was
+          // already rendered once for this segment — as the *unverified*
+          // reader, where `getClientBoard()` fails and the layout returns its
+          // children bare — and a client navigation to a child route reuses
+          // that cached layout rather than asking the server for it again. The
+          // board would paint with no title, no countdown, no export and no
+          // tabs until something forced a full load, which is how a link that
+          // is provably in the server HTML ends up unclickable.
+          //
+          // `refresh()` invalidates the cache and refetches the tree for the
+          // route we just moved to, layout included. It belongs here, at the
+          // one point in the client surface where a navigation crosses an
+          // authentication boundary.
+          router.refresh();
+        }
       }}
     >
       <Field

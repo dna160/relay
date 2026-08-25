@@ -9,7 +9,7 @@
  * list you cannot act on is a to-do list of regrets.
  */
 
-import { and, eq, inArray, ne, sql } from 'drizzle-orm';
+import { and, eq, ne, sql } from 'drizzle-orm';
 import { cards, engagements, stateTransitions } from '@/db/schema';
 import type { Executor } from '@/db/types';
 import type { AttentionItem } from '@/lib/types';
@@ -36,8 +36,32 @@ export async function loadAttention(
     .where(and(eq(engagements.orgId, orgId), eq(engagements.status, 'active')));
 
   if (engagementRows.length === 0) return [];
-  const engagementIds = engagementRows.map((e) => e.id);
   const titleById = new Map(engagementRows.map((e) => [e.id, e.title]));
+
+  /**
+   * Both reads below select the org's cards through a **join**, not through an
+   * `IN` list built in JavaScript from the previous result.
+   *
+   * They used to. `EXPLAIN ANALYZE` against a 120-engagement agency showed the
+   * card read shipping 121 bound parameters and the transition read shipping
+   * **4,320** — one per card — to fetch 25,920 rows. That is slow, but slow is
+   * the smaller half. `pg` speaks a wire protocol with a hard ceiling of 65,535
+   * bound parameters per statement, so an agency that crosses roughly 65,000
+   * unfinished cards does not get a slower portfolio: `GET /api/attention`
+   * starts throwing a protocol error and the home screen stops rendering, with
+   * nothing in the code saying a limit was ever approached.
+   *
+   * The join produces exactly the same rows — this is a rewrite, not a change
+   * of meaning — with one bound parameter and a plan the planner can index.
+   *
+   * What it does **not** fix is the shape: this still reads every unfinished
+   * card and every one of its transitions to return `limit` of them, because
+   * the possession clock is derived from the whole transition history per card
+   * (ADR-010) and the ranking is over the whole set (PRD §5.5). Bounding that
+   * changes which cards appear, which is a product decision and not one to make
+   * inside a query file. Raised in the handover.
+   */
+  const orgActiveCards = and(eq(engagements.orgId, orgId), eq(engagements.status, 'active'));
 
   const cardRows = await exec
     .select({
@@ -52,12 +76,12 @@ export async function loadAttention(
       createdAt: cards.createdAt,
     })
     .from(cards)
+    .innerJoin(engagements, eq(engagements.id, cards.engagementId))
     // A signed-off card is finished; the ranker drops it too, but not reading
     // it is cheaper than reading it to throw it away.
-    .where(and(inArray(cards.engagementId, engagementIds), ne(cards.state, 'signed_off')));
+    .where(and(orgActiveCards, ne(cards.state, 'signed_off')));
 
   if (cardRows.length === 0) return [];
-  const cardIds = cardRows.map((c) => c.cardId);
 
   const transitions: TransitionRow[] = await exec
     .select({
@@ -67,7 +91,9 @@ export async function loadAttention(
       occurredAt: stateTransitions.occurredAt,
     })
     .from(stateTransitions)
-    .where(inArray(stateTransitions.cardId, cardIds));
+    .innerJoin(cards, eq(cards.id, stateTransitions.cardId))
+    .innerJoin(engagements, eq(engagements.id, cards.engagementId))
+    .where(and(orgActiveCards, ne(cards.state, 'signed_off')));
 
   /**
    * The last movement per card, for the "silently rotting" bucket. Computed

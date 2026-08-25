@@ -10,38 +10,68 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { linesMatching, sourceFiles } from './_source';
+import { sourceFiles, statementsMatching } from './_source';
 
-/** Reading a request body as bytes, in any of the shapes Next offers. */
-const BYTE_INTAKE = [
-  /\breq(uest)?\s*\.\s*formData\s*\(/,
-  /\breq(uest)?\s*\.\s*arrayBuffer\s*\(/,
-  /\breq(uest)?\s*\.\s*blob\s*\(/,
+/**
+ * Reading a request body as bytes, in any of the shapes Next offers.
+ *
+ * The receiver is deliberately *not* pinned to `req`/`request`. It used to be,
+ * and that made the invariant a rule about a variable name: rename the handler
+ * parameter to `r` and a 5 GB upload flows through a 512 MB container with the
+ * guard still green. What matters is the call, not what the caller called it.
+ */
+export const BYTE_INTAKE = [
+  /\.\s*formData\s*\(/,
+  /\.\s*arrayBuffer\s*\(/,
+  /\.\s*blob\s*\(\s*\)/,
   /\bnew\s+Response\s*\(\s*(file|stream|body|buffer)\b/i,
 ];
 
 /** Streaming an object out of storage through the app instead of redirecting. */
-const BYTE_EGRESS = [/GetObjectCommand[\s\S]{0,200}\.\s*Body/, /\.\s*Body\s*\.\s*(pipe|transformToByteArray)/];
+export const BYTE_EGRESS = [/GetObjectCommand[\s\S]{0,200}\.\s*Body/, /\.\s*Body\s*\.\s*(pipe|transformToByteArray)/];
 
 describe('INV-10 no file bytes traverse the app server', () => {
   it('no route reads an uploaded body as bytes', () => {
     const offenders: string[] = [];
     for (const file of sourceFiles('app')) {
       for (const re of BYTE_INTAKE) {
-        for (const line of linesMatching(file, re)) offenders.push(`${file.path}: ${line}`);
+        for (const stmt of statementsMatching(file, re)) {
+          offenders.push(`${file.path}: ${stmt.slice(0, 160)}`);
+        }
       }
     }
     expect(offenders, 'a route accepted file bytes; presign instead').toEqual([]);
   });
 
-  it('no route streams object storage bytes back to the caller', () => {
+  /**
+   * The egress scan covers the whole server, not just `src/app/`.
+   *
+   * INV-10 says bytes never traverse *the app server*. Scanning only the route
+   * layer left the obvious way around it wide open: put the stream in
+   * `src/lib/storage.ts` and have the route call it. The bytes still land in
+   * the container; only the guard stops noticing. `src/lib/storage.ts` is the
+   * file that legitimately holds `GetObjectCommand`, and it is checked below
+   * rather than excused — it may build the command for a presign, it may not
+   * read a `Body`.
+   */
+  it('nothing on the server streams object storage bytes back to a caller', () => {
     const offenders: string[] = [];
-    for (const file of sourceFiles('app')) {
+    for (const file of [...sourceFiles('app'), ...sourceFiles('lib'), ...sourceFiles('workers')]) {
       for (const re of BYTE_EGRESS) {
         if (re.test(file.text)) offenders.push(file.path);
       }
     }
-    expect(offenders, 'a route proxied a download; 302 to a presigned GET instead').toEqual([]);
+    expect(offenders, 'the server proxied a download; 302 to a presigned GET instead').toEqual([]);
+  });
+
+  it('the storage helper presigns rather than fetching', () => {
+    const storage = sourceFiles('lib').find((f) => /storage\.tsx?$/.test(f.path));
+    if (!storage) return;
+    expect(
+      storage.text,
+      'src/lib/storage.ts must not send a GetObjectCommand; it signs one',
+    ).not.toMatch(/(client|s3)\s*\.\s*send\s*\(\s*new\s+GetObjectCommand/);
+    expect(storage.text, 'a download must be signed, not performed').toMatch(/getSignedUrl/);
   });
 
   it('the download route redirects rather than returning a body', () => {

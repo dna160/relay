@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server';
 import { db } from '@/db/client';
 import { loadAgencyBoard } from '@/db/queries/agency-board';
 import { loadEngagementDetail } from '@/db/queries/engagements';
+import { assertReadable } from '@/domain/engagement/lifecycle';
 import { toErrorResponse } from '@/lib/errors';
 import { requireAgency, type RouteContext } from '../../../_guards';
 
@@ -18,6 +19,9 @@ export async function GET(
 
     // Scoped load first — the board query itself is keyed only by engagement.
     const engagement = await loadEngagementDetail(db, id, session.orgId, now);
+    // A purged engagement is 410 on a read too, so the caller reaches the
+    // certificate instead of an empty workspace.
+    assertReadable(engagement);
     const lanes = await loadAgencyBoard(db, engagement.id, now);
 
     return NextResponse.json({ engagementId: engagement.id, lanes });

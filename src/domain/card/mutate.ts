@@ -8,8 +8,8 @@
  */
 
 import { and, eq, inArray } from 'drizzle-orm';
-import { cards, lanes } from '@/db/schema';
-import type { Executor } from '@/db/types';
+import { cards, engagements, lanes, users } from '@/db/schema';
+import type { Database, Executor } from '@/db/types';
 import type { CardVisibilityOverride } from '@/lib/types';
 import { notVisible, validationFailed } from '../errors';
 
@@ -35,6 +35,34 @@ export interface CardRecord {
   position: number;
 }
 
+/**
+ * The assignee must be a member of the agency that owns the engagement.
+ *
+ * `assigneeId` arrives in the request body and, unchecked, is any UUID in the
+ * `users` table — including a member of a different agency. Nothing stops the
+ * insert: `cards.assignee_id` references `users`, not "users in this org". The
+ * board read then joins `users` on that id and returns the person's **name**,
+ * so a card assigned to `<another agency's user id>` prints a stranger's name
+ * on your board, and probing ids turns the board into a directory of every
+ * agency on the platform.
+ *
+ * 404 rather than 400: which user ids exist is not a fact this caller is
+ * entitled to, and `NOT_VISIBLE` is how the rest of the codebase says so.
+ */
+async function assertAssigneeInOrg(
+  exec: Executor,
+  engagementId: string,
+  assigneeId: string,
+): Promise<void> {
+  const rows = await exec
+    .select({ id: users.id })
+    .from(users)
+    .innerJoin(engagements, eq(engagements.orgId, users.orgId))
+    .where(and(eq(users.id, assigneeId), eq(engagements.id, engagementId)))
+    .limit(1);
+  if (!rows[0]) throw notVisible('Assignee not found');
+}
+
 export async function createCard(
   exec: Executor,
   input: CreateCardInput,
@@ -42,6 +70,8 @@ export async function createCard(
 ): Promise<CardRecord> {
   const title = input.title.trim();
   if (title.length === 0) throw validationFailed('A card needs a title');
+
+  if (input.assigneeId) await assertAssigneeInOrg(exec, input.engagementId, input.assigneeId);
 
   // The lane must belong to the engagement the caller is scoped to. Without
   // this, a lane id from another agency's board would create a card there.
@@ -101,6 +131,8 @@ export async function updateCard(
   patch: UpdateCardInput,
   now: Date,
 ): Promise<CardRecord> {
+  if (patch.assigneeId) await assertAssigneeInOrg(exec, engagementId, patch.assigneeId);
+
   const updated = await exec
     .update(cards)
     .set({ ...patch, updatedAt: now })
@@ -151,4 +183,32 @@ export async function reorderCards(
       .set({ laneId: item.laneId, position: item.position, updatedAt: now })
       .where(and(eq(cards.id, item.cardId), eq(cards.engagementId, engagementId)));
   }
+}
+
+/**
+ * An edit that also moves the card: content, lane and position, one transaction.
+ *
+ * `PATCH /api/cards/:id` used to call `updateCard()` and then `reorderCards()`
+ * against the bare connection. Two transactions, so a lane id belonging to
+ * another engagement — which `reorderCards()` correctly refuses — left the
+ * title, description and internal notes from the same request already written,
+ * and returned a 404 saying nothing had happened. The response and the database
+ * disagreed about whether the request was applied, which is the one thing a
+ * PATCH must never do.
+ */
+export async function updateAndPlaceCard(
+  db: Database,
+  engagementId: string,
+  cardId: string,
+  patch: UpdateCardInput,
+  placement: { laneId?: string; position?: number },
+  now: Date,
+): Promise<CardRecord> {
+  return db.transaction(async (tx) => {
+    const card = await updateCard(tx, engagementId, cardId, patch, now);
+    const laneId = placement.laneId ?? card.laneId;
+    const position = placement.position ?? card.position;
+    await reorderCards(tx, engagementId, [{ cardId, laneId, position }], now);
+    return { ...card, laneId, position };
+  });
 }

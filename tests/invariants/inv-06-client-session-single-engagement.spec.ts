@@ -14,7 +14,7 @@
 
 import { describe, expect, it, expectTypeOf } from 'vitest';
 import { isClientSession, type Session } from '@/lib/types';
-import { except, linesMatching, sourceFiles } from './_source';
+import { except, linesMatching, sourceFiles, statementsMatching } from './_source';
 import { allMigrationSql, createTableBody, hasMigrations } from './_sql';
 import { CONTACT, clientContacts } from '@tests/fixtures';
 
@@ -58,17 +58,70 @@ describe('INV-6 a client session sees exactly one engagement', () => {
     expect(offenders, 'a session widened to several engagements').toEqual([]);
   });
 
+  /**
+   * Anything that would let a sweep act on behalf of one client.
+   *
+   * `ClientScope` is first and is spelled with its capital, because the
+   * previous version of this list held only lowercase `clientScope` — which
+   * matches a variable but never the type. Every one of these escaped it:
+   *
+   *     function sweepFor(scope: ClientScope, now: Date)
+   *     import type { ClientScope } from '@/db/queries/client-scope';
+   *
+   * The type is the thing being forbidden. A payment that cannot see it is not
+   * a payment, and the exclusion above was running unbacked.
+   */
+  const CLIENT_REACH = [
+    /\bClientScope\b/,
+    /\bclientScope\b/,
+    /\brequireClient/,
+    /\bSession\b/,
+    /\bgetSession\b/,
+    /\bclientCookieName\b/,
+    /from\s+['"][^'"]*\/(auth|client-scope|client-auth)['"]/,
+    /\bcookies\s*\(/,
+    /\bheaders\s*\(/,
+  ];
+
+  it('the exclusion list names files that exist', () => {
+    // Without this the exclusion evaporates silently: rename a sweep and the
+    // test below iterates an empty set and passes having proved nothing, while
+    // the list scan goes on excluding a path that is no longer there.
+    const present = new Set(sourceFiles().map((f) => f.path));
+    const missing = SWEEPS.filter((p) => !present.has(p));
+    expect(missing, 'an excluded sweep no longer exists; the exclusion is unbacked').toEqual([]);
+  });
+
   it('the multi-engagement sweeps cannot reach a session or a client scope', () => {
     // This is what buys the exclusion above. A sweep that could build a client
     // scope could serve one engagement's content under another's session.
     const offenders: string[] = [];
     for (const file of sourceFiles()) {
       if (!SWEEPS.includes(file.path)) continue;
-      for (const re of [/clientScope/, /requireClient/, /\bSession\b/, /getSession/]) {
-        for (const line of linesMatching(file, re)) offenders.push(`${file.path}: ${line}`);
+      for (const re of CLIENT_REACH) {
+        for (const stmt of statementsMatching(file, re)) {
+          offenders.push(`${file.path}: ${stmt.slice(0, 140)}`);
+        }
       }
     }
     expect(offenders, 'a retention sweep reached for a session').toEqual([]);
+  });
+
+  it('no client route can reach a sweep, whatever the sweep is called', () => {
+    // Spelling is the weaker half. This is the other half: the sweeps are not
+    // on any import path a client contact can travel, so widening one cannot
+    // widen a client session even if it never names a scope at all.
+    const offenders: string[] = [];
+    const clientRoots = ['app/api/client', 'app/api/auth/client', 'app/(client)'];
+    for (const root of clientRoots) {
+      for (const file of sourceFiles(root)) {
+        for (const sweep of SWEEPS) {
+          const moduleName = sweep.replace(/^src\//, '@/').replace(/\.ts$/, '');
+          if (file.text.includes(moduleName)) offenders.push(`${file.path} imports ${moduleName}`);
+        }
+      }
+    }
+    expect(offenders, 'a client route imported a multi-engagement sweep').toEqual([]);
   });
 
   it('no client route reads an engagement id from params, query, or body', () => {

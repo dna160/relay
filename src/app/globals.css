@@ -9,6 +9,8 @@
      4. Tokens (dark)              — ground/ink swapped, hues lifted
      5. Derived tokens             — tints, fills, focus, motion, metrics
      6. Base element styling       — the paper, the rules, focus visibility
+     7. Label chrome               — dieline, colour bar, plate, hazard, mark
+     8. Print                      — the certificate leaves the browser
    ========================================================================== */
 
 /* --------------------------------------------------------------------------
@@ -377,9 +379,61 @@
   --bar-width: 3px;
   --hairline: 1px;
 
-  /* Motion. The only motion in the product is the state-chip crossfade. */
-  --dur-chip: 120ms;
+  /* ---- MOTION ---------------------------------------------------------
+     THE ONE DURATION TOKEN, and why there is only one.
+
+     `--dur-beat` is the beat. Every duration in this product is an integer
+     number of beats, expressed as a `calc()` over this token and nothing else.
+     That is not a stylistic preference — it is the mechanism that makes
+     reduced motion a single declaration. Zero the beat and every multiple
+     collapses arithmetically; no component can forget to opt in, and no
+     call-site `motion-reduce:` variant is ever needed. A second literal
+     duration anywhere in this stylesheet would break that guarantee, which is
+     why `tests/unit/a11y-source.spec.ts` fails on a second `--dur-*` token.
+
+     60ms was chosen so the published 120ms chip crossfade survives exactly as
+     two beats, and so the shortest useful step (a stagger interval) is half a
+     beat rather than an unreadable fraction. See docs/design/MOTION.md §2. */
+  --dur-beat: 60ms;
+
+  /* The ladder. Read these as "n beats", never as milliseconds — the comment
+     is the arithmetic, not a second source of truth. */
+  --time-tick: calc(var(--dur-beat) * 1); /* 60ms  — press, hover, colour */
+  --time-chip: calc(var(--dur-beat) * 2); /* 120ms — the state-chip crossfade */
+  --time-strike: calc(var(--dur-beat) * 2); /* 120ms — phase 1 of the attach */
+  --time-seat: calc(var(--dur-beat) * 3); /* 180ms — phase 2 of the attach */
+  --time-stamp: calc(var(--dur-beat) * 2); /* 120ms — a mark being applied */
+  --time-sheet: calc(var(--dur-beat) * 3); /* 180ms — a dialog laid down */
+  --time-step: calc(var(--dur-beat) * 0.5); /* 30ms  — the stagger interval */
+  /* The signature moment's total. The 40% phase boundary in the `label-attach`
+     keyframes is strike:seat = 2:3 and is locked to this sum. Change one beat
+     count and you must change the percentage; MOTION.md §4 states the pair. */
+  --time-attach: calc(var(--time-strike) + var(--time-seat)); /* 300ms */
+
+  /* Easings, named for what the motion is doing, not for a curve family.
+     `--ease-chip` is unchanged from round 1 and still governs the crossfade. */
   --ease-chip: cubic-bezier(0.2, 0, 0, 1);
+  /* Accelerating. A label is thrown at the surface; it does not drift in. */
+  --ease-strike: cubic-bezier(0.7, 0, 0.84, 0);
+  /* Hard decelerate. Arrival against a physical stop, no bounce. */
+  --ease-seat: cubic-bezier(0.16, 1, 0.3, 1);
+  /* One overshoot and out. The impact of a stamp, not a spring. */
+  --ease-stamp: cubic-bezier(0.34, 1.28, 0.64, 1);
+
+  /* Distances and amplitudes. Tokens for the same reason durations are: they
+     are zeroed under the reduced-motion query, so even a transition that fires
+     mid-frame cannot travel. Every keyframe in this product RESOLVES TO THE
+     RESTING STATE at 100%, so a 0ms duration lands on the correct pixel. */
+  --dist-strike: 10px; /* how far off its seat a label starts */
+  --dist-seat: 2px; /* the overshoot it settles back through */
+  --dist-nudge: 1px; /* a control under the finger */
+  --scale-stamp: 1.06; /* a mark's impact scale */
+  --tilt-strike: -0.6deg; /* a label is never applied perfectly square */
+
+  /* Orchestration. A call site sets `--stagger-index` per item; the cap is
+     what stops a long lane from turning into a wave. MOTION.md §6. */
+  --stagger-index: 0;
+  --stagger-cap: 6;
 
   /* Faces */
   --face-display: 'Archivo', 'Archivo Expanded', 'Helvetica Neue', Arial,
@@ -390,10 +444,32 @@
     Consolas, monospace;
 }
 
+/* THE WHOLE REDUCED-MOTION IMPLEMENTATION.
+
+   One query, one selector pair, and the beat goes to zero. Every duration in
+   the product is a multiple of the beat, so every duration goes with it. The
+   distances are zeroed alongside it as belt and braces: a transition that
+   somehow fires with a literal duration still has nowhere to travel.
+
+   Under reduce this interface is not frozen, and the reason is structural
+   rather than a second set of animations. Every motion in Relay is the
+   application of a mark — a bar drawn, a plate seated, a stamp struck — and
+   the mark is a permanent part of the surface afterwards. Removing the motion
+   removes the reveal, not the artifact: the bar is already drawn, the plate is
+   already seated, the stamp is already there. Nothing in this product asks
+   motion to carry state that the static frame does not also carry. That claim
+   is the design constraint behind the restraint list in MOTION.md §5, and it
+   is what makes a 0ms beat an acceptable reduced-motion story rather than an
+   abdication. */
 @media (prefers-reduced-motion: reduce) {
   :root,
   [data-relay-root] {
-    --dur-chip: 0ms;
+    --dur-beat: 0ms;
+    --dist-strike: 0px;
+    --dist-seat: 0px;
+    --dist-nudge: 0px;
+    --scale-stamp: 1;
+    --tilt-strike: 0deg;
   }
 }
 
@@ -453,7 +529,120 @@
 }
 
 /* --------------------------------------------------------------------------
-   7. PRINT
+   7. LABEL CHROME
+
+   The spec-label vernacular, as five classes. Each one exists because the
+   product already has the thing it draws — a cut line, a printed colour bar, a
+   data plate, a boundary, an issuing mark. None of them introduces a colour;
+   the whole set is drawn in `--ink`, `--paper`, `--rule` and `--rule-strong`,
+   because the palette's one job is possession and a label system that spends a
+   second hue on decoration has broken it. Reasons in docs/design/LABEL-SYSTEM.md.
+
+   All five are paint-only: no layout, no new element in the common case, no
+   image request. Two of them (`.dieline`, `.colour-bar`) add one pseudo-element
+   each, which costs a paint box and no reflow.
+   -------------------------------------------------------------------------- */
+
+@layer components {
+  /* THE DIELINE. A printed label has a trimmed edge and, inset from it, the
+     cut line the die follows. Relay's card already has the trimmed edge — the
+     `--rule-strong` hairline that WCAG 1.4.11 requires of anything operable.
+     This adds the cut line: a dashed `--rule` hairline 2px inside it.
+
+     `--rule` is decorative and this is decoration; the operable boundary is
+     still the solid outer hairline, so the 3:1 requirement is unaffected. */
+  .dieline {
+    position: relative;
+  }
+  .dieline::before {
+    content: '';
+    position: absolute;
+    inset: 2px;
+    border: var(--hairline) dashed var(--rule);
+    border-radius: var(--radius-1);
+    pointer-events: none;
+  }
+
+  /* THE PRINTED COLOUR BAR. The possession bar, read as a spot-colour ident
+     strip rather than as a flat rule: one knockout notch 5px from the head,
+     the way a press control strip divides its segments.
+
+     Composes with the existing `bg-agency` / `bg-client` fill — the notch is
+     painted in the card ground, so nothing about the bar's colour API moves.
+     It assumes the `--paper-2` ground that cards sit on. */
+  .colour-bar {
+    position: relative;
+  }
+  .colour-bar::after {
+    content: '';
+    position: absolute;
+    inset-inline: 0;
+    top: 5px;
+    height: var(--hairline);
+    background: var(--paper-2);
+  }
+
+  /* THE DATA PLATE. The recessed ground a dense mono table sits on — batch and
+     serial codes, the version record, the certificate's body.
+
+     The ground is `--paper`, deliberately: on a card (`--paper-2`) it reads one
+     step down, in both modes, and it is a ground the contrast table already
+     covers. A bespoke mix here would be a new contrast pair nobody measured. */
+  .plate {
+    background-color: var(--paper);
+    border: var(--hairline) solid var(--rule);
+    border-radius: var(--radius-1);
+  }
+
+  /* THE HAZARD BOUNDARY. Diagonal stripes, achromatic, in `--ink`.
+
+     Exactly one referent in this product: the purge boundary. Not "urgent" —
+     purge is a stated property of the document, never a surprise — but a real
+     line with a real other side, after which the bytes are gone. Reference
+     sheets draw this in alert red; Relay cannot, because `--breach` means one
+     thing. Black-and-white diagonals carry "boundary" without spending a hue,
+     which is the whole reconciliation in one class. */
+  .hazard-rule {
+    height: 6px;
+    background-image: repeating-linear-gradient(
+      -45deg,
+      var(--ink) 0 3px,
+      transparent 3px 7px
+    );
+  }
+
+  /* THE REGISTRATION MARK. A printer's crosshair: this document was issued by
+     a system, at a moment, and the mark is where it was registered.
+
+     The one circle in a product whose radius ceiling is 3px. A registration
+     mark is a circle by definition — it is not a card, a control or a chrome
+     element, and the ceiling exists to stop surfaces looking like a SaaS
+     dashboard, not to forbid a printer's mark. */
+  .reg-mark {
+    width: 10px;
+    height: 10px;
+    border-radius: 9999px;
+    border: var(--hairline) solid var(--rule-strong);
+    background-image:
+      linear-gradient(var(--rule-strong), var(--rule-strong)),
+      linear-gradient(var(--rule-strong), var(--rule-strong));
+    background-size: 100% var(--hairline), var(--hairline) 100%;
+    background-position: center center;
+    background-repeat: no-repeat;
+  }
+
+  /* ORCHESTRATION. The one place a call site participates in motion timing.
+     Set `--stagger-index` per item; the cap turns a long lane from a wave into
+     a burst that finishes. See docs/design/MOTION.md §6. */
+  .stagger {
+    animation-delay: calc(
+      min(var(--stagger-index), var(--stagger-cap)) * var(--time-step)
+    );
+  }
+}
+
+/* --------------------------------------------------------------------------
+   8. PRINT
 
    A wrap slate and a decision record get printed and attached to invoices.
    Print on white, keep the mono records, drop the possession fills to outlines.
@@ -468,5 +657,21 @@
   }
   body {
     background: #fff;
+  }
+  /* The label chrome is the point of a printed Relay document, not chrome to
+     strip. Browsers drop background images in print by default, which would
+     silently delete the hazard boundary and the registration mark from a
+     certificate of destruction — the two marks that say it is an issued
+     record. `print-color-adjust: exact` is what keeps them on the page. */
+  .hazard-rule,
+  .reg-mark,
+  .colour-bar,
+  .colour-bar::after {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  /* Possession fills drop to outlines in print; the dieline is the outline. */
+  .plate {
+    background-color: transparent;
   }
 }

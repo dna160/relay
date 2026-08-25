@@ -358,35 +358,180 @@ export const FORBIDDEN_CSS_SOURCE_PATTERNS: readonly { pattern: string; why: str
    ========================================================================== */
 
 /**
- * The whole motion budget of the product. Reduced motion is honoured at the
- * token, not per component, so one assertion covers every animation that
- * exists — and any animation added later that does not read `--dur-chip` is a
- * spec violation, which is what `ALLOWED_ANIMATION_NAMES` is for.
+ * THE MOTION CONTRACT.
+ *
+ * Round 3 replaced a one-line motion budget (a 120ms chip crossfade) with a
+ * motion *system*. The thing that did not change is the mechanism: reduced
+ * motion is honoured AT THE TOKEN, so one assertion still covers every
+ * animation that exists, and a `motion-reduce:` variant at a call site is
+ * still a spec violation.
+ *
+ * How one token still covers a system: `--dur-beat` is the beat, and every
+ * duration in the product is an integer number of beats written as a `calc()`
+ * over it. Zero the beat and the arithmetic silences everything. That is why
+ * `tests/unit/a11y-source.spec.ts` may keep asserting there is exactly one
+ * `--dur-*` token in `globals.css` — the assertion is not a budget on how much
+ * motion exists, it is a proof that there is one thing to switch off.
+ *
+ * Full specification, including the reduced-motion equivalent of every entry
+ * and the cost of each against the FCP budget: `docs/design/MOTION.md`.
  */
 export const MOTION = {
-  durationToken: '--dur-chip',
-  /** Computed value with no reduced-motion preference. */
-  normal: '120ms',
+  durationToken: '--dur-beat',
+  /** Computed value with no reduced-motion preference. One beat. */
+  normal: '60ms',
   /** Computed value under `prefers-reduced-motion: reduce`. */
   reduced: '0ms',
   easingToken: '--ease-chip',
 } as const;
 
-/** The only two `@keyframes` in the product. Anything else is a regression. */
-export const ALLOWED_ANIMATION_NAMES: readonly string[] = ['chip-in', 'chip-out', 'none'] as const;
+/**
+ * The duration ladder, in beats. Every entry is `calc(var(--dur-beat) * n)` in
+ * `globals.css` §5 — never a literal, or the single-switch guarantee is gone.
+ *
+ * A browser-side test can assert each of these resolves to `beats * 60ms`
+ * normally and to `0ms` under reduce; a Node-side test can assert the
+ * stylesheet declares each one as a `calc()` over `MOTION.durationToken`.
+ */
+export const BEATS: Readonly<Record<string, number>> = {
+  '--time-tick': 1,
+  '--time-chip': 2,
+  '--time-strike': 2,
+  '--time-seat': 3,
+  '--time-stamp': 2,
+  '--time-sheet': 3,
+  '--time-step': 0.5,
+  '--time-attach': 5,
+} as const;
+
+/** One beat, in milliseconds, with no preference set. */
+export const BEAT_MS = 60;
 
 /**
- * Explicitly absent from the product. A test that finds a computed
- * `transform` change on hover, or an `animation-iteration-count: infinite`,
- * has found one of these.
+ * The easings, by what the motion is doing. `--ease-chip` is unchanged from
+ * round 1 and still governs the crossfade, so the published 120ms two-beat
+ * crossfade is byte-for-byte the animation that shipped before.
  */
-export const FORBIDDEN_MOTION: readonly string[] = [
-  'infinite animation (spinners, shimmer, pulsing dots)',
-  'hover transform (lift, scale, translate)',
-  'entrance animation on scroll',
-  'skeleton shimmer',
-  'toast slide-in',
-  'page transition',
+export const EASINGS: Readonly<Record<string, string>> = {
+  '--ease-chip': 'cubic-bezier(0.2, 0, 0, 1)',
+  '--ease-strike': 'cubic-bezier(0.7, 0, 0.84, 0)',
+  '--ease-seat': 'cubic-bezier(0.16, 1, 0.3, 1)',
+  '--ease-stamp': 'cubic-bezier(0.34, 1.28, 0.64, 1)',
+} as const;
+
+/**
+ * Distances and amplitudes. These are tokens for the same reason durations
+ * are: the reduced-motion query zeroes them, so a transition that somehow
+ * fires with a literal duration still has nowhere to travel.
+ */
+export const AMPLITUDES: Readonly<
+  Record<string, { readonly normal: string; readonly reduced: string }>
+> = {
+  '--dist-strike': { normal: '10px', reduced: '0px' },
+  '--dist-seat': { normal: '2px', reduced: '0px' },
+  '--dist-nudge': { normal: '1px', reduced: '0px' },
+  '--scale-stamp': { normal: '1.06', reduced: '1' },
+  '--tilt-strike': { normal: '-0.6deg', reduced: '0deg' },
+} as const;
+
+/** Orchestration. A call site sets `--stagger-index`; nothing else. */
+export const STAGGER = {
+  indexToken: '--stagger-index',
+  capToken: '--stagger-cap',
+  /** Beyond this index no further delay accrues, so a long lane still lands. */
+  cap: 6,
+  intervalToken: '--time-step',
+  /** The class that turns the index into a delay. */
+  className: 'stagger',
+} as const;
+
+/**
+ * THE SANCTIONED KEYFRAMES. A ninth name appearing on a page is a regression.
+ *
+ * Every one of these is compositor-only (`transform` / `opacity`) and every
+ * one resolves to the element's resting state at 100%, which is what makes a
+ * 0ms beat land on the correct pixel rather than merely land fast.
+ */
+export const ALLOWED_ANIMATION_NAMES: readonly string[] = [
+  'chip-in',
+  'chip-out',
+  'label-attach',
+  'bar-draw',
+  'stamp',
+  'seat',
+  'sheet-in',
+  'scrim-in',
+  'none',
+] as const;
+
+/**
+ * The only CSS properties any Relay animation or transition may touch.
+ * Anything else is either a layout property (and thrashes) or a paint property
+ * that cannot be composited. `color` and `background-color` are the sanctioned
+ * exception: they do not composite, but they animate a 1-2px chip or a button
+ * fill over one beat and never during first paint.
+ */
+export const ANIMATABLE_PROPERTIES: readonly string[] = [
+  'transform',
+  'opacity',
+  'color',
+  'background-color',
+  'border-color',
+] as const;
+
+/**
+ * THE RESTRAINT LIST — what does not animate, and why.
+ *
+ * This is the half of the motion system that keeps it from becoming confetti,
+ * and it is data rather than prose so a reviewer can cite an entry. Each `why`
+ * is the reason this particular thing stays still, not a general objection to
+ * motion. `docs/design/MOTION.md` §5 is the same list with the argument.
+ */
+export const FORBIDDEN_MOTION: readonly { readonly what: string; readonly why: string }[] = [
+  {
+    what: 'infinite animation (spinners, shimmer, pulsing dots)',
+    why: 'motion here means a change has occurred; a loop means nothing has, forever',
+  },
+  {
+    what: 'skeleton shimmer',
+    why: 'a shimmer animates the absence of data. The empty state says what to do instead.',
+  },
+  {
+    what: 'hover transform (lift, scale, translate)',
+    why: 'paper does not float, and a hover is not an event in this product',
+  },
+  {
+    what: 'entrance animation on the initial board render',
+    why: 'the acquisition surface has a 1.5s FCP budget; nothing animates before hydration',
+  },
+  {
+    what: 'entrance animation on scroll',
+    why: 'scrolling is not an event; a board is a document, not a narrative',
+  },
+  {
+    what: 'lane re-sort / card reflow',
+    why: 'position in a lane is not information, so its change is not an event worth weight',
+  },
+  {
+    what: 'page transition between routes',
+    why: 'it costs the FCP budget on the one surface that has one, and buys nothing',
+  },
+  {
+    what: 'toast slide-in',
+    why: 'there are no toasts; a result is shown where the action was taken',
+  },
+  {
+    what: 'countdown or possession-duration tick',
+    why: 'the wrap slate states a date. A number that moves reads as urgency, and urgency is not a channel this palette has.',
+  },
+  {
+    what: 'the possession bar pulsing while the ball is with someone',
+    why: 'possession is a state, not an event. It animates once, when it changes.',
+  },
+  {
+    what: 'anything on the purge certificate',
+    why: 'it is a record of destruction forwarded to a legal team. A record does not perform.',
+  },
 ] as const;
 
 /* ==========================================================================

@@ -11,6 +11,7 @@
 import { eq } from 'drizzle-orm';
 import { engagements, referenceFiles } from '@/db/schema';
 import type { Database } from '@/db/types';
+import { isShelfKeyFor } from '../storage/keys';
 import { bumpActivity } from '../engagement/lifecycle';
 import { notVisible, validationFailed } from '../errors';
 
@@ -41,6 +42,12 @@ export async function addReferenceFile(
   now: Date,
 ): Promise<ReferenceFileRecord> {
   if (input.sizeBytes <= 0) throw validationFailed('sizeBytes must be positive');
+  // Same reasoning as `recordVersion`: the key comes back in a request body and
+  // is not the one this route handed out until it has been checked against the
+  // engagement that authorised the write.
+  if (!isShelfKeyFor(input.engagementId, input.storageKey)) {
+    throw validationFailed('That storage key does not belong to this engagement');
+  }
 
   return db.transaction(async (tx) => {
     const found = await tx

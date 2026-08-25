@@ -15,6 +15,7 @@
 import { and, desc, eq, isNull } from 'drizzle-orm';
 import { assetVersions, cards } from '@/db/schema';
 import type { Database, Tx } from '@/db/types';
+import { isVersionKeyFor } from '../storage/keys';
 import { bumpActivity } from '../engagement/lifecycle';
 import { notVisible, validationFailed } from '../errors';
 
@@ -72,6 +73,16 @@ export async function recordVersion(
     throw validationFailed('sha256 must be 64 lowercase hex characters');
   }
   if (input.sizeBytes <= 0) throw validationFailed('sizeBytes must be positive');
+  /**
+   * The key must be one this engagement and card were actually issued. It
+   * arrives in the request body after the upload, so until it is checked a
+   * caller can point a version row at any object in the bucket — including one
+   * belonging to another engagement, which breaks purge (INV-7) and lets the
+   * download route sign a GET for it.
+   */
+  if (!isVersionKeyFor(input.engagementId, input.cardId, input.storageKey)) {
+    throw validationFailed('That storage key does not belong to this card');
+  }
 
   return db.transaction(async (tx) => {
     const card = await tx

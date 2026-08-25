@@ -70,7 +70,13 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       className={cn(
         'inline-flex items-center justify-center whitespace-nowrap',
         'border-hairline rounded-sm font-sans font-medium',
-        'transition-colors duration-chip ease-chip',
+        // Motion: one beat, and the only thing that moves is the button
+        // under the finger. `--dist-nudge` is 0px under prefers-reduced-motion,
+        // so the press still reads as a colour step and never as a jump.
+        // `active:` and not `hover:` — a hover is not an event in this product.
+        'transition-[background-color,border-color,color,transform]',
+        'duration-tick ease-chip',
+        'enabled:active:translate-y-nudge',
         // Disabled reads as "not yet", not as "broken": the shape stays, the
         // contrast drops one step, and the cursor says so. Hover is suppressed
         // by the `enabled:` variants on the tone rather than fought here.

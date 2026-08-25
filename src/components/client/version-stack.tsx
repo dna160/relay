@@ -45,15 +45,26 @@ export function VersionStack({
   /** An archived workspace is on its way to being destroyed. */
   archived?: boolean;
   daysToPurge?: number | null;
-  /** The server's clock, so the date here matches the one in the slate above. */
-  nowMs?: number;
+  /**
+   * The server's clock, so the date here matches the one in the slate above.
+   *
+   * Required, and deliberately not defaulted to `Date.now()`. A fallback here
+   * reads as a convenience and is really a latent hydration bug: the moment
+   * this file grows a `'use client'`, or a second caller forgets the prop, the
+   * server would format the date against one clock and the browser against
+   * another, and React would find a `<time dateTime>` that does not match. It
+   * would not patch that up — it abandons the subtree, and the links inside it
+   * stop working. Every time-dependent component on this surface takes `nowMs`
+   * as a prop for that reason; this one now cannot opt out.
+   */
+  nowMs: number;
 }) {
   if (versions.length === 0) {
     return <EmptyState instruction="No files yet. Your agency will publish the first version here." />;
   }
 
   const ordered = [...versions].sort((a, b) => b.versionNo - a.versionNo);
-  const purgeOn = formatPurgeDate(daysToPurge, nowMs ?? Date.now());
+  const purgeOn = formatPurgeDate(daysToPurge, nowMs);
 
   return (
     <ol className="divide-y divide-rule border border-hairline border-rule">

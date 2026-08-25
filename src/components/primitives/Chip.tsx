@@ -5,9 +5,21 @@ import { cn } from './cn';
 
 /**
  * The state chip. When a card transitions, the outgoing label fades out while
- * the incoming label fades in over `--dur-chip` (120ms). Under
- * `prefers-reduced-motion: reduce` the token is 0ms, so the swap is instant —
+ * the incoming label fades in over `--time-chip` — two beats, still 120ms,
+ * byte-for-byte the animation that shipped in round 1. Under
+ * `prefers-reduced-motion: reduce` the beat is 0ms, so the swap is instant —
  * the motion is removed by the token, not by a second code path.
+ *
+ * `attach` promotes that crossfade to the signature moment. When the label
+ * changing IS possession changing hands, the incoming label is struck and
+ * seated instead of faded: it arrives from `--dist-strike` off its seat,
+ * over-scaled and off-square, overshoots `--dist-seat` and settles back
+ * against the stop. Five beats. It is the product's central event and it is
+ * the one place in the interface that behaves like something being applied.
+ *
+ * Use `attach` for a possession change and for nothing else. A state chip
+ * whose label changes without the ball moving — a version pip, a private
+ * marker — takes the crossfade. The full argument is docs/design/MOTION.md §4.
  *
  * Tone is the possession hue, not an urgency colour. `breach` is only ever
  * passed for a breached commitment.
@@ -35,6 +47,11 @@ export interface ChipProps {
   transitionKey?: string;
   /** Prefix read by assistive tech, e.g. "State". */
   label?: string;
+  /**
+   * Possession is changing hands. Promotes the incoming label's crossfade to
+   * the label-attach. Never true for a change that is not a possession change.
+   */
+  attach?: boolean;
   className?: string;
 }
 
@@ -58,6 +75,7 @@ export function Chip({
   children,
   transitionKey,
   label,
+  attach = false,
   className,
 }: ChipProps): React.JSX.Element {
   const key = transitionKey ?? String(children);
@@ -78,7 +96,11 @@ export function Chip({
     const leaving = previous.current;
     previous.current = { key, node: children };
     setOutgoing(leaving);
-    const t = window.setTimeout(() => setOutgoing(null), 160);
+    // Longer than the longest incoming animation (five beats = 300ms) so the
+    // outgoing label is never removed while the incoming one is still moving.
+    // A constant rather than a token read: this is a cleanup deadline, not a
+    // duration a reader perceives, and it is correct at every beat value.
+    const t = window.setTimeout(() => setOutgoing(null), 400);
     return () => window.clearTimeout(t);
   }, [key, children]);
 
@@ -96,7 +118,13 @@ export function Chip({
       )}
     >
       {label ? <span className="sr-only">{label}: </span> : null}
-      <span key={key} className="col-start-1 row-start-1 animate-chip-in">
+      <span
+        key={key}
+        className={cn(
+          'col-start-1 row-start-1',
+          attach ? 'animate-label-attach' : 'animate-chip-in',
+        )}
+      >
         {children}
       </span>
       {outgoing ? (

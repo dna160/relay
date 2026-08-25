@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { db } from '@/db/client';
 import { findContact, loadLinkableEngagement } from '@/db/queries/client-auth';
 import {
+  chargeCodeRequest,
   CLIENT_CODE_TTL_MINUTES,
   newClientCode,
   readEngagementToken,
@@ -36,12 +37,28 @@ export async function POST(request: Request): Promise<NextResponse> {
     const engagement = await loadLinkableEngagement(db, engagementId);
     if (!engagement || engagement.status === 'purged') throw notVisible('Not found');
 
-    const contact = await findContact(db, engagementId, body.email);
+    const now = new Date();
+
+    /**
+     * Charged before the contact is looked up, so a throttled address and an
+     * uninvited one are indistinguishable — the enumeration defence at the top
+     * of this file would be worthless if the rate limiter answered differently
+     * for a real contact.
+     *
+     * Over budget is not an error to the caller. It is the same `{ sent: true }`
+     * as always, with nothing sent: telling an anonymous caller that they have
+     * hit a limit confirms they found a live engagement, and a person who
+     * genuinely pressed the button five times does not need to be told off.
+     * Without this, the route is an unauthenticated way to send an unbounded
+     * number of emails to any address the caller names.
+     */
+    const withinBudget = await chargeCodeRequest(engagementId, body.email, now);
+
+    const contact = withinBudget ? await findContact(db, engagementId, body.email) : null;
 
     // An uninvited address falls through to the same response, having sent
     // nothing. The caller cannot tell the two cases apart.
     if (contact) {
-      const now = new Date();
       const code = newClientCode();
       await storeClientCode(engagementId, body.email, code, now);
       await sendClientCode({

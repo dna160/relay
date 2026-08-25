@@ -423,7 +423,7 @@ async function durationToken(page: import('@playwright/test').Page): Promise<str
 
 test.describe('no preference', () => {
   test.use({ reducedMotion: 'no-preference' });
-  test(`--dur-chip is ${MOTION.normal}`, async ({ page }) => {
+  test(`${MOTION.durationToken} is ${MOTION.normal}`, async ({ page }) => {
     await page.goto('/');
     expect(await durationToken(page)).toBe(MOTION.normal);
   });
@@ -432,7 +432,7 @@ test.describe('no preference', () => {
 test.describe('prefers-reduced-motion: reduce', () => {
   test.use({ reducedMotion: 'reduce' });
 
-  test(`--dur-chip collapses to ${MOTION.reduced}`, async ({ page }) => {
+  test(`${MOTION.durationToken} collapses to ${MOTION.reduced}`, async ({ page }) => {
     await page.goto('/');
     expect(await durationToken(page)).toBe(MOTION.reduced);
   });
@@ -587,3 +587,102 @@ Stated so it is not assumed done:
 - **axe.** Running `@axe-core/playwright` would be genuinely valuable and it is
   a new dependency, which needs an ADR and the Architect's approval. Everything
   in this document is deliberately written without one.
+
+---
+
+## 9. The motion system (round 3)
+
+Round 3 turned one crossfade into eight sanctioned animations. **The number of
+assertions did not have to grow with it**, and this section is what QA should
+lift so that stays true.
+
+The whole guarantee is: every duration is an integer number of beats written as
+a `calc()` over one root token, so zeroing the root zeroes the system. The
+existing assertions in §7 and in `tests/unit/a11y-contract.spec.ts` — one
+`--dur-*` token, declared at `MOTION.normal`, collapsed to `MOTION.reduced`
+inside a query that reaches `[data-relay-root]` — are unchanged and still pass.
+Everything below is additive.
+
+```ts
+import {
+  ALLOWED_ANIMATION_NAMES,
+  AMPLITUDES,
+  ANIMATABLE_PROPERTIES,
+  BEAT_MS,
+  BEATS,
+  EASINGS,
+  MOTION,
+  STAGGER,
+} from '@/styles/a11y-contract';
+
+const read = (page: Page, name: string) =>
+  page.evaluate(
+    (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim(),
+    name,
+  );
+
+test.describe('the beat governs every duration', () => {
+  test.use({ reducedMotion: 'no-preference' });
+
+  for (const [token, beats] of Object.entries(BEATS)) {
+    test(`${token} is ${beats} beat(s)`, async ({ page }) => {
+      await page.goto('/');
+      // Chromium serialises 120ms as .12s — compare the duration, not the string.
+      expect(durationMs(await read(page, token))).toBeCloseTo(beats * BEAT_MS, 1);
+    });
+  }
+});
+
+test.describe('one token silences all of them', () => {
+  test.use({ reducedMotion: 'reduce' });
+
+  for (const token of Object.keys(BEATS)) {
+    test(`${token} collapses to 0`, async ({ page }) => {
+      await page.goto('/');
+      expect(durationMs(await read(page, token))).toBe(0);
+    });
+  }
+
+  for (const [token, { reduced }] of Object.entries(AMPLITUDES)) {
+    test(`${token} collapses to ${reduced}`, async ({ page }) => {
+      await page.goto('/');
+      expect(await read(page, token)).toBe(reduced);
+    });
+  }
+});
+```
+
+Two assertions that do not exist yet and are worth more than the rest of this
+section, because they cover the properties the whole design rests on and
+neither is currently guaranteed by anything but review:
+
+**(a) Every keyframe's 100% is the resting state.** This is what makes a 0ms
+beat *correct* rather than merely fast — the element lands on exactly the pixel
+it occupies when nothing is happening. Walk `document.styleSheets`, find each
+`CSSKeyframesRule` whose name is in `ALLOWED_ANIMATION_NAMES`, read its `100%`
+stop, and assert `transform` resolves to the identity (`none`, or a matrix
+equal to identity) and `opacity` to `1`. A keyframe that ended anywhere else
+would leave the interface wrong for a reduced-motion reader — silently, and
+only for them.
+
+**(b) No literal duration in `globals.css`.** A source scan: every `\d+m?s` in
+the stylesheet must be inside the `--dur-beat` declaration or its
+reduced-motion counterpart. A second literal duration is how the single-switch
+guarantee dies, and it would die without any test going red under the current
+assertions.
+
+Two more that are cheap:
+
+**(c) Only sanctioned keyframes render.** `assertOnlySanctionedKeyframes` in
+`tests/e2e/_a11y.ts` already does this; it needs no change beyond
+`ALLOWED_ANIMATION_NAMES` having grown from three entries to nine.
+
+**(d) Nothing transitions a layout property.** Read every element's computed
+`transition-property` and assert each entry is in `ANIMATABLE_PROPERTIES`.
+`width`, `height`, `top`, `margin` and friends appearing there is the beginning
+of a jank regression on the surface with the FCP budget.
+
+> **Shape change to note:** `FORBIDDEN_MOTION` in `src/styles/a11y-contract.ts`
+> was `readonly string[]` and is now `readonly { what, why }[]`. Nothing in
+> `tests/` referenced it at the time of writing, but a consumer that did would
+> need updating.
