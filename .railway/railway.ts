@@ -42,11 +42,11 @@ import {
 } from 'railway/iac';
 
 /** The GitHub repository both services deploy from. */
-const REPO = 'OWNER/relay';
+const REPO = 'dna160/relay';
 
 export default defineRailway((ctx) => {
   const prod = ctx.environment === 'production';
-  const db = postgres('postgres');
+  const db = postgres('Postgres');
 
   /**
    * Everything both services need. `preserve()` means "this value is set on the
@@ -84,10 +84,12 @@ export default defineRailway((ctx) => {
     RETENTION_PURGE_DAYS: '60',
   };
 
-  const origin = prod ? 'https://app.relay.example' : 'https://staging.relay.example';
+  const origin = prod
+    ? 'https://app.relay.example'
+    : 'https://relay-web-staging.up.railway.app';
 
-  const app = service('app', {
-    source: github(REPO, { branch: prod ? 'main' : 'staging' }),
+  const app = service('relay-web', {
+    source: github(REPO, { branch: 'main' }),
     build: 'npm run build',
     // Runs to completion before the new version receives any traffic. The old
     // version is still serving while it runs, which is safe only because
@@ -111,10 +113,10 @@ export default defineRailway((ctx) => {
    *
    * No `preDeploy`. Only `app` migrates.
    */
-  const worker = service('worker', {
-    source: github(REPO, { branch: prod ? 'main' : 'staging' }),
+  const worker = service('relay-worker', {
+    source: github(REPO, { branch: 'main' }),
     build: 'npm run build',
-    start: 'npx tsx src/workers/index.ts',
+    start: 'npm run worker',
     replicas: 1,
     env: shared,
   });
