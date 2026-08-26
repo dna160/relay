@@ -18,13 +18,13 @@
 | 5 | Time intelligence | 🟡 partial — possession clock, rounds and `AttentionList` shipped early; nudge jobs not built |
 | 6 | Ephemerality | ✅ complete — INV-7 green under five real SIGKILLs |
 | 7 | Templates, white-label, plan gates | ✅ complete — `applyTemplate()` pure, stamping determinism proven |
-| 8 | Hardening & deploy | ⬜ not started |
+| 8 | Hardening & deploy | 🟡 deploy + rollback executed against staging |
 | — | *v1.1 platform layer below — specified, not started* | |
 | 9 | Identity and tenancy migration | 🟡 built — awaiting the shadow window |
 | 10 | Auth and invites | ⬜ not started |
 | 11 | Multi-org navigation and teams | ⬜ not started |
 | 12 | Document ingestion | 🔴 blocked on D4, D5 |
-| 13 | Deployment and retention hardening | ⬜ not started — D1, D2 answered (ADR-022) |
+| 13 | Deployment and retention hardening | 🟡 staging live; region/worker/IaC outstanding |
 
 Phases 5 and 7 are partial because Round 2 pulled work forward deliberately:
 `GET /api/attention` because the portfolio is the agency home screen and shipping

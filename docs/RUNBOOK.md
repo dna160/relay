@@ -343,7 +343,7 @@ railway list --service app          # or: railway deployment list --service app
 
 # 2. Roll back to it by id. This re-promotes the previous image; it does not
 #    rebuild, so it is fast, and it does not touch the database.
-railway redeploy --service app --deployment <PREVIOUS_DEPLOYMENT_ID> --yes
+git checkout <previous-good-sha> && railway up --service relay-web --ci   # see the appendix: --deployment does not exist
 
 # 3. Same for the worker, if the bad deploy included it.
 railway redeploy --service worker --deployment <PREVIOUS_DEPLOYMENT_ID> --yes
@@ -651,3 +651,66 @@ that is honest about where it stops.
 7. **Backups are Railway's defaults.** Nobody has tested a restore. A backup
    nobody has restored from is a backup you are guessing about, and §4c depends
    on it.
+
+---
+
+## Appendix — rollback, as actually executed
+
+Executed against staging on 2026-08-26. Everything below was run, not written.
+
+### The documented command did not exist
+
+This runbook previously told an operator to roll back with:
+
+```
+railway redeploy --service app --deployment <PREVIOUS_ID> --yes
+```
+
+**`railway redeploy` takes no `--deployment` flag** (CLI 5.43.1). It redeploys
+the *latest* deployment and nothing else. There is no rollback-to-a-specific-
+deployment command in the CLI at all: `deployment list` can name an old
+deployment, and nothing can select one.
+
+`railway down` is not the answer either — it *removes* the most recent
+deployment, which is an outage rather than a reversion.
+
+This is the failure mode the phase exists to catch. The command was plausible,
+it was written by someone who knew the platform, and it would have been run for
+the first time during an incident.
+
+### What works
+
+Roll back by redeploying the previous good tree. Forward-only, and the same
+motion as any other deploy — which is its own argument, because an operator at
+3am should not be learning a second procedure.
+
+```bash
+git checkout <previous-good-sha>
+railway up --service relay-web --ci
+curl -s https://relay-web-staging.up.railway.app/api/health
+```
+
+### Confirming it, which the old procedure could not
+
+`/api/health` reports `release` — the commit sha on a git deploy, the deployment
+id on a `railway up`. Without it, two deployments answer identically and "the
+rollback worked" rests on the dashboard agreeing with itself.
+
+Observed, in order:
+
+| Step | `release` |
+|---|---|
+| deploy | `892ea102` |
+| roll back to the previous build | `dev` |
+| roll forward | `02d4d878` |
+
+The middle row is the proof: that build predates the deployment-id fallback, so
+it can only answer `dev`. A behavioural difference, not a dashboard claim.
+
+### Migrations during a rollback
+
+`preDeployCommand` runs `npm run db:migrate` on every deploy including a
+rollback. Migrations are forward-only and never edited after commit, so a
+rollback re-runs already-applied migrations as a no-op — proven separately, and
+it held here. **A rollback does not undo a migration**, and a schema change that
+the old code cannot tolerate needs the two-deploy dance in §4, not this.
