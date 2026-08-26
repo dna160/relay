@@ -11,12 +11,12 @@
 | Phase | Title | Status |
 |---|---|---|
 | 0 | Scaffolding & guardrails | ✅ complete |
-| 1 | Tenancy, identity, engagement lifecycle | ✅ complete — one exit condition unproven (needs a database) |
+| 1 | Tenancy, identity, engagement lifecycle | ✅ complete — INV-6 cross-engagement test executed |
 | 2 | Board core | ✅ complete |
-| 3 | Assets, versions, approvals | ✅ complete — one exit condition unproven (RSS not measured) |
+| 3 | Assets, versions, approvals | ✅ complete — RSS measured, +0.0 MB on a 200 MB upload |
 | 4 | Client surface | ✅ complete |
 | 5 | Time intelligence | 🟡 partial — possession clock, rounds and `AttentionList` shipped early; nudge jobs not built |
-| 6 | Ephemerality | ⬜ not started |
+| 6 | Ephemerality | ✅ complete — INV-7 green under five real SIGKILLs |
 | 7 | Templates, white-label, plan gates | 🟡 partial — white-label lock shipped; `applyTemplate()` does not exist |
 | 8 | Hardening & deploy | ⬜ not started |
 | — | *v1.1 platform layer below — specified, not started* | |
