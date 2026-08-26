@@ -8,7 +8,7 @@
 > behind it. This document is where that claim is either true or visibly not.
 > Read the **UNPROVEN** rows first; they are the whole point.
 
-**Generated at:** the v1.1 platform round, with Phase 9 landing underneath it. Phases 1–6 landed; 7–8 outstanding; 9 in progress.
+**Generated at:** the Phase 7 round. Phases 1–6 landed; **PHASE-7's exit condition closed** — it had been UNPROVEN since round 1 and closed the hour `applyTemplate()` existed (§4F); 8 outstanding; 9 awaiting its shadow window.
 **Live Postgres:** yes, at last. Most of what §4 listed as never-executed has now executed, and the rows that have not are named individually rather than as a category.
 **Owner:** QA. Update it in the same commit that changes what is provable.
 
@@ -73,7 +73,8 @@ inside a test that would have passed either way.
 | **INV-6** | A client session is scoped to exactly one engagement | 🟢 live (type + structural + schema) | `tests/invariants/inv-06-client-session-single-engagement.spec.ts` — 11 live cases. The retention sweeps are excluded from the list scan; the exclusion is paid for by three tests, not one. **Audited this round and strengthened** — see §5, *the exclusion was running unbacked*. |
 | | ↳ at the session boundary | ⬜ skipped | Same file, `INV-6 at the session boundary` — 3 cases. **Phase 4.** |
 | **INV-7** | Purge is total and leaves exactly one certificate | 🟢 **live — all six conditions, none by reasoning** | `tests/invariants/inv-07-purge-leaves-certificate.spec.ts` — 16 cases (5 structural, 11 against a live Postgres with real bytes on a real filesystem). **Five real SIGKILLs**, each parked deterministically rather than raced. See §4A. Run: `npm run test:db`. |
-| **INV-8** | Active count is one function; billing and expiry never diverge | 🟢 live | `tests/invariants/inv-08-single-active-count.spec.ts` — 9 live cases, incl. `the two callers move together when the clock does` (counted + swept always equals running, at five clock offsets). |
+| **INV-8** | Active count is one function; billing and expiry never diverge | 🟢 live, **and the scan no longer reads one eighth of the tree** | `tests/invariants/inv-08-single-active-count.spec.ts` — 13 live cases, incl. `the two callers move together when the clock does` (counted + swept always equals running, at five clock offsets). Both scans read `sourceFiles('domain')` and nothing else until this round, so `src/db/queries/`, `src/workers/` and `src/app/api/` were invisible — and a definition of active that matters to billing is far likelier to be a `WHERE` clause than a comparison in the domain. Widening it found DEFECT-16. Negative-tested against 8 planted shapes in `invariant-scans-are-not-escapable.spec.ts`. |
+| | ↳ on the stamping path | 🟢 live | Same file, `every plan-gate call site names the organisation` — a burn-down list asserted by equality, so a **new** caller on the deprecated positional form fails the build. Phase 7 added a caller. Behaviour: `template-stamping.db.spec.ts > a create refused by the plan gate stamps nothing and consumes no slot`. |
 | **INV-9** | Business logic lives in `src/domain/` | 🟢 live, **and the surface is no longer just `route.ts`** | `tests/invariants/inv-09-domain-purity.spec.ts` — 5 scans. The write scan covered `route.ts` only; a server action in `actions.ts` or a server component in `page.tsx` reaches the database on identical terms and was invisible. Now `route|actions|page|layout`, read as statements. A raw-SQL scan was added; the health probe is excluded and that exclusion is paid for by a test pinning it to a table-free `select 1`. Also an ESLint rule; the test is what catches someone disabling the rule inline. |
 | **INV-10** | File bytes never traverse the app server | 🟢 live, **and no longer a rule about a variable name** | `tests/invariants/inv-10-no-bytes-through-app.spec.ts` — 4 scans. Intake was pinned to a receiver called `req`/`request`: renaming the handler parameter to `r` let a 5 GB upload through a 512 MB container with the guard green. Egress scanned `src/app/` only, so the same stream in `src/lib/storage.ts` was invisible — it now covers `app`, `lib` and `workers`, and `storage.ts` is asserted to presign rather than fetch. Negative-tested against 6 planted intake shapes. |
 
@@ -175,7 +176,7 @@ in both directions: `--phase 8` still fails on INV-3, INV-4 and INV-6 and does
 
 | EXIT condition | Proven by |
 |---|---|
-| Stamping a template twice produces structurally identical graphs | 🟢 **PROVEN, and the proof has a negative control.** Portable: `tests/unit/template-determinism.spec.ts` — **67 live cases** against the real `applyTemplate()`. Database: `tests/unit/template-stamping.db.spec.ts` — 12 cases under `npm run test:db`, comparing two boards read back out of Postgres. Split for the reason INV-3 was split; see §4F. |
+| Stamping a template twice produces structurally identical graphs | 🟢 **PROVEN, and the proof has a negative control.** Portable: `tests/unit/template-determinism.spec.ts` — **73 live cases** against the real `applyTemplate()`. Database: `tests/unit/template-stamping.db.spec.ts` — 12 cases under `npm run test:db`, comparing two boards read back out of Postgres. Split for the reason INV-3 was split; see §4F. |
 | ↳ and the comparison can fail | 🟢 live | `node .github/scripts/check-template-determinism-control.mjs` — 11 defects planted in a copy of `applyTemplate()`, the real spec required to go red against each. CI job `verify (node 22)`. **Three of the eleven survived its first run**, and the assertions that close them are named in §4F. |
 | ↳ what the normalisation strips | 🟢 live, and enumerated | `template-determinism.spec.ts > the normalisation, stated` — the stripped-path ledger and the **kept**-path ledger are both asserted against literal lists, so widening the strip list is a diff a reviewer sees. Ids are *interned*, not blanked. §4F. |
 | Theming cannot override `--client` or `--breach` | ⬜ skipped — `tests/unit/plan-limits.spec.ts > the branding gate > cannot theme away a breach warning`, plus two neighbours. **Phase 7.** |
@@ -197,13 +198,13 @@ in both directions: `--phase 8` still fails on INV-3, INV-4 and INV-6 and does
 
 | Job | Enforces | Blocking now? |
 |---|---|---|
-| `verify (node 22)` / `verify (node 24)` | `npm run verify:all` — typecheck, lint, unit, invariants, **and `next build`**. The build is in the gate because a `'use server'` file exporting a non-async const passes typecheck and lint and fails page-data collection; only the build caught it. | Yes — **green**. 632 live assertions (487 unit, 145 invariant), plus 40 under `test:db` — 672 in total, up from 559 at the start of the round. The additions: INV-11's structural half (24) and its 20 planted violations, the bundle-purity detector and vocabulary liveness (16), the Code 39 decoder and barcode polarity (13), first paint (17), the JUnit skip parser (6), and the a11y stale-allowlist case. |
+| `verify (node 22)` / `verify (node 24)` | `npm run verify:all` — typecheck, lint, unit, invariants, **and `next build`**. The build is in the gate because a `'use server'` file exporting a non-async const passes typecheck and lint and fails page-data collection; only the build caught it. Node 22 also runs `check-template-determinism-control.mjs`, which needs `node_modules` and therefore cannot live in the `invariant contract` job. | Yes — **green**. 731 live assertions (582 unit, 149 invariant), plus 52 under `test:db` — 783 in total, up from 672. The additions this round: PHASE-7's determinism suite (73) and its 11 planted defects, the stamping path under `test:db` (12), INV-8's widened reach (4) with 8 more planted shapes, and the deprecated counter's cross-org guard. Previously: INV-11's structural half (24) and its 20 planted violations, the bundle-purity detector and vocabulary liveness (16), the Code 39 decoder and barcode polarity (13), first paint (17), the JUnit skip parser (6), and the a11y stale-allowlist case. |
 | `invariant contract` | All ten specs exist; every skipped suite names its phase; at Phase 8 none are skipped; nothing removed from `tests/invariants` without the `invariant-change` label | Yes — green |
 | `build` | `next build` succeeds | Yes |
 | `env registry` | Every `process.env` read in `src/` is in `.env.example`; every `.env.example` variable is in the runbook **and is set by `.railway/railway.ts`**; no `E2E_` variable reaches a deployed environment; no real secret is committed | Yes — **red on one line**: `NEXT_PUBLIC_APP_URL` (F7). `PGPOOL_MAX` was fixed by B8. |
 | `e2e` | Playwright both projects; migrations idempotent; traces uploaded on failure | Yes — see §4 for the run status |
 | `purge --plan smoke test` | A dry run prints a manifest and changes no row counts | Yes — Phase 6 landed the CLI, so this is now a real gate |
-| `database-backed suites` | `npm run test:db` — INV-7's five SIGKILLs, INV-3's hostile inserts, the failure-mode matrix, and (skipped until Phase 9 EXIT) INV-11's 74-case matrix, against the job's Postgres. Creates and drops a database **of this run's own**, named with an epoch, a pid and a random tail, so neither another suite nor another *run* can truncate a table mid-assertion | Yes — **green**, 40 assertions, 74 skipped. DEFECT-12 fixed by the back-end |
+| `database-backed suites` | `npm run test:db` — INV-7's five SIGKILLs, INV-3's hostile inserts, the failure-mode matrix, PHASE-7's stamping path, and (skipped until Phase 9 EXIT) INV-11's 74-case matrix, against the job's Postgres. Creates and drops a database **of this run's own**, named with an epoch, a pid and a random tail, so neither another suite nor another *run* can truncate a table mid-assertion | Yes — **green**, 52 assertions, 74 skipped. DEFECT-12 fixed by the back-end |
 | `client board FCP budget and bundle purity` | Two checks that need the same three expensive things — a production build, a database to seed, a real client session. (1) The ARCHITECTURE NFR over throttled Slow 4G with 4× CPU, failing over 1500 ms. (2) PHASE-4 EXIT: no agency route code in the client bundle, run with `--negative-control` so every push proves the detector can fail before believing that it passed | Yes — FCP **green at 524 ms median**, 976 ms headroom. Bundle purity newly adopted from a scratchpad script; first CI execution is the next push |
 
 The env-registry gate gained a fourth link this round: `.env.example` →
@@ -480,7 +481,7 @@ combination: it fails one run in fifty and gets deleted.
 
 | | Where | What |
 |---|---|---|
-| **Determinism** | `tests/unit/template-determinism.spec.ts`, `npm run verify` | 67 cases. Portable, on every commit, on a machine with nothing installed. |
+| **Determinism** | `tests/unit/template-determinism.spec.ts`, `npm run verify` | 73 cases, incl. the round trip through `deriveTemplateDefinition()`. Portable, on every commit, on a machine with nothing installed. |
 | **The stamping path** | `tests/unit/template-stamping.db.spec.ts`, `npm run test:db` | 12 cases. The transaction, the column defaults, the plan gate on create, the jsonb column, org scoping. |
 
 The same split INV-3 got, for the same reason: an invariant that can only be
@@ -528,6 +529,13 @@ Three batteries in the spec — 15 templates differing from the fixture in exact
 one field, 17 surgical mutations of a real stamped graph, and the inverse pair
 (a fresh set of ids and a year of clock drift must **still** compare equal,
 without which a normaliser returning `null` would pass everything else).
+
+A sixth block asserts the **inverse function**: `deriveTemplateDefinition()` —
+"save this board as a template" — must round-trip. `derive(stamp(def))` returns
+the definition that stamped it, re-stamping the derived definition gives an
+identical board, and the pair is a fixed point at an awkward 14:07:33 start,
+which is where a rounded day count would be off by one and would be off by one
+silently. Nothing tested that function before.
 
 And then the one that mattered:
 `node .github/scripts/check-template-determinism-control.mjs` plants eleven
@@ -892,6 +900,71 @@ no mirror for.
 
 The remaining three of the five agency e2e failures the front-end reported are
 test-level and belong to them; these two are the ones that need product work.
+
+**DEFECT-16 — INV-8's scan read one eighth of the tree, and there is a second
+`status = 'active'` predicate in the query layer.** *Owner: back-end —
+`src/db/queries/attention.ts`. QA owns the guard hole.* **Severity: low as
+behaviour, medium as a hole.**
+
+Both of INV-8's predicate scans read `sourceFiles('domain')` and nothing else,
+so `src/db/queries/`, `src/workers/` and `src/app/api/` were invisible to an
+invariant whose stated claim is *one definition of active in this codebase*.
+That is the fifth instance of one shape this build has found: **the guard reads
+something narrower than the invariant claims.**
+
+Widening the scan to the whole tree — the SQL form only, so the nine UI files
+asking `status !== 'active'` ("is this archived") are not swept up — found
+three predicates in one file:
+
+```
+src/db/queries/attention.ts   eq(engagements.status, 'active')   ×3
+```
+
+**The behaviour is defensible and the spelling is not.** What `attention.ts`
+means is `isRunning()` — not archived, not purged — which is a genuinely
+different question from PRD §5.6's *active*, and an attention list scoped the
+other way would hide exactly the engagement that has gone quiet. But
+`src/db/queries/retention.ts` asks the same question and deliberately writes no
+such predicate: it loads the rows and asks the counter. `attention.ts` should do
+the same, or import `isRunning` and filter in JavaScript.
+
+Quarantined rather than ignored: the path is a **named** exclusion in the spec
+with the reason written next to it, paid for by two tests that do not iterate
+the same array (DEFECT-6's lesson) — the excluded path must exist, and it must
+be **unreachable by import** from `domain/plan` or `domain/retention`, so
+whatever it means by active can never become the number the plan limit is
+checked against. A *new* offender anywhere in `src/` now fails the build.
+
+Phase 7 is why this became urgent rather than theoretical: stamping creates an
+engagement, so it passes through `assertCanOpenEngagement()`, and the templates
+surface added a query file and two routes to a layer no scan was reading.
+
+**DEFECT-17 — two agents running `next build` in one working tree corrupt each
+other's `.next`, and it presents as missing pages.** *Owner: the build
+convention, not any one file.* **Severity: low, and expensive to diagnose.**
+
+`npm run verify:build` failed twice with `PageNotFoundError: Cannot find module
+for page`, and **the set of missing pages changed between runs** — `/signin` and
+`/w/[id]/c/[cardId]` the first time, `/_not-found`, `/templates` and
+`/w/[id]/board` the second. `/_not-found` is the tell: it is generated, it has
+no source of its own, and it cannot be missing for a reason that lives in `src/`.
+
+`ps` found a second `next build` from another agent and a long-running
+`next dev`, both writing the same `.next`. The build succeeded on the first
+attempt after the other one exited.
+
+Recorded because of the shape rather than the severity. It does not present as a
+collision; it presents as **a handful of unrelated-looking page failures in
+someone else's work**, and the retry that clears them is indistinguishable from
+flake. That is exactly DEFECT-8 and DEFECT-15 one level up, in a third costume,
+and the cost is the same each time: an investigation establishing that code
+which was never wrong was not wrong.
+
+The fix is the same shape as `db-isolation.ts`'s: give a run an output directory
+of its own. `next.config.ts` would need to read `NEXT_DIST_DIR`, which is
+`src`-adjacent and not QA's to change — hence a report rather than a patch. Until
+then, `verify:all` is not safe to run concurrently in one tree, and that is
+worth knowing before it is blamed on a page.
 
 ### Open — carried from earlier rounds
 

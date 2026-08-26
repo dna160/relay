@@ -18,11 +18,11 @@
  * where the infrastructure is is an invariant that goes unchecked on most
  * commits.
  *
- * The *stamping path* — the transaction that inserts the graph, the org
- * scoping, the plan gate on create — is a different claim about a different
- * subject and needs a real Postgres. That belongs in `npm run test:db` and is
- * **not written yet**: `POST /api/templates` and stamping-on-create do not
- * exist at the time of writing. Nothing here should be read as covering it.
+ * The *stamping path* — the transaction that inserts the graph, the column
+ * defaults that own `cards.state`, the org scoping, the plan gate on create —
+ * is a different claim about a different subject and needs a real Postgres.
+ * It is `tests/unit/template-stamping.db.spec.ts`, under `npm run test:db`.
+ * Nothing here should be read as covering it.
  *
  * ## What the comparison strips, and how it is stopped from stripping more
  *
@@ -40,18 +40,25 @@
  *
  * ## Proving it can fail
  *
- * Two batteries, both required:
+ * Three batteries, all required:
  *
  * 1. **Twins** — fifteen templates each differing from the fixture in exactly
  *    one field, stamped by the real function. Each must produce a graph that
  *    does *not* normalise equal to a stamp of the original.
- * 2. **Mutations** — eleven surgical edits to a real stamped graph, including
- *    re-parenting one card. Each must be caught.
+ * 2. **Mutations** — seventeen surgical edits to a real stamped graph,
+ *    including re-parenting one card. Each must be caught.
+ * 3. **The inverse**, which is what makes the first two mean something:
+ *    re-minting every id and moving every timestamp by a year must *still*
+ *    compare equal. Without it, a normaliser returning `null` would pass
+ *    batteries 1 and 2 and nothing else.
  *
- * And the inverse, which is what makes the first two mean something: re-minting
- * every id and moving every timestamp must *still* compare equal. Without that
- * pair, a normaliser returning `null` would pass battery 1 and 2 and nothing
- * else.
+ * And then the one that found something. `.github/scripts/
+ * check-template-determinism-control.mjs` plants eleven defects in a copy of
+ * `applyTemplate()` and requires this spec to go red against each. **Eight were
+ * caught; three were not**, and all three were one shape — a stamp that is
+ * wrong the *same way twice* satisfies a comparison between two stamps
+ * perfectly. `the stamped graph is what the definition described` is what
+ * closed them, and it is the block to extend rather than the normalisation.
  *
  * Never edit this file to make a build pass. It is PHASE-7's exit condition.
  */
@@ -65,6 +72,11 @@ import {
   type StampedLane,
 } from '@/domain/template/apply';
 import { parseTemplateDefinition } from '@/domain/template/definition';
+import {
+  deriveTemplateDefinition,
+  type LiveCardRow,
+  type LiveLaneRow,
+} from '@/domain/template/derive';
 import type { TemplateDefinition } from '@/lib/types';
 import {
   DAY,
@@ -694,5 +706,122 @@ describe('PHASE-7 a definition round-trips through jsonb unchanged', () => {
       const readBack = parseTemplateDefinition(JSON.parse(JSON.stringify(twin.def)));
       expect(readBack, twin.what).toEqual(twin.def);
     }
+  });
+});
+
+/* --------------------------------------------- the inverse, and the fixed point */
+
+describe('PHASE-7 save-as-template is the inverse of stamping', () => {
+  /**
+   * `deriveTemplateDefinition()` is what makes templates get used — nobody
+   * writes a definition by hand; they finish a job they liked the shape of.
+   * That makes `derive(stamp(def)) === def` the property the whole feature
+   * turns on, and it is exactly the kind of claim that breaks quietly: both
+   * halves keep working on their own, and only the round trip notices that one
+   * of them changed its mind about what day 0 means.
+   *
+   * It is asserted here rather than in the database half because both functions
+   * are pure, and because a fixed point is a property of the pair rather than
+   * of a row.
+   */
+  const asLiveBoard = (graph: StampedGraph, startedAt: Date) => ({
+    startedAt,
+    shelfGroups: [...graph.shelfGroups],
+    contractedRoundsDefault: TEMPLATE_FIXTURE.contractedRoundsDefault,
+    lanes: graph.lanes.map(
+      (l): LiveLaneRow => ({
+        id: l.id,
+        name: l.name,
+        position: l.position,
+        visibility: l.visibility,
+      }),
+    ),
+    cards: graph.cards.map(
+      (c): LiveCardRow => ({
+        laneId: c.laneId,
+        title: c.title,
+        description: c.description,
+        position: c.position,
+        dueAt: c.dueAt,
+        contractedRounds: c.contractedRounds,
+      }),
+    ),
+  });
+
+  it('deriving a stamped board gives back the definition that stamped it', () => {
+    const board = asLiveBoard(stamp(TEMPLATE_FIXTURE, 'aa', START_A), START_A);
+    // One difference is expected and is not drift: a card that inherited the
+    // template's `contractedRoundsDefault` is now carrying it explicitly, and a
+    // board cannot tell "inherited 2" from "said 2". Everything else must match.
+    const derived = deriveTemplateDefinition(board);
+    expect(derived.lanes.map((l) => [l.name, l.visibility])).toEqual(
+      TEMPLATE_FIXTURE.lanes.map((l) => [l.name, l.visibility]),
+    );
+    expect(derived.shelfGroups).toEqual(TEMPLATE_FIXTURE.shelfGroups);
+    expect(derived.contractedRoundsDefault).toBe(TEMPLATE_FIXTURE.contractedRoundsDefault);
+    expect(derived.lanes.map((l) => l.cards.map((c) => [c.title, c.dueAfterDays]))).toEqual(
+      TEMPLATE_FIXTURE.lanes.map((l) => l.cards.map((c) => [c.title, c.dueAfterDays])),
+    );
+  });
+
+  it('and re-stamping the derived definition gives an identical board', () => {
+    // The property that actually matters to a user: save this workspace as a
+    // template, make the next one from it, and get the same board. Stated as a
+    // fixed point, so it holds whatever `derive()` chose to make explicit.
+    const first = stamp(TEMPLATE_FIXTURE, 'aa', START_A);
+    const derived = deriveTemplateDefinition(asLiveBoard(first, START_A));
+    expect(shapeOf(stamp(derived, 'bb', START_A))).toEqual(shapeOf(first));
+  });
+
+  it('is a fixed point after the first round trip, at an awkward start time', () => {
+    // 14:07:33 on the start day, cards due at whatever hour the stamp put them.
+    // `dueAfterDays` is a *rounded* day count, so an origin that is not
+    // midnight is where an off-by-one would live, and it would live there
+    // silently: the board still renders, the dates are just one day out.
+    const odd = new Date(START_A.getTime() + 14 * 3600_000 + 7 * 60_000 + 33_000);
+    const once = deriveTemplateDefinition(asLiveBoard(stamp(TEMPLATE_FIXTURE, 'aa', odd), odd));
+    const twice = deriveTemplateDefinition(asLiveBoard(stamp(once, 'bb', odd), odd));
+    expect(twice).toEqual(once);
+    expect(shapeOf(stamp(twice, 'cc', odd))).toEqual(shapeOf(stamp(once, 'dd', odd)));
+  });
+
+  it('drops the fields a template has nowhere to put', () => {
+    // The structural half of INV-1 pointing the other way. A template is an
+    // agency artefact *and* a thing that gets re-stamped for the next client;
+    // a previous client's internal notes riding along is the leak nobody would
+    // think to test for. `TemplateCard` has four fields and that is the defence.
+    const derived = deriveTemplateDefinition(
+      asLiveBoard(stamp(TEMPLATE_FIXTURE, 'aa', START_A), START_A),
+    );
+    for (const lane of derived.lanes) {
+      expect(Object.keys(lane).sort()).toEqual(['cards', 'name', 'visibility']);
+      for (const card of lane.cards) {
+        expect(Object.keys(card).sort()).toEqual([
+          'contractedRounds',
+          'description',
+          'dueAfterDays',
+          'title',
+        ]);
+      }
+    }
+  });
+
+  it('a private lane survives being saved as a template', () => {
+    const derived = deriveTemplateDefinition(
+      asLiveBoard(stamp(TEMPLATE_FIXTURE, 'aa', START_A), START_A),
+    );
+    expect(derived.lanes.filter((l) => l.visibility === 'private').map((l) => l.name)).toEqual([
+      'Internal QA',
+    ]);
+  });
+
+  it('the derived definition is one the parser will accept', () => {
+    // A save that produces an unreadable row is worse than a save that drops a
+    // field: the template appears in the picker and fails at the moment someone
+    // tries to use it.
+    const derived = deriveTemplateDefinition(
+      asLiveBoard(stamp(TEMPLATE_FIXTURE, 'aa', START_A), START_A),
+    );
+    expect(parseTemplateDefinition(JSON.parse(JSON.stringify(derived)))).toEqual(derived);
   });
 });

@@ -5,8 +5,8 @@
 > every invariant and exit condition to the command that proves it, and names
 > what nothing proves yet.
 
-**Current phase:** 5 — Time intelligence
-**Last verified:** `npm run verify:all` green, 2026-08-25
+**Current phase:** 7 — Templates, white-label, plan gates
+**Last verified:** `npm run verify:all` green and `npm run test:db` green (52), 2026-08-26
 
 | Phase | Title | Status |
 |---|---|---|
@@ -43,11 +43,11 @@ rather than a review rule.
 | INV-5 | Every transition writes a possession row | 🟢 live |
 | INV-6 | A client session is scoped to one engagement | 🟢 live (DB half skipped) |
 | INV-7 | Purge is total and leaves one certificate | ⬜ skipped — Phase 6 |
-| INV-8 | One `countActiveEngagements()` | 🟢 live |
+| INV-8 | One `countActiveEngagements()` | 🟢 live — scan widened past `src/domain/`; found DEFECT-16 |
 | INV-9 | Business logic lives in `src/domain/` | 🟢 live |
 | INV-10 | File bytes never traverse the app server | 🟢 live |
 
-**454 live assertions** — 341 unit, 113 invariant. 9 of 10 suites enforcing.
+**731 live assertions** — 582 unit, 149 invariant — plus 52 under `test:db`. 9 of 10 suites enforcing.
 
 ## What the suite caught that review would not have
 
@@ -64,6 +64,18 @@ Recorded because it is the argument for the harness existing:
 - A dark-mode token that painted `rgb(0,163,144)` where the design system
   published `#499D8F`. Every contrast check passed — against a colour the
   product did not paint.
+- **Three defects in `applyTemplate()` that PHASE-7's own exit condition could
+  not see.** Eleven were planted in a copy of the function; the determinism
+  suite caught eight. The three survivors were one shape — *a stamp that is
+  wrong the same way twice satisfies a comparison between two stamps perfectly*:
+  a card's `contractedRounds: 0` swallowed by the template default, every card
+  re-parented onto the first lane (which is not the private one it should be
+  under), and `createdAt: new Date()` reintroducing non-determinism where the
+  comparison correctly strips timestamps. Fixed by adding the half a two-stamp
+  comparison structurally cannot make: read the graph against the *definition*.
+- **A second `status = 'active'` predicate in the query layer, invisible to
+  INV-8 for six phases** — because both of its scans read `src/domain/` and
+  nothing else, while claiming one definition of active *in this codebase*.
 - A `data-theme="light"` selector that never matched, so a reader who explicitly
   chose light got dark anyway. Both palettes were internally valid; the selector
   was wrong.
