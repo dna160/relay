@@ -57,7 +57,25 @@ export function TransitionControls({
   const router = useRouter();
   const move = useAction(agencyApi.transitionCard);
   const publish = useAction(agencyApi.publishCard);
-  const moves = agencyMoves(state);
+  /**
+   * `draft → assigned` is not offered on a card tile, and this is the only
+   * transition with that exception.
+   *
+   * It is the only edge out of `draft`, and walking it without naming a person
+   * produces a card in `assigned` whose `assigneeId` is null. That card is not
+   * merely untidy: `rankAttention()` buckets on `assigneeId`, so it can never
+   * enter anybody's `BLOCKED ON YOU`, and once it goes quiet it lands in
+   * `NO MOVEMENT IN 7 DAYS` instead. A board driven entirely from these tiles
+   * degrades the agency's home screen into a rot list, which is precisely the
+   * defect `AssigneePicker` was built to close — and leaving a bare `Assign`
+   * here would leave a second door onto it.
+   *
+   * The picker itself must not come to the tile (COMPONENTS.md §17): the tile is
+   * one link, a control inside a link is a bad target, and there is no room at
+   * 304px. So `compact` drops the move and the act lives on the card, the same
+   * call `FLOWS.md` §2 makes about the publish gate.
+   */
+  const moves = agencyMoves(state).filter((to) => !(compact && state === 'draft' && to === 'assigned'));
   const pending = move.pending || publish.pending;
   const failure = move.failure ?? publish.failure;
   const done = move.done ?? publish.done;
@@ -105,7 +123,16 @@ export function TransitionControls({
   if (moves.length === 0) {
     return (
       <div className="flex flex-col gap-1">
-        <p className={cn(mono, 'text-12', muted)}>signed off · no further moves</p>
+        {/*
+          Two different reasons a card offers nothing here, and they must not
+          read the same. `signed_off` is the end of the machine; a `draft` card
+          on a tile has a move available and it simply is not takeable from a
+          tile. Saying "no further moves" over the second would be false, and it
+          would hide the one act that starts the board.
+        */}
+        <p className={cn(mono, 'text-12', muted)}>
+          {state === 'draft' ? 'open the card to assign it' : 'signed off · no further moves'}
+        </p>
         {status}
       </div>
     );

@@ -119,6 +119,16 @@ npm run test:e2e
 - `npm run verify` does not prove the build. A `'use server'` file exporting a
   non-async const typechecks, lints, and fails `next build` at page-data
   collection — that happened in round 3. Hand over on `npm run verify:all`.
+- **`npm run verify:all` does not prove the app runs, either.** A helper exported
+  from a `'use client'` file and called by a server component typechecks, lints,
+  builds, and fails at request time on the page. Both known instances of this
+  shape are boundary directives the toolchain accepts statically and the runtime
+  rejects. If a change touches the client/server seam, load the page.
+- **A sound claim's converse is not sound.** "Zero transitions proves the client
+  never saw this card" is true (INV-2 closes the door, INV-5 makes it leave a
+  mark). "Having transitions proves the client did see it" is false — a
+  `draft → assigned` move is entirely internal. A removal dialog shipped that
+  inversion and was caught by looking at it, not by a test.
 - Do not add a dependency without an ADR entry.
 - Do not introduce a chat/messaging surface. Discussion attaches to cards and
   versions. This is a product decision, recorded in ADR-011.

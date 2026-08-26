@@ -85,6 +85,44 @@ async function stampABoard(page: Page, title: string): Promise<void> {
   await expect(page.getByRole('link', { name: 'Key art' })).toBeVisible();
 }
 
+/**
+ * Take the new card out of `draft`, the way the product now does it.
+ *
+ * This used to be `getByRole('button', { name: /^assign$/i }).click()` on the
+ * board, and that button is deliberately gone. `draft → assigned` is the only
+ * edge out of `draft`, and walking it without naming a person leaves a card in
+ * `assigned` with a null `assigneeId` — which `rankAttention()` can never put in
+ * anybody's `BLOCKED ON YOU`, so it rots into `NO MOVEMENT IN 7 DAYS` instead.
+ * Assignment and the transition are now one act, on the card, through
+ * `AssigneePicker` (COMPONENTS.md §17).
+ *
+ * **Both shapes of the control are handled, and that is the point rather than
+ * defensiveness.** The picker renders a `Assign to me` button when exactly one
+ * person can hold the card and a `<select>` when more than one can, because a
+ * menu of one is the interface making the reader do its arithmetic. Which shape
+ * appears therefore depends on the signed-in org: these tests run as Northline,
+ * which has two members, while a single-member org gets the button. A helper
+ * that knew only one of them would fail the moment a fixture gained a colleague
+ * — which is exactly how it failed the first time it was written.
+ */
+async function assignOnTheCard(page: Page, cardTitle: string): Promise<void> {
+  await page.getByRole('link', { name: cardTitle }).click();
+  await page.waitForURL(/\/c\/[^/]+$/);
+
+  const assignToMe = page.getByRole('button', { name: /assign to me/i });
+  if ((await assignToMe.count()) > 0) {
+    await assignToMe.first().click();
+  } else {
+    // Index 1: index 0 is `Unassigned`, which is a real option and not a
+    // placeholder. Picking by index rather than by name keeps this helper
+    // independent of which fixture person happens to be first.
+    await page.getByLabel(/assign to/i).selectOption({ index: 1 });
+  }
+
+  // The chip is the confirmation — the same answer the publish gate gives.
+  await expect(page.getByText('Assigned', { exact: true })).toBeVisible();
+}
+
 test.describe('agency engagement flow', () => {
   let seed: SeedResult;
 
@@ -99,7 +137,7 @@ test.describe('agency engagement flow', () => {
 
     // Move it through the machine. Drag writes position, never state — the
     // state chip changes only via an explicit transition (ADR-003).
-    await page.getByRole('button', { name: /^assign$/i }).click();
+    await assignOnTheCard(page, 'Key art');
     await page.getByRole('button', { name: /start work/i }).click();
     await page.getByRole('button', { name: /send to internal review/i }).click();
 
@@ -122,10 +160,7 @@ test.describe('agency engagement flow', () => {
     await stampABoard(page, 'Winter campaign');
 
     // The upload lives on the card, beside the version stack it appends to.
-    await page.getByRole('link', { name: 'Key art' }).click();
-    await page.waitForURL(/\/c\/[^/]+$/);
-
-    await page.getByRole('button', { name: /^assign$/i }).click();
+    await assignOnTheCard(page, 'Key art');
     await page.getByRole('button', { name: /start work/i }).click();
 
     const uploads: string[] = [];
