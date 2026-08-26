@@ -15,7 +15,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stripComments } from '../invariants/_source';
@@ -54,9 +54,9 @@ describe('the Railway topology exists at all', () => {
   });
 
   it('declares all three resources — app, worker, and the database', () => {
-    expect(code).toContain("service('app'");
-    expect(code).toContain("service('worker'");
-    expect(code).toContain("postgres('postgres')");
+    expect(code).toContain("service('relay-web'");
+    expect(code).toContain("service('relay-worker'");
+    expect(code).toContain("postgres('Postgres')");
   });
 });
 
@@ -68,11 +68,11 @@ describe('migration ordering', () => {
    * notices.
    */
   it('migrates before the app takes traffic', () => {
-    expect(serviceBlock('app')).toMatch(/preDeploy\s*:\s*'npm run db:migrate'/);
+    expect(serviceBlock('relay-web')).toMatch(/preDeploy\s*:\s*'npm run db:migrate'/);
   });
 
   it('never migrates from the worker, because two services racing one migration half-applies it', () => {
-    expect(serviceBlock('worker')).not.toContain('db:migrate');
+    expect(serviceBlock('relay-worker')).not.toContain('db:migrate');
   });
 
   it('has exactly one migration site across the whole topology', () => {
@@ -87,7 +87,7 @@ describe('the worker runs alone', () => {
    * of a bug in a job whose whole purpose is destroying data (INV-7).
    */
   it('pins the worker at one replica in every environment, with no ternary on it', () => {
-    const worker = serviceBlock('worker');
+    const worker = serviceBlock('relay-worker');
     expect(worker).toMatch(/replicas\s*:\s*1\s*,/);
     const replicaLine = worker.split('\n').find((l) => /replicas/.test(l)) ?? '';
     expect(replicaLine, 'the worker replica count varies by environment').not.toContain('?');
@@ -97,12 +97,21 @@ describe('the worker runs alone', () => {
 
 describe('the health check the first deploy depends on', () => {
   it('points the app at /api/health', () => {
-    expect(serviceBlock('app')).toMatch(/healthcheck\s*:\s*'\/api\/health'/);
+    expect(serviceBlock('relay-web')).toMatch(/healthcheck\s*:\s*'\/api\/health'/);
   });
 
-  it('agrees with railway.json, which is still what the existing service reads', () => {
-    const json = readFileSync(join(ROOT, 'railway.json'), 'utf8');
-    expect(JSON.parse(json).deploy.healthcheckPath).toBe('/api/health');
+  it('has no railway.json left to override it', () => {
+    // Config as Code is per-repo, so one startCommand served both services:
+    // the worker ran `next start` and, worse, ran the preDeploy migration, so
+    // two services raced one migration. Applying this file fixed the settings
+    // and the deployment *still* ran the old command — with both present the
+    // deprecated one wins. Migrating meant deleting it, and a file that
+    // reappears silently takes the topology back.
+    expect(
+      existsSync(join(ROOT, 'railway.json')),
+      'railway.json is back; it overrides .railway/railway.ts and the worker will migrate again',
+    ).toBe(false);
+    expect(existsSync(join(ROOT, 'railway.toml'))).toBe(false);
   });
 });
 
@@ -165,7 +174,7 @@ describe('the connection budget', () => {
     const pool = code.match(/PGPOOL_MAX\s*:\s*([^\n]+)/)?.[1] ?? '';
     const numbers = [...pool.matchAll(/'(\d+)'/g)].map((m) => Number(m[1]));
     expect(numbers.length, 'PGPOOL_MAX is not environment-dependent').toBe(2);
-    const appReplicas = serviceBlock('app').match(/replicas\s*:\s*prod\s*\?\s*(\d+)\s*:\s*(\d+)/);
+    const appReplicas = serviceBlock('relay-web').match(/replicas\s*:\s*prod\s*\?\s*(\d+)\s*:\s*(\d+)/);
     expect(appReplicas, 'app replica count is not environment-dependent').not.toBeNull();
     const [prodPool = 0, stagingPool = 0] = numbers;
     const prodReplicas = Number(appReplicas?.[1] ?? 1);

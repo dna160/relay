@@ -84,8 +84,15 @@ export default defineRailway((ctx) => {
     RETENTION_PURGE_DAYS: '60',
   };
 
+  /**
+   * The origin each environment actually answers on. `app.relay.example` was a
+   * placeholder for a domain nobody owns; a config that names one is a config
+   * that cannot be applied. Replace the production value when a real domain is
+   * registered — and note AUTH_URL is derived from it, so Auth.js will refuse
+   * callbacks to any other host, which is the point.
+   */
   const origin = prod
-    ? 'https://app.relay.example'
+    ? (process.env.PUBLIC_ORIGIN ?? 'https://relay-web-production.up.railway.app')
     : 'https://relay-web-staging.up.railway.app';
 
   const app = service('relay-web', {
@@ -99,7 +106,10 @@ export default defineRailway((ctx) => {
     healthcheck: '/api/health',
     healthcheckTimeout: prod ? 90 : 60,
     replicas: prod ? 2 : 1,
-    domains: prod ? ['app.relay.example'] : [],
+    // No custom domain yet in either environment; Railway's generated one is
+    // what both answer on. Naming an unregistered domain here would fail the
+    // apply rather than reserve anything.
+    domains: [],
     env: {
       ...shared,
       AUTH_URL: origin,
