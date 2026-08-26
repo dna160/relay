@@ -13,13 +13,13 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
     "db:up": "docker compose up -d",
-    "storage:check": "node .github/scripts/ensure-object-storage.mjs",
     "dev": "next dev --turbopack",
     "dev:worker": "tsx watch src/workers/index.ts",
     "lint": "eslint .",
     "purge": "tsx src/workers/purge-cli.ts",
     "purge:plan": "tsx src/workers/purge-cli.ts --plan",
     "start": "next start",
+    "storage:check": "node .github/scripts/ensure-object-storage.mjs",
     "test:db": "vitest run --config vitest.db.config.ts",
     "test:e2e": "playwright test",
     "test:invariants": "vitest run tests/invariants",
@@ -28,7 +28,8 @@
     "verify": "npm run typecheck && npm run lint && npm run test:unit && npm run test:invariants",
     "verify:all": "npm run verify && npm run verify:build",
     "verify:build": "next build",
-    "verify:db": "npm run verify && npm run test:db"
+    "verify:db": "npm run verify && npm run test:db",
+    "worker": "tsx src/workers/index.ts"
   },
   "dependencies": {
     "@auth/drizzle-adapter": "^1.7.4",

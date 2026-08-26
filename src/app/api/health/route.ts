@@ -22,6 +22,9 @@ import { sql } from 'drizzle-orm';
 import { db } from '@/db/client';
 
 /** Never cached, never statically rendered — a cached health check is a lie. */
+/** Injected by Railway at build time; `dev` locally. */
+const RELEASE = (process.env.RAILWAY_GIT_COMMIT_SHA ?? 'dev').slice(0, 7);
+
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
@@ -32,6 +35,16 @@ interface HealthBody {
   /** Milliseconds for the database round trip. Useful in a deploy log. */
   dbLatencyMs: number;
   checkedAt: string;
+  /**
+   * The commit this instance is serving, from Railway's build-time injection.
+   *
+   * A rollback is otherwise unverifiable from outside: two deployments answer
+   * identically, so "the rollback worked" rests on the dashboard agreeing with
+   * itself. RUNBOOK §4 tells an operator to roll back and then confirm — this
+   * is the thing they confirm against. Seven characters, no host, no branch,
+   * nothing an unauthenticated caller can act on.
+   */
+  release: string;
 }
 
 /**
@@ -62,13 +75,14 @@ export async function GET(): Promise<NextResponse<HealthBody>> {
         db: 'unreachable',
         dbLatencyMs: Date.now() - startedAt,
         checkedAt,
+        release: RELEASE,
       },
       { status: 503, headers: { 'cache-control': 'no-store' } },
     );
   }
 
   return NextResponse.json(
-    { status: 'ok', db: 'ok', dbLatencyMs: Date.now() - startedAt, checkedAt },
+    { status: 'ok', db: 'ok', dbLatencyMs: Date.now() - startedAt, checkedAt, release: RELEASE },
     { status: 200, headers: { 'cache-control': 'no-store' } },
   );
 }
