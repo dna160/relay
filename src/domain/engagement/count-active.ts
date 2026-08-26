@@ -5,12 +5,19 @@
  * never diverge, because two implementations of "active" will drift and the
  * drift will bill someone for a workspace it also deleted.
  *
- * Pure by construction: it takes rows and a clock, never a database handle. If
- * you find yourself writing `eq(engagements.status, 'active')` anywhere else in
- * the tree, that is the bug this file exists to prevent — load the rows and ask
- * `isEngagementActive()` instead.
+ * Pure by construction: it takes rows and a clock, never a database handle. The
+ * one import from `@/db/schema` is the status enum's *values*, which is a
+ * frozen array of strings — no drizzle table, no connection, and nothing a unit
+ * test has to stand a database up for.
+ *
+ * If you find yourself writing `eq(engagements.status, 'active')` anywhere else
+ * in the tree, that is the bug this file exists to prevent. Load the rows and
+ * ask `isEngagementActive()`; or, where the `WHERE` genuinely cannot be widened
+ * first, filter on `RUNNING_STATUSES` — which is this file's own predicate, not
+ * a copy of it.
  */
 
+import { ENGAGEMENT_STATUSES } from '@/db/schema/enums';
 import type { EngagementStatus } from '@/lib/types';
 
 /** PRD §5.6: active means status ACTIVE *and* activity in the last 30 days. */
@@ -40,11 +47,43 @@ export interface OrgScopedActivityRow extends ActivityRow {
 /**
  * The status half of the definition, on its own, so that no second file has to
  * spell the literal. The retention sweep needs "running but gone quiet", which
- * is this predicate minus `isEngagementActive`.
+ * is this predicate minus `isEngagementActive`. The attention list needs the
+ * same thing (DEFECT-16, and see `RUNNING_STATUSES` below).
+ *
+ * Taking a bare status rather than a row is what lets the array below be
+ * *computed* from this function instead of written out beside it.
  */
-export function isRunning(row: ActivityRow): boolean {
-  return row.status === 'active';
+export function isRunningStatus(status: EngagementStatus): boolean {
+  return status === 'active';
 }
+
+export function isRunning(row: ActivityRow): boolean {
+  return isRunningStatus(row.status);
+}
+
+/**
+ * The same predicate, in the shape a `WHERE` can use — **derived**, not
+ * restated. DEFECT-16.
+ *
+ * A SQL filter cannot call `isRunning()`: the predicate takes a row that has
+ * already been loaded, and the whole point of a `WHERE` is to not load the
+ * rows. `src/db/queries/retention.ts` solves that by loading a deliberately
+ * *wider* set (`status <> 'purged'`) and asking `isRunning()` in JavaScript,
+ * and that is the right answer wherever the wider set is small. It is not the
+ * right answer for the attention list, which filters through a join over every
+ * unfinished card in the organisation — widening there means reading every
+ * archived engagement's finished cards to throw them away, which is the
+ * blow-up the join rewrite in that file exists to prevent.
+ *
+ * So the third option: keep the definition here and export the *values* it
+ * admits, obtained by running the predicate over the whole status enum. This
+ * is not a second spelling that has to be kept in step — it is this file's own
+ * function evaluated at module load. If "running" ever means two statuses,
+ * `isRunningStatus` changes and this array changes with it, because it has no
+ * independent existence. Nothing outside this file writes `'active'`.
+ */
+export const RUNNING_STATUSES: readonly EngagementStatus[] =
+  ENGAGEMENT_STATUSES.filter(isRunningStatus);
 
 export function activeWindowStart(now: Date, windowDays = ACTIVE_WINDOW_DAYS): Date {
   return new Date(now.getTime() - windowDays * DAY_MS);

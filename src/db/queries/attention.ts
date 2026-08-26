@@ -4,17 +4,44 @@
  * so nothing in this file calls `clientScope()` and nothing in it is reachable
  * from a client route.
  *
- * Scoped to the org's **active** engagements. An archived engagement is
- * read-only and a purged one is gone; neither can be acted on, and an attention
- * list you cannot act on is a to-do list of regrets.
+ * Scoped to the org's **running** engagements — `isRunning()`, not PRD §5.6's
+ * *active*. An archived engagement is read-only and a purged one is gone;
+ * neither can be acted on, and an attention list you cannot act on is a to-do
+ * list of regrets. Deliberately *not* `isEngagementActive()`, which also
+ * requires activity inside the 30-day window: scoping this list that way would
+ * hide the engagement nobody has touched in six weeks, which is precisely the
+ * one it exists to surface.
+ *
+ * That distinction is real, and it is also how this file came to carry three
+ * hand-written `status = 'active'` predicates for six phases (DEFECT-16). The
+ * behaviour was defensible and the spelling was not: a second place that says
+ * what "running" means is the drift ADR-008 predicts. It now filters on
+ * `RUNNING_STATUSES`, which `count-active.ts` computes by running its own
+ * `isRunningStatus()` over the status enum — so the definition is still in one
+ * file, and this one names no status at all.
+ *
+ * Why not retention.ts's approach — load a wider set and ask `isRunning()` in
+ * JavaScript? Because the filter here rides a join over every unfinished card
+ * in the organisation. Widening it means reading every archived engagement's
+ * finished cards in order to discard them, and the read below is already the
+ * expensive one.
  */
 
-import { and, eq, ne, sql } from 'drizzle-orm';
+import { and, eq, inArray, ne, sql } from 'drizzle-orm';
 import { cards, engagements, stateTransitions } from '@/db/schema';
 import type { Executor } from '@/db/types';
 import type { AttentionItem } from '@/lib/types';
+import { RUNNING_STATUSES } from '@/domain/engagement/count-active';
 import { rankAttention, type AttentionCardRow } from '@/domain/attention/rank';
 import type { TransitionRow } from '@/domain/card/possession';
+
+/**
+ * One expression, reused by all three reads in this file, so that the question
+ * "which engagements does the attention list consider?" has one answer here and
+ * its definition lives somewhere else entirely. A drizzle predicate is an
+ * immutable descriptor, so sharing it across statements is free.
+ */
+const RUNNING_ENGAGEMENT = inArray(engagements.status, [...RUNNING_STATUSES]);
 
 /**
  * The portfolio renders a list, not a ledger. A cap keeps one agency with four
@@ -33,7 +60,7 @@ export async function loadAttention(
   const engagementRows = await exec
     .select({ id: engagements.id, title: engagements.title })
     .from(engagements)
-    .where(and(eq(engagements.orgId, orgId), eq(engagements.status, 'active')));
+    .where(and(eq(engagements.orgId, orgId), RUNNING_ENGAGEMENT));
 
   if (engagementRows.length === 0) return [];
   const titleById = new Map(engagementRows.map((e) => [e.id, e.title]));
@@ -61,7 +88,7 @@ export async function loadAttention(
    * changes which cards appear, which is a product decision and not one to make
    * inside a query file. Raised in the handover.
    */
-  const orgActiveCards = and(eq(engagements.orgId, orgId), eq(engagements.status, 'active'));
+  const orgRunningCards = and(eq(engagements.orgId, orgId), RUNNING_ENGAGEMENT);
 
   const cardRows = await exec
     .select({
@@ -79,7 +106,7 @@ export async function loadAttention(
     .innerJoin(engagements, eq(engagements.id, cards.engagementId))
     // A signed-off card is finished; the ranker drops it too, but not reading
     // it is cheaper than reading it to throw it away.
-    .where(and(orgActiveCards, ne(cards.state, 'signed_off')));
+    .where(and(orgRunningCards, ne(cards.state, 'signed_off')));
 
   if (cardRows.length === 0) return [];
 
@@ -93,7 +120,7 @@ export async function loadAttention(
     .from(stateTransitions)
     .innerJoin(cards, eq(cards.id, stateTransitions.cardId))
     .innerJoin(engagements, eq(engagements.id, cards.engagementId))
-    .where(and(orgActiveCards, ne(cards.state, 'signed_off')));
+    .where(and(orgRunningCards, ne(cards.state, 'signed_off')));
 
   /**
    * The last movement per card, for the "silently rotting" bucket. Computed
@@ -139,12 +166,6 @@ export async function countAttentionCandidates(
     .select({ total: sql<number>`count(*)::int` })
     .from(cards)
     .innerJoin(engagements, eq(engagements.id, cards.engagementId))
-    .where(
-      and(
-        eq(engagements.orgId, orgId),
-        eq(engagements.status, 'active'),
-        ne(cards.state, 'signed_off'),
-      ),
-    );
+    .where(and(eq(engagements.orgId, orgId), RUNNING_ENGAGEMENT, ne(cards.state, 'signed_off')));
   return rows[0]?.total ?? 0;
 }

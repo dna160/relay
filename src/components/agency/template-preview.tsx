@@ -50,8 +50,6 @@ export interface TemplatePreviewProps {
    * plate is a `<dl>` and an unlabelled one announces as a run of numbers.
    */
   label: string;
-  /** Drops the lane breakdown and shows the plate only. The picker's rest state. */
-  countsOnly?: boolean;
   /**
    * `false` when the surface around this already prints LANES and CARDS — the
    * `/templates` register does, in the entry header. Two plates four lines
@@ -67,7 +65,6 @@ export interface TemplatePreviewProps {
 export function TemplatePreview({
   shape,
   label,
-  countsOnly = false,
   totals = true,
   className,
 }: TemplatePreviewProps) {
@@ -110,64 +107,60 @@ export function TemplatePreview({
       {/* A plate with no rows is an empty box asserting nothing. */}
       {rows.length > 0 && <Plate layout="strip" label={label} rows={rows} />}
 
-      {!countsOnly && (
-        <>
-          {shape.lanes.length === 0 ? (
-            <p className={cn('text-14', muted)}>
-              This docket has no lanes. Stamping it produces an empty board.
-            </p>
-          ) : (
-            <ul className="flex flex-col gap-2">
-              {shape.lanes.map((lane) => {
-                const shown = lane.cardTitles.slice(0, TITLES_SHOWN);
-                const rest = lane.cardTitles.length - shown.length;
-                return (
-                  <li key={lane.name} className="flex flex-col gap-1">
-                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                      <span className="min-w-0 flex-1 truncate text-14 text-ink">{lane.name}</span>
-                      <span className={cn(mono, 'text-12', muted)}>
-                        {plural(lane.cardTitles.length, 'card', 'cards')}
-                      </span>
-                      {/*
-                        The same stamp the board and the settings register use.
-                        A published lane carries no stamp at all — published is
-                        the default (ADR-006) and stamping the default would
-                        make the exception harder to see, not easier.
-                      */}
-                      {lane.visibility === 'private' && <span className={chip}>PRIVATE</span>}
-                    </div>
-                    {shown.length > 0 && (
-                      <ul className={cn('flex flex-col gap-0.5 border-l border-rule pl-2 text-12', muted)}>
-                        {shown.map((title) => (
-                          <li key={title} className="truncate">
-                            {title}
-                          </li>
-                        ))}
-                        {rest > 0 && (
-                          <li className={cn(mono, 'text-12')}>+{rest} more</li>
-                        )}
-                      </ul>
+      {shape.lanes.length === 0 ? (
+        <p className={cn('text-14', muted)}>
+          This docket has no lanes. Stamping it produces an empty board.
+        </p>
+      ) : (
+        <ul className="flex flex-col gap-2">
+          {shape.lanes.map((lane) => {
+            const shown = lane.cardTitles.slice(0, TITLES_SHOWN);
+            const rest = lane.cardTitles.length - shown.length;
+            return (
+              <li key={lane.name} className="flex flex-col gap-1">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span className="min-w-0 flex-1 truncate text-14 text-ink">{lane.name}</span>
+                  <span className={cn(mono, 'text-12', muted)}>
+                    {plural(lane.cardTitles.length, 'card', 'cards')}
+                  </span>
+                  {/*
+                    The same stamp the board and the settings register use.
+                    A published lane carries no stamp at all — published is
+                    the default (ADR-006) and stamping the default would
+                    make the exception harder to see, not easier.
+                  */}
+                  {lane.visibility === 'private' && <span className={chip}>PRIVATE</span>}
+                </div>
+                {shown.length > 0 && (
+                  <ul className={cn('flex flex-col gap-0.5 border-l border-rule pl-2 text-12', muted)}>
+                    {shown.map((title) => (
+                      <li key={title} className="truncate">
+                        {title}
+                      </li>
+                    ))}
+                    {rest > 0 && (
+                      <li className={cn(mono, 'text-12')}>+{rest} more</li>
                     )}
-                  </li>
-                );
-              })}
-            </ul>
-          )}
+                  </ul>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
 
-          {shape.shelfGroups.length > 0 && (
-            <div className="flex flex-col gap-1">
-              <h4 className={eyebrow}>Shelf groups</h4>
-              <p className={cn('text-12', muted)}>{shape.shelfGroups.join(' · ')}</p>
-            </div>
-          )}
+      {shape.shelfGroups.length > 0 && (
+        <div className="flex flex-col gap-1">
+          <h4 className={eyebrow}>Shelf groups</h4>
+          <p className={cn('text-12', muted)}>{shape.shelfGroups.join(' · ')}</p>
+        </div>
+      )}
 
-          {counts.privateLaneCount > 0 && (
-            <p className={cn('max-w-prose text-12', muted)}>
-              A private lane and every card in it are invisible to the client — not hidden in their
-              interface, never sent to it.
-            </p>
-          )}
-        </>
+      {counts.privateLaneCount > 0 && (
+        <p className={cn('max-w-prose text-12', muted)}>
+          A private lane and every card in it are invisible to the client — not hidden in their
+          interface, never sent to it.
+        </p>
       )}
     </div>
   );
