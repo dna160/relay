@@ -32,6 +32,26 @@ export const engagements = pgTable(
     archiveAt: tstz('archive_at'),
     purgeAt: tstz('purge_at'),
     contractedRoundsDefault: integer('contracted_rounds_default').notNull().default(2),
+    /**
+     * Phase 7. The shelf group labels a template stamped, in the order it named
+     * them.
+     *
+     * A shelf group is a **label on a file**, not an entity (DATA-MODEL: "no
+     * versioning, no approval, no tree"), so a group with nothing in it has
+     * nowhere else to live — and an empty labelled group is the entire point of
+     * stamping one. `loadShelf()` seeds these before it groups the files, which
+     * is why "Contract / Brand / Footage" appears on a board the moment it is
+     * created rather than after somebody uploads into each.
+     *
+     * It is on the engagement rather than read back through `template_id`
+     * because a definition may arrive from a document with no `templates` row
+     * behind it (INV-13), and because renaming a template later must not
+     * silently rename the shelves of every workspace it ever stamped.
+     */
+    shelfGroupLabels: text('shelf_group_labels')
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
     createdAt: tstzNow('created_at'),
   },
   (t) => ({

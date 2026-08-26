@@ -36,6 +36,7 @@ node .github/scripts/check-chunk-purity.mjs --negative-control   # no agency cod
 node .github/scripts/ensure-object-storage.mjs     # creates the bucket and round-trips an object. Run before the e2e suite.
 node .github/scripts/check-upload-rss.mjs          # 200 MB upload vs the app's resident set. Needs a production server.
 node .github/scripts/check-e2e-skips.mjs           # nothing skipped silently in CI. Reads playwright-report/junit.xml.
+node .github/scripts/check-template-determinism-control.mjs   # PHASE-7's exit condition can be made to fail. 11 planted defects. Portable.
 ```
 
 **Why `verify` no longer runs everything.** Two suites genuinely need a
@@ -174,7 +175,9 @@ in both directions: `--phase 8` still fails on INV-3, INV-4 and INV-6 and does
 
 | EXIT condition | Proven by |
 |---|---|
-| Stamping a template twice produces structurally identical graphs | ⚠️ **UNPROVEN.** No suite exists; `applyTemplate()` does not exist. **Phase 7.** Recommended: a unit spec asserting deep equality of two stamps modulo ids, against a fixture template. |
+| Stamping a template twice produces structurally identical graphs | 🟢 **PROVEN, and the proof has a negative control.** Portable: `tests/unit/template-determinism.spec.ts` — **67 live cases** against the real `applyTemplate()`. Database: `tests/unit/template-stamping.db.spec.ts` — 12 cases under `npm run test:db`, comparing two boards read back out of Postgres. Split for the reason INV-3 was split; see §4F. |
+| ↳ and the comparison can fail | 🟢 live | `node .github/scripts/check-template-determinism-control.mjs` — 11 defects planted in a copy of `applyTemplate()`, the real spec required to go red against each. CI job `verify (node 22)`. **Three of the eleven survived its first run**, and the assertions that close them are named in §4F. |
+| ↳ what the normalisation strips | 🟢 live, and enumerated | `template-determinism.spec.ts > the normalisation, stated` — the stripped-path ledger and the **kept**-path ledger are both asserted against literal lists, so widening the strip list is a diff a reviewer sees. Ids are *interned*, not blanked. §4F. |
 | Theming cannot override `--client` or `--breach` | ⬜ skipped — `tests/unit/plan-limits.spec.ts > the branding gate > cannot theme away a breach warning`, plus two neighbours. **Phase 7.** |
 | Plan gates read from one limits table and one active counter | 🟢 live — `inv-08 > the plan gate imports the counter rather than re-querying`, `> is the only file that spells the active-status predicate`, and `tests/unit/plan-limits.spec.ts > the limits table matches PRD §5.8 > agrees with the fixture table`. |
 
@@ -456,6 +459,108 @@ run is the strongest form of the thing being checked for. Its parser has six
 more cases in `tests/unit/e2e-skip-report.spec.ts`, including the self-closing
 `<testcase/>` that a naive pattern misses — a parser that cannot see passing
 tests reports `0 of 0` and calls it clean.
+
+---
+
+## 4F. PHASE-7's exit condition — and the three defects it did not catch
+
+> **EXIT:** stamping a template twice produces structurally identical graphs.
+
+Open since round 1, and not for want of anyone getting to it: `applyTemplate()`
+did not exist. It landed this round and the row closed the same hour.
+
+### Where the two halves live, and why
+
+`applyTemplate()` is **pure by contract** — no executor, no `new Date()`, no
+`uuidv7()`. The clock and the id factory are parameters. That is what makes
+determinism assertable by *calling the function twice with counters* rather than
+by inspecting a transaction, and a version that read the clock itself would make
+this test a race. A race in a determinism test is the worst available
+combination: it fails one run in fifty and gets deleted.
+
+| | Where | What |
+|---|---|---|
+| **Determinism** | `tests/unit/template-determinism.spec.ts`, `npm run verify` | 67 cases. Portable, on every commit, on a machine with nothing installed. |
+| **The stamping path** | `tests/unit/template-stamping.db.spec.ts`, `npm run test:db` | 12 cases. The transaction, the column defaults, the plan gate on create, the jsonb column, org scoping. |
+
+The same split INV-3 got, for the same reason: an invariant that can only be
+checked where the infrastructure is is an invariant that goes unchecked on most
+commits.
+
+### What the comparison strips — the whole list
+
+*Identical modulo ids and timestamps* is where a test like this quietly stops
+testing anything, so the normalisation is not written inline. It is
+`normaliseStamp()` in `tests/fixtures/template.ts`, and it reports **every path
+it touched and every path it did not**. Both ledgers are asserted against
+literal lists.
+
+| Rule | Keys | Reaches, on a real stamp |
+|---|---|---|
+| **id** | `id`, `*Id`, `*_id` | `lanes[].id`, `lanes[].engagementId`, `cards[].id`, `cards[].laneId`, `cards[].engagementId` |
+| **timestamp** | `createdAt`, `updatedAt`, `created_at`, `updated_at` | `lanes[].createdAt`, `cards[].createdAt`, `cards[].updatedAt` |
+
+That is the entire list. Eight paths, two rules.
+
+**`dueAt` is deliberately not stripped.** It looks like a timestamp and it is
+not one of these: it is *derived* from `dueAfterDays` and the engagement's
+start, both of which are inputs. Stripping it would erase a result, and it would
+make the property the relative field exists for unassertable.
+
+**Ids are interned, not blanked.** Each distinct id string becomes an ordinal
+assigned on first appearance. A single `<id>` placeholder would erase the
+graph's *wiring* along with its values, and `applyTemplate()` returns a **flat**
+card list joined by `laneId` — precisely where a re-parented card could hide.
+Interning is strictly more discriminating than blanking and still compares equal
+across two runs that minted entirely different uuids.
+
+**The kept ledger is the more important half.** If `title` or `visibility` ever
+migrates into the strip list, it disappears from the kept list and the suite
+fails — which is the exact shape "normalise until it goes green" takes. There is
+also a value-shaped net: after normalisation, any surviving uuid- or
+ISO-shaped string must be on a sanctioned list. That list is one entry long
+(`cards[].dueAt`), so "did we enumerate every key?" is a mechanical question
+rather than a hopeful one.
+
+### Proving it can fail
+
+Three batteries in the spec — 15 templates differing from the fixture in exactly
+one field, 17 surgical mutations of a real stamped graph, and the inverse pair
+(a fresh set of ids and a year of clock drift must **still** compare equal,
+without which a normaliser returning `null` would pass everything else).
+
+And then the one that mattered:
+`node .github/scripts/check-template-determinism-control.mjs` plants eleven
+defects in a copy of `applyTemplate()` and requires the real spec to go red
+against each.
+
+**Eight were caught. Three were not** — and all three were one shape:
+
+> A stamp that is wrong the **same way twice** satisfies a comparison between
+> two stamps perfectly.
+
+| Planted | Why determinism could not see it |
+|---|---|
+| `card.contractedRounds \|\| default` | A card's own `contractedRounds: 0` swallowed by the template default. Both stamps swallow it identically. |
+| every card re-parented onto `lanes[0]` | Every id still real, every count unchanged — and one of the lanes cards were moved *off* is private. |
+| `createdAt: new Date()` | Purity broken; invisible because the comparison correctly strips timestamps. |
+
+The fix was not to widen anything. It was to add the half a two-stamp comparison
+structurally cannot make: `the stamped graph is what the definition described` —
+five cases that read the graph **against the definition**, including a literal
+table of every card's title, lane, position, resolved due date and resolved
+contracted rounds, and a purity case asserting every row timestamp is the
+injected `now` and every id came out of the injected factory exactly once. All
+eleven are caught now, and the control runs in CI on every push.
+
+### The four supplementary properties
+
+| Property | Proven by |
+|---|---|
+| A private lane stamps a private lane | Portable: 4 cases, incl. that visibility is *stated* rather than left to the column default and that a definition may not omit it. Database: read back off `lanes.visibility` — `Internal QA` is `private` in the row. |
+| A stamped card's state is the column default | Portable: `Object.hasOwn(card, 'state')` is **false** — not `state === 'draft'`, because a stamp writing `'draft'` would be a second writer of `cards.state` (INV-2) and would pass an equality check. Also: the definition parse is `.strict()`, so a template carrying `state` is a 400 rather than a silently stripped key. Database: every stamped row reads `draft`, and no `state_transitions` row exists. |
+| `dueAfterDays` resolves against the engagement's start | Two engagements eleven days apart produce due dates eleven days apart, and their normalised graphs must **not** compare equal — the one place this suite's own equality is required to fail. Plus: day 0 is the start instant and not "no due date", and the due date does not move with `now`. Database: measured against the `started_at` that was actually written. |
+| A definition round-trips through jsonb unchanged | Portable: a fixed point under three round trips, and a `version: 2` row fails loudly rather than being read by v1 rules. Database: through the real jsonb column, read back by the real parse, stamping a board that normalises equal to the in-memory one. |
 
 ---
 
@@ -828,7 +933,12 @@ test-level and belong to them; these two are the ones that need product work.
 
 ### Still UNPROVEN in this document
 
-Three rows, and one of them is a deliberate deferral rather than a hole.
+Two rows, and one of them is a deliberate deferral rather than a hole.
+
+**PHASE-7's row is closed.** It had been UNPROVEN since round 1 for the honest
+reason — `applyTemplate()` did not exist — and it closed the hour it did. See
+§4F, and in particular what the negative control found: the eight defects the
+determinism comparison caught are the easy half.
 
 **PHASE-3's RSS row is closed** — 200 MB uploaded, the app process moved 0.0 MB
 (§4D). It had been open since round 1, and it was never a matter of nobody
@@ -846,8 +956,6 @@ reach another (INV-6)`, 3.1s, green. INV-6 is the invariant ADR-021 narrows
 rather than retires, so having it executed rather than reasoned about matters
 more now than it did when it was written.
 
-- **PHASE-7** — stamping a template twice produces structurally identical
-  graphs. `applyTemplate()` does not exist.
 - **PHASE-8** — deploy and rollback executed once against staging. Not provable
   by a test. No longer blocked on tooling: `railway@^3.11.0` is a devDependency
   under ADR-019 and `.railway/**` is inside tsc and ESLint.

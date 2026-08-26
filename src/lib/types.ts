@@ -158,6 +158,66 @@ export interface AttentionItem {
   roundsBreached: boolean;
 }
 
+/* ---------------------------------------------------------------- templates */
+
+/**
+ * What a template stamps (PRD §5.7).
+ *
+ * Templates are v1, not v2, and the reason is structural rather than
+ * convenience: disposable workspaces only work if creating one is nearly free.
+ * Without them ephemerality becomes a tax, agencies reuse one long-lived
+ * workspace, and that breaks billing, purge, and isolation at once.
+ *
+ * Three properties this shape enforces by having no field for the alternative:
+ *
+ * 1. **No ids anywhere.** Ids are minted at stamp time, which is what lets
+ *    `applyTemplate()` be pure and lets stamping twice produce structurally
+ *    identical graphs — the phase's exit condition.
+ * 2. **No `state`.** A template that could set a card's state would be a second
+ *    writer of `cards.state`, and INV-2 says there is exactly one. A stamped
+ *    card starts at the column default and moves only through the machine.
+ * 3. **No absolute dates.** `dueAfterDays` is relative to the engagement's
+ *    start. A template carrying calendar dates is correct on the day it is
+ *    written and quietly wrong forever after — the same failure the fixture
+ *    timeline shipped and had to be rescued from.
+ *
+ * Persisted as `templates.definition` jsonb, so it outlives the code that
+ * wrote it: `version` is how a future shape stays readable rather than
+ * ambiguous.
+ */
+export interface TemplateDefinition {
+  readonly version: 1;
+  readonly lanes: readonly TemplateLane[];
+  /** Flat labelled groups for the reference shelf. No tree, no versioning. */
+  readonly shelfGroups: readonly string[];
+  /** Applied to any card that does not state its own. */
+  readonly contractedRoundsDefault: number | null;
+}
+
+export interface TemplateLane {
+  readonly name: string;
+  /** Published by default; private is explicit (ADR-006). */
+  readonly visibility: LaneVisibility;
+  readonly cards: readonly TemplateCard[];
+}
+
+export interface TemplateCard {
+  readonly title: string;
+  readonly description: string | null;
+  readonly contractedRounds: number | null;
+  /** Days after the engagement starts, never a calendar date. */
+  readonly dueAfterDays: number | null;
+}
+
+export interface TemplateSummary {
+  readonly id: string;
+  readonly name: string;
+  readonly createdAt: string;
+  /** For the picker, so choosing one does not require fetching it. */
+  readonly laneCount: number;
+  readonly cardCount: number;
+}
+
 /* ---------------------------------------------------------------- decisions */
 
 export type Decision = 'approved' | 'changes_requested';

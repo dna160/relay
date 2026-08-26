@@ -10,9 +10,12 @@
 import { eq } from 'drizzle-orm';
 import { engagements, organizations } from '@/db/schema';
 import type { Database } from '@/db/types';
+import type { TemplateDefinition } from '@/lib/types';
 import { grantOrgMembersOnCreate } from '../access/grant-on-create';
 import { assertCanOpenEngagement, type PlanGateResult } from '../plan/gate';
 import { notVisible } from '../errors';
+import { stampTemplate } from '../template/stamp';
+import type { StampedGraph } from '../template/apply';
 import { createEngagement, type EngagementRow } from './lifecycle';
 import type { OrgScopedActivityRow } from './count-active';
 
@@ -20,13 +23,26 @@ export interface OpenEngagementInput {
   orgId: string;
   title: string;
   clientOrgName: string;
-  templateId?: string | null;
+  /**
+   * The template to stamp, already loaded, already org-scoped, and already
+   * parsed — a **value**, not an id to go and fetch.
+   *
+   * The route resolves it, the same way every other route resolves its subject
+   * before calling a domain function (INV-9). That is not only layering: a
+   * definition may arrive from somewhere that has no `templates` row behind it
+   * at all — Phase 12's confirmed extraction (INV-13) — and an `openEngagement`
+   * that took an id could not be given one. `id` is nullable here for exactly
+   * that case: a stamped board whose definition was never saved.
+   */
+  template?: { id: string | null; definition: TemplateDefinition } | null;
   contractedRoundsDefault?: number;
 }
 
 export interface OpenEngagementResult {
   engagement: EngagementRow;
   gate: PlanGateResult;
+  /** Null when no template was named. Never a partially written board. */
+  stamped: { templateId: string | null; laneCount: number; cardCount: number } | null;
 }
 
 export async function openEngagement(
@@ -62,6 +78,16 @@ export async function openEngagement(
     // limit belongs to the organization, and the counter filters to it itself.
     const gate = assertCanOpenEngagement(input.orgId, org.plan, rows, now);
 
+    const template = input.template ?? null;
+
+    /**
+     * The template's contracted-rounds default fills the engagement's, but only
+     * when the request did not say. Three answers in priority order — the
+     * request, the template, the column's `DEFAULT 2` — and never a merge.
+     */
+    const contractedRoundsDefault =
+      input.contractedRoundsDefault ?? template?.definition.contractedRoundsDefault ?? undefined;
+
     const engagement = await createEngagement(
       tx,
       {
@@ -69,10 +95,8 @@ export async function openEngagement(
         plan: org.plan,
         title: input.title,
         clientOrgName: input.clientOrgName,
-        templateId: input.templateId ?? null,
-        ...(input.contractedRoundsDefault === undefined
-          ? {}
-          : { contractedRoundsDefault: input.contractedRoundsDefault }),
+        templateId: template?.id ?? null,
+        ...(contractedRoundsDefault === undefined ? {} : { contractedRoundsDefault }),
       },
       now,
     );
@@ -85,6 +109,42 @@ export async function openEngagement(
      */
     await grantOrgMembersOnCreate(tx, input.orgId, engagement.id, now);
 
-    return { engagement, gate };
+    /**
+     * Stamping is inside the same transaction as the insert. A half-stamped
+     * board is worse than a failed create: the agency sees a workspace that
+     * looks made, is missing three lanes, and gives them nothing to tell them
+     * which three. Either the whole workspace exists or none of it does — and
+     * because the gate's row lock is still held, it also cannot consume a plan
+     * slot on the way to failing.
+     */
+    let stamped: StampedGraph | null = null;
+    if (template) {
+      stamped = await stampTemplate(
+        tx,
+        {
+          engagementId: engagement.id,
+          definition: template.definition,
+          // `createEngagement()` sets `started_at` to `now`; reading it back off
+          // the row rather than reusing `now` keeps the relative due dates
+          // measured from the engagement's own origin even if that ever stops
+          // being true.
+          startedAt: engagement.startedAt ?? now,
+        },
+        now,
+      );
+    }
+
+    return {
+      engagement,
+      gate,
+      stamped:
+        template && stamped
+          ? {
+              templateId: template.id,
+              laneCount: stamped.lanes.length,
+              cardCount: stamped.cards.length,
+            }
+          : null,
+    };
   });
 }

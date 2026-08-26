@@ -79,16 +79,37 @@ export const users = pgTable(
   }),
 );
 
-export const templates = pgTable('templates', {
-  id: primaryId(),
-  orgId: uuid('org_id')
-    .notNull()
-    .references(() => organizations.id, { onDelete: 'cascade' }),
-  name: text('name').notNull(),
-  /** Lanes (with visibility), cards, contracted rounds, shelf groups. */
-  definition: jsonb('definition').notNull(),
-  createdAt: tstzNow('created_at'),
-});
+/**
+ * Phase 7. A saved shape for a workspace, owned by one organization.
+ *
+ * `definition` is a `TemplateDefinition` (src/lib/types.ts) and is **never**
+ * read as `as TemplateDefinition`. jsonb is untrusted input the moment the
+ * shape changes underneath a deployed row, so every read goes through
+ * `parseTemplateDefinition()` — see `src/domain/template/definition.ts`.
+ *
+ * There is deliberately no `engagement_id` here and no back-reference from a
+ * definition to the board it came from. A template is a value, not a view: once
+ * saved it must survive the purge of the engagement it was derived from, and
+ * `applyTemplate()` must be callable with a definition that never had a
+ * `templates` row at all (INV-13, Phase 12's ingestion path).
+ */
+export const templates = pgTable(
+  'templates',
+  {
+    id: primaryId(),
+    orgId: uuid('org_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    /** Lanes (with visibility), cards, contracted rounds, shelf groups. */
+    definition: jsonb('definition').notNull(),
+    createdAt: tstzNow('created_at'),
+  },
+  (t) => ({
+    /** The picker's only read: one org's templates, newest first. */
+    byOrg: index('templates_org_created_idx').on(t.orgId, t.createdAt),
+  }),
+);
 
 /* --------------------------------------------------------------- Auth.js v5 */
 

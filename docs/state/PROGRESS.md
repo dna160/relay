@@ -17,7 +17,7 @@
 | 4 | Client surface | ✅ complete |
 | 5 | Time intelligence | 🟡 partial — possession clock, rounds and `AttentionList` shipped early; nudge jobs not built |
 | 6 | Ephemerality | ✅ complete — INV-7 green under five real SIGKILLs |
-| 7 | Templates, white-label, plan gates | 🟡 partial — white-label lock shipped; `applyTemplate()` does not exist |
+| 7 | Templates, white-label, plan gates | ✅ complete — `applyTemplate()` pure, stamping determinism proven |
 | 8 | Hardening & deploy | ⬜ not started |
 | — | *v1.1 platform layer below — specified, not started* | |
 | 9 | Identity and tenancy migration | 🟡 built — awaiting the shadow window |

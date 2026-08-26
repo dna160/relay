@@ -16,6 +16,7 @@
  * | `possession.json` | The transition sequences and hand-computed totals PHASE-5 asserts against. |
  * | `possession.ts` | Typed loader and load-time validation for the above. |
  * | `seed.ts` | The insertion graph and the transition scripts that reach each card state legally. |
+ * | `template.ts` | The template PHASE-7's exit condition stamps, its one-field-apart twins, and the normalisation the comparison is made under. |
  */
 
 export * from './clock';
@@ -25,3 +26,4 @@ export * from './engagements';
 export * from './board';
 export * from './possession';
 export * from './seed';
+export * from './template';

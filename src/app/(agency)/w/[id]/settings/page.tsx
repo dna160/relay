@@ -1,6 +1,12 @@
 /**
  * Engagement settings — scaffolded with real structure; Phase 7 fills in
- * white-label, plan gates, and template capture.
+ * white-label and plan gates. Template capture landed here.
+ *
+ * Capture sits directly under the lane register on purpose. The register is
+ * already a plain statement of the board's structure and its visibility, which
+ * is exactly what a template takes — so the control reads as "keep this",
+ * immediately below the thing it would keep, rather than as a separate authoring
+ * task somewhere else in the product.
  *
  * What is live here is what Phase 1 and 2 already own: the client contacts and
  * the invite, the lane visibility register, and the retention statement. The
@@ -17,14 +23,20 @@ import { EmptyState } from '@/components/agency/empty-state';
 import { ErrorPanel } from '@/components/agency/error-panel';
 import { ExportControl } from '@/components/agency/export-control';
 import { InviteForm } from '@/components/agency/invite-form';
+import { SaveAsTemplate } from '@/components/agency/save-as-template';
+import { shapeFromBoard } from '@/components/agency/template-shape';
 import { serverContext } from '../../../_lib/server-context';
 
 export default async function SettingsPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const ctx = await serverContext();
-  const [engagement, board] = await Promise.all([
+  // The shelf read is here for the capture preview: shelf groups are part of
+  // what a template stamps (PHASE-7), so a preview that omitted them would
+  // describe a smaller docket than the one being saved.
+  const [engagement, board, shelf] = await Promise.all([
     agencyApi.engagement(id, ctx),
     agencyApi.board(id, ctx),
+    agencyApi.shelf(id, ctx),
   ]);
 
   if (!engagement.ok) return <ErrorPanel failure={engagement} />;
@@ -82,6 +94,33 @@ export default async function SettingsPage({ params }: { params: Promise<{ id: s
                 </li>
               ))}
             </ul>
+          )}
+        </div>
+      </section>
+
+      <section aria-labelledby="settings-template">
+        <h2 id="settings-template" className={cn(eyebrow, 'border-b border-ink pb-1')}>
+          Reuse this shape
+        </h2>
+        <p className={cn('mt-2 text-14', muted)}>
+          Save this board as a template and the next engagement of this kind starts stamped rather
+          than empty. Structure only — the lanes above, their visibility, the deliverables in them,
+          the contracted round default and the shelf groups. No files, no versions, no approvals, no
+          client contacts.
+        </p>
+        <div className="mt-3">
+          {!board.ok ? (
+            <ErrorPanel failure={board} />
+          ) : (
+            <SaveAsTemplate
+              engagementId={e.id}
+              engagementTitle={e.title}
+              shape={shapeFromBoard(
+                board.data.lanes,
+                shelf.ok ? shelf.data.map((g) => g.label) : [],
+                e.contractedRoundsDefault,
+              )}
+            />
           )}
         </div>
       </section>
@@ -159,7 +198,6 @@ export default async function SettingsPage({ params }: { params: Promise<{ id: s
         </h2>
         <ul className={cn('mt-3 flex flex-col gap-1 text-14', muted)}>
           <li>White-label logo and brand colour — Phase 7.</li>
-          <li>Save this engagement as a template — Phase 7.</li>
           <li>
             Default contracted rounds for new cards — currently{' '}
             <span className={mono}>{e.contractedRoundsDefault}</span>, editable in Phase 7.

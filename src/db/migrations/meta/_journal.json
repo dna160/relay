@@ -43,6 +43,13 @@
       "when": 1787667872457,
       "tag": "0005_identity_and_tenancy_graph",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1787711196676,
+      "tag": "0006_templates",
+      "breakpoints": true
     }
   ]
 }

@@ -40,6 +40,7 @@ export default defineConfig({
       'tests/invariants/inv-07-purge-leaves-certificate.spec.ts',
       'tests/invariants/inv-03-approval-binds-version.db.spec.ts',
       'tests/invariants/inv-11-access-resolution-is-one-function.db.spec.ts',
+      'tests/unit/template-stamping.db.spec.ts',
     ],
     /**
      * A database of this run's own, created and dropped by `db-isolation.ts`.

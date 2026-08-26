@@ -34,6 +34,10 @@ import { linesMatching, statements, statementsMatching, stripComments } from '@t
 import type { SourceFile } from '@tests/invariants/_source';
 import { STATE_WRITE } from '@tests/invariants/inv-02-state-machine-sole-writer.spec';
 import {
+  JS_ACTIVE_PREDICATE,
+  SQL_ACTIVE_PREDICATE,
+} from '@tests/invariants/inv-08-single-active-count.spec';
+import {
   APP_LAYER_WRITE,
   SERVER_SURFACE_PATTERN,
 } from '@tests/invariants/inv-09-domain-purity.spec';
@@ -152,6 +156,105 @@ describe('INV-2 — a wrapped state write cannot hide from the scan', () => {
 });
 
 /* -------------------------------------------------------------------------- */
+
+describe('INV-8 — a second definition of active cannot hide in a query file', () => {
+  /**
+   * The reach, not the regex, was the hole here. Both INV-8 scans read
+   * `sourceFiles('domain')` until Phase 7, so the invariant claimed one
+   * definition of active *in this codebase* while reading one eighth of it —
+   * and a definition that matters to billing is far likelier to be a `WHERE`
+   * clause in `src/db/queries/` than a comparison in the domain. Widening it
+   * found a real one, DEFECT-16.
+   *
+   * These plants are all in `src/db/queries/`, because that is where the scan
+   * could not previously see.
+   */
+  const SQL_PLANTS: ReadonlyArray<{ what: string; text: string }> = [
+    {
+      what: 'a plain where clause',
+      text: "const rows = await exec.select().from(engagements).where(eq(engagements.status, 'active'));",
+    },
+    {
+      what: 'wrapped by the formatter across four lines',
+      text: [
+        'const rows = await exec',
+        '  .select()',
+        '  .from(engagements)',
+        '  .where(',
+        '    and(',
+        '      eq(engagements.orgId, orgId),',
+        "      eq(",
+        '        engagements.status,',
+        "        'active',",
+        '      ),',
+        '    ),',
+        '  );',
+      ].join('\n'),
+    },
+    {
+      what: 'aliased, so the table name never appears',
+      text: "const live = eq(e.status, 'active');",
+    },
+    {
+      what: 'written as raw SQL rather than as a drizzle helper',
+      text: "const rows = await exec.execute(sql`select count(*) from engagements where status = 'active'`);",
+    },
+    {
+      what: 'spelled as an inArray over one value',
+      text: "const rows = await exec.select().from(engagements).where(inArray(engagements.status, ['active']));",
+    },
+  ];
+
+  for (const plant of SQL_PLANTS) {
+    it(`catches ${plant.what}`, () => {
+      expect(caughtBy(planted('src/db/queries/billing.ts', plant.text), SQL_ACTIVE_PREDICATE)).toBe(
+        true,
+      );
+    });
+  }
+
+  it('does not fire on a query that asks the counter instead', () => {
+    // `src/db/queries/retention.ts` is the worked example: load the rows,
+    // unfiltered by status, and let `countActiveEngagements()` decide. A guard
+    // that also flagged this would be teaching people to route around it.
+    const clean = planted(
+      'src/db/queries/billing.ts',
+      [
+        'const rows = await exec',
+        '  .select({ status: engagements.status, lastActivityAt: engagements.lastActivityAt })',
+        '  .from(engagements)',
+        '  .where(eq(engagements.orgId, orgId));',
+        'return countActiveEngagements(orgId, rows, now);',
+      ].join('\n'),
+    );
+    expect(caughtBy(clean, SQL_ACTIVE_PREDICATE)).toBe(false);
+  });
+
+  it('does not fire on the read-only check a page makes on a loaded row', () => {
+    // `engagement.status !== 'active'` in a page means "is this archived", which
+    // is a different question from "does this count against the plan". The SQL
+    // scan runs over the whole tree, so it must not treat the two as one — a
+    // guard that cries wolf across nine UI files gets its reach narrowed again.
+    const page = planted(
+      'src/app/(agency)/w/[id]/board/page.tsx',
+      "const archived = engagement.status !== 'active';",
+    );
+    expect(caughtBy(page, SQL_ACTIVE_PREDICATE)).toBe(false);
+    // The domain-only scan is the one that owns that spelling, and it does see it.
+    expect(caughtBy(page, [JS_ACTIVE_PREDICATE])).toBe(true);
+  });
+
+  it('catches the wrapped comparison the domain scan reads', () => {
+    const wrapped = planted(
+      'src/domain/plan/quota.ts',
+      ['const live =', "  engagement.status ===", "  'active';"].join('\n'),
+    );
+    expect(caughtBy(wrapped, [JS_ACTIVE_PREDICATE])).toBe(true);
+    // And the line-based reader this build retired could not: the comparison is
+    // split across three physical lines and no one of them holds both halves.
+    expect(linesMatching(wrapped, JS_ACTIVE_PREDICATE)).toEqual([]);
+  });
+});
 
 describe('INV-9 — the app layer cannot write around the guard', () => {
   it('a server action that writes is on the scanned surface', () => {

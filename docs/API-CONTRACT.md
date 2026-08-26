@@ -169,7 +169,7 @@ session and must never accept it — that asymmetry is INV-6, not an inconsisten
 
 ### A7 — routes named here that are not built yet, with their owning phase
 `/api/attention` (Phase 5) · `/api/events`, `/api/client/events` (Phase 5) ·
-`/api/templates` (Phase 7) · `/api/engagements/:id/export`, `/api/client/export`
+ `/api/engagements/:id/export`, `/api/client/export`
 (Phase 6). The front-end calls each of these and marks it `NOT BUILT` in
 `src/lib/api-client.ts`. `GET /api/attention` is the portfolio's primary
 content and is the first of them to land.
@@ -270,3 +270,38 @@ And `pendingOnboarding()` closes a redirect loop: a first-time user has no org,
 so `getSession()` returns null — correct, but indistinguishable from signed-out,
 which would have bounced them back to `/signin` forever. It grants no org, no
 role, and nothing an agency route accepts; it only distinguishes the two nulls.
+
+
+### A13 — templates
+*Phase 7. The last unbuilt piece of v1, and a hard dependency for Phase 12.*
+
+| Method | Path | Response |
+|---|---|---|
+| `GET` | `/api/templates` | `{ templates: TemplateSummary[] }`, newest first |
+| `GET` | `/api/templates/:id` | `{ template: TemplateSummary, definition: TemplateDefinition }` |
+| `POST` | `/api/templates` | `201 { template: TemplateSummary }` |
+| `POST` | `/api/engagements` | now accepts `templateId?`; returns `stamped: { templateId, laneCount, cardCount } | null` |
+
+`POST` accepts either `{ name, fromEngagementId }` — capturing a live board — or
+`{ name, definition }`, which is the seam Phase 12's ingestion writes through.
+Both together is 400; neither saves a named empty template. Another org's
+template or engagement is 404, never 403, and no engagement row is written on
+the way to that failure.
+
+**`TemplateDefinition` is parsed on read as well as write.** `templates.definition`
+is jsonb, and `row.definition as TemplateDefinition` is a cast rather than a
+check. The parse is `.strict()` — unknown keys are **rejected, not stripped** —
+because the key it exists to refuse is `state`, and a silently stripped `state`
+is a definition whose author believes it worked. `version` is a literal rather
+than a number, so a row written by a future shape fails loudly instead of being
+read under v1 rules.
+
+Rejection differs by caller, deliberately: the list omits an unparseable row and
+logs its id, because failing the request would let one bad row hide every good
+one, and a `laneCount: 0` would be a coercion wearing a number. Fetching that
+same id throws — the caller asked for that template specifically.
+
+**`applyTemplate(definition, ctx)` is pure**, taking its id factory, the
+engagement's start date, and a clock as arguments. That is what makes "stamping
+twice produces structurally identical graphs" a property provable by calling a
+function twice, rather than a claim about two database writes.

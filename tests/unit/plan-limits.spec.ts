@@ -91,7 +91,7 @@ describe('countActiveEngagements (INV-8)', () => {
 
   it('counts each org exactly as the fixture declares', () => {
     for (const [orgId, expected] of Object.entries(EXPECTED_ACTIVE_AT_EVAL_NOW)) {
-      expect(countActiveEngagements(activityRows(orgId), EVAL_NOW), orgId).toBe(expected);
+      expect(countActiveEngagements(orgId, activityRows(), EVAL_NOW), orgId).toBe(expected);
     }
   });
 
@@ -138,7 +138,7 @@ describe('the plan gate', () => {
   const studioRows = activityRows(ORG.studio);
 
   it('reports the free fixture org as exactly at its limit', () => {
-    const gate = evaluatePlanGate('free', freeRows, EVAL_NOW);
+    const gate = evaluatePlanGate(ORG.free, 'free', freeRows, EVAL_NOW);
     expect(gate.activeCount).toBe(3);
     expect(gate.limit).toBe(3);
     expect(gate.remaining).toBe(0);
@@ -147,7 +147,7 @@ describe('the plan gate', () => {
 
   it('throws 402 PLAN_LIMIT_REACHED at the limit, not one past it', () => {
     try {
-      assertCanOpenEngagement('free', freeRows, EVAL_NOW);
+      assertCanOpenEngagement(ORG.free, 'free', freeRows, EVAL_NOW);
       expect.unreachable('the fourth engagement on a three-engagement plan must be refused');
     } catch (error) {
       expect(isDomainError(error)).toBe(true);
@@ -158,43 +158,56 @@ describe('the plan gate', () => {
   });
 
   it('allows a create while under the limit', () => {
-    const gate = evaluatePlanGate('pro', proRows, EVAL_NOW);
+    const gate = evaluatePlanGate(ORG.pro, 'pro', proRows, EVAL_NOW);
     expect(gate.activeCount).toBe(1);
     expect(gate.remaining).toBe(14);
     expect(gate.allowed).toBe(true);
-    expect(() => assertCanOpenEngagement('pro', proRows, EVAL_NOW)).not.toThrow();
+    expect(() => assertCanOpenEngagement(ORG.pro, 'pro', proRows, EVAL_NOW)).not.toThrow();
   });
 
   it('treats a null limit as unlimited rather than as zero', () => {
-    const gate = evaluatePlanGate('studio', studioRows, EVAL_NOW);
+    const gate = evaluatePlanGate(ORG.studio, 'studio', studioRows, EVAL_NOW);
     expect(gate.limit).toBeNull();
     expect(gate.remaining).toBeNull();
     expect(gate.allowed).toBe(true);
     // And still unlimited with a hundred open engagements.
     const many = Array.from({ length: 100 }, () => ({
+      orgId: ORG.studio,
       status: 'active' as const,
       lastActivityAt: EVAL_NOW,
     }));
-    expect(evaluatePlanGate('studio', many, EVAL_NOW).allowed).toBe(true);
+    expect(evaluatePlanGate(ORG.studio, 'studio', many, EVAL_NOW).allowed).toBe(true);
   });
 
   it('counts only what the counter counts, not every row it is handed', () => {
     // The free org's rows include a stale active, a draft, an archived and a
     // purged engagement. Seven rows in, three counted.
     expect(freeRows).toHaveLength(7);
-    expect(evaluatePlanGate('free', freeRows, EVAL_NOW).activeCount).toBe(3);
+    expect(evaluatePlanGate(ORG.free, 'free', freeRows, EVAL_NOW).activeCount).toBe(3);
+  });
+
+  it('the deprecated positional form refuses rows spanning two organizations', () => {
+    // Nothing in `src/` or in these suites calls this form any more — it goes at
+    // ADR-021 step 4 with the old permission path. Until it does, it is live
+    // code with a safety property worth keeping tested: it counts exactly the
+    // rows it is handed, so a caller that loaded two tenants' engagements would
+    // otherwise bill one for the other's. It throws rather than guess.
+    const mixed = [...activityRows(ORG.free), ...activityRows(ORG.pro)];
+    expect(() => countActiveEngagements(mixed, EVAL_NOW)).toThrow(/more than one organization/);
+    // One org's rows still count, because that is the shape v1 always passed.
+    expect(countActiveEngagements(activityRows(ORG.free), EVAL_NOW)).toBe(3);
   });
 
   it('frees a slot when an engagement goes quiet, without anyone deleting it', () => {
     const later = new Date(EVAL_NOW.getTime() + days(31));
-    const gate = evaluatePlanGate('free', freeRows, later);
+    const gate = evaluatePlanGate(ORG.free, 'free', freeRows, later);
     expect(gate.activeCount).toBe(0);
     expect(gate.allowed).toBe(true);
   });
 
   it('names the plan and the limit in the error, because the message is the upsell', () => {
     try {
-      assertCanOpenEngagement('free', freeRows, EVAL_NOW);
+      assertCanOpenEngagement(ORG.free, 'free', freeRows, EVAL_NOW);
       expect.unreachable('should have thrown');
     } catch (error) {
       if (!isDomainError(error)) throw error;
@@ -207,10 +220,11 @@ describe('the plan gate', () => {
     // A downgrade puts an org over the cap. It keeps its engagements and simply
     // cannot open another (PRD §5.6 — a downgrade never purges silently).
     const overLimit = Array.from({ length: 8 }, () => ({
+      orgId: ORG.free,
       status: 'active' as const,
       lastActivityAt: EVAL_NOW,
     }));
-    const gate = evaluatePlanGate('free', overLimit, EVAL_NOW);
+    const gate = evaluatePlanGate(ORG.free, 'free', overLimit, EVAL_NOW);
     expect(gate.activeCount).toBe(8);
     expect(gate.remaining).toBe(0);
     expect(gate.allowed).toBe(false);

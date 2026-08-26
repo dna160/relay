@@ -25,8 +25,22 @@ import type {
   LaneVisibility,
   Plan,
   Possession,
+  TemplateDefinition,
+  TemplateSummary,
 } from '@/lib/types';
 import { pick, request, type RequestContext } from './api-client.core';
+
+/**
+ * Re-exported, not redeclared.
+ *
+ * This module carried its own `TemplateSummary` until Phase 7 — with a
+ * `description` and an `updatedAt` that the contract's shape does not have —
+ * and `/templates` was rendering both. A redeclaration inside the API seam is
+ * the exact failure this file's header forbids: the surface reads a field the
+ * route never sends, typechecks, and prints `Invalid Date`. Shapes come from
+ * `src/lib/types.ts` and nothing here defines a second one.
+ */
+export type { TemplateDefinition, TemplateLane, TemplateCard, TemplateSummary } from '@/lib/types';
 
 /* -------------------------------------------------- shapes the contract omits */
 
@@ -116,6 +130,16 @@ export interface CreatedEngagement {
     'id' | 'title' | 'clientOrgName' | 'status' | 'lastActivityAt'
   >;
   plan: { activeCount: number; limit: number | null; remaining: number | null };
+  /**
+   * Phase 7. What the template stamped, or `null` when none was named.
+   *
+   * Reported by the route rather than left for the board to reveal, because a
+   * create that named a template and stamped nothing — an empty definition, a
+   * template with no lanes — is otherwise indistinguishable from a board that
+   * failed to load. Nothing is optional inside it: the stamp is one
+   * transaction, so these counts describe a board that certainly exists.
+   */
+  stamped: { templateId: string; laneCount: number; cardCount: number } | null;
 }
 
 /** `POST /api/engagements/:id/invite`. */
@@ -263,14 +287,28 @@ export interface AgencyComment {
 
 /* --------------------------------------------------- endpoints not yet built */
 
-/** NOT BUILT — `GET /api/templates`. Phase 7 owns the behaviour. */
-export interface TemplateSummary {
-  id: string;
-  name: string;
-  description: string | null;
-  laneCount: number;
-  cardCount: number;
-  updatedAt: string;
+/**
+ * `GET /api/templates/:id` — one template with the graph it stamps. Landed in
+ * Phase 7 alongside the list and the capture.
+ *
+ * The list route returns `TemplateSummary`, whose counts exist "for the picker,
+ * so choosing one does not require fetching it". That sentence is also the
+ * reason this second read exists: the counts answer *how big*, and the preview
+ * before stamping has to answer *what*, which is lane names, their visibility,
+ * and the deliverables under each. A workspace that counts against the plan
+ * limit should not arrive as a surprise.
+ *
+ * The definition is the persisted `templates.definition` jsonb, parsed by
+ * `parseTemplateDefinition()` before it is served — never cast. A stored row
+ * whose `version` this build does not know is a **400 from the route**, not a
+ * half-parsed object handed to the surface, so `isReadableDefinition()` is a
+ * belt to that braces rather than the only check. A preview surface still
+ * renders its unavailable state on that failure; nothing renders an *empty*
+ * preview, which would claim the template stamps nothing.
+ */
+export interface TemplateDetail {
+  template: TemplateSummary;
+  definition: TemplateDefinition;
 }
 
 /**
@@ -621,18 +659,30 @@ export const agencyApi = {
     ).then((r) => pick(r, (p) => p.note));
   },
 
-  /** GET /api/templates — NOT BUILT. */
+  /** GET /api/templates — the org's dockets, newest first. */
   templates(ctx?: RequestContext) {
     return request<{ templates: TemplateSummary[] }>('/api/templates', { ctx }).then((r) =>
       pick(r, (p) => p.templates),
     );
   },
 
-  /** POST /api/templates — NOT BUILT. */
-  createTemplate(
-    body: { name: string; description?: string; fromEngagementId?: string },
-    ctx?: RequestContext,
-  ) {
+  /** GET /api/templates/:id — the definition behind a summary, for the preview. */
+  template(id: string, ctx?: RequestContext) {
+    return request<TemplateDetail>(`/api/templates/${encodeURIComponent(id)}`, { ctx });
+  },
+
+  /**
+   * POST /api/templates — capture a live engagement as a template.
+   *
+   * The body names the *engagement*, never a definition the browser assembled.
+   * A template is a description of a graph, and the rows that graph is read
+   * from live on the server: a client-supplied definition would let the browser
+   * decide what a lane's visibility is, which is the single most consequential
+   * value in the product (INV-1) and not one a form should be able to state.
+   * The capture preview on the settings page renders the same board read the
+   * route derives from, so what is previewed is what is saved.
+   */
+  createTemplate(body: { name: string; fromEngagementId: string }, ctx?: RequestContext) {
     return request<{ template: TemplateSummary }>('/api/templates', {
       method: 'POST',
       body,

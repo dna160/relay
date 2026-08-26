@@ -7,7 +7,9 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { db } from '@/db/client';
 import { loadPortfolio } from '@/db/queries/engagements';
+import { loadTemplate } from '@/db/queries/templates';
 import { openEngagement } from '@/domain/engagement/open';
+import { notVisible } from '@/domain/errors';
 import { toErrorResponse } from '@/lib/errors';
 import { requireAgency } from '../_guards';
 import { shadowVisible } from '../_shadow';
@@ -47,13 +49,26 @@ export async function POST(request: Request): Promise<NextResponse> {
     const session = await requireAgency();
     const body = createSchema.parse(await request.json());
 
-    const { engagement, gate } = await openEngagement(
+    /**
+     * Resolved before the create, org-scoped, and 404 rather than 403 when the
+     * id belongs to another agency — the same shape as every other route that
+     * loads its subject first (INV-9). Doing it here rather than inside
+     * `openEngagement()` also means the failure is about the template, which is
+     * what the caller asked about, and that no engagement row was ever written
+     * on the way to it.
+     */
+    const template = body.templateId
+      ? await loadTemplate(db, body.templateId, session.orgId)
+      : null;
+    if (body.templateId && !template) throw notVisible('Template not found');
+
+    const { engagement, gate, stamped } = await openEngagement(
       db,
       {
         orgId: session.orgId,
         title: body.title,
         clientOrgName: body.clientOrgName,
-        templateId: body.templateId ?? null,
+        template: template && { id: template.id, definition: template.definition },
         ...(body.contractedRoundsDefault === undefined
           ? {}
           : { contractedRoundsDefault: body.contractedRoundsDefault }),
@@ -71,6 +86,14 @@ export async function POST(request: Request): Promise<NextResponse> {
           lastActivityAt: engagement.lastActivityAt.toISOString(),
         },
         plan: { activeCount: gate.activeCount, limit: gate.limit, remaining: gate.remaining },
+        /**
+         * Null when no template was named. It is reported rather than left to
+         * be discovered on the board because the stamp is the reason creation
+         * is cheap (PRD §5.7), and a create that silently stamped nothing —
+         * an empty template, a definition with no lanes — should say so here
+         * rather than look like a board that failed to load.
+         */
+        stamped,
       },
       { status: 201 },
     );

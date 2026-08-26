@@ -62,6 +62,27 @@ jobs:
       - run: npm ci
       - run: npm run verify
 
+      # PHASE-7's exit condition can be made to fail.
+      #
+      # A determinism test is unusually good at going quietly vacuous: normalise
+      # one field too hard and two different boards compare equal, the suite
+      # stays green forever, and the exit condition has been retired rather than
+      # proved. So eleven defects are planted in a copy of `applyTemplate()` and
+      # the real spec must go red against each one.
+      #
+      # It earned its place on its first run: three of the eleven survived, all
+      # three the same shape — a stamp that is wrong the *same way twice*
+      # satisfies a comparison between two stamps perfectly. The five assertions
+      # in `the stamped graph is what the definition described` exist because of
+      # that run.
+      #
+      # It lives here rather than in `invariant contract` because it runs the
+      # suite, so it needs `node_modules`; that job installs nothing on purpose.
+      # Portable otherwise: no database, no build, about a second per defect.
+      - name: the determinism suite can fail
+        if: matrix.node == '22'
+        run: node .github/scripts/check-template-determinism-control.mjs | tee -a "$GITHUB_STEP_SUMMARY"
+
   # ------------------------------------------------------- the handover gate
   # Two things the suite cannot check about itself, because a skipped test
   # passes and a deleted test passes twice.

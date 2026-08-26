@@ -332,12 +332,22 @@ export const clientContacts: readonly ClientContactRow[] = [
  */
 export function activityRows(orgId?: string): Array<{
   id: string;
+  orgId: string;
   status: EngagementStatus;
   lastActivityAt: Date;
 }> {
   return engagements
     .filter((e) => orgId === undefined || e.orgId === orgId)
-    .map((e) => ({ id: e.id, status: e.status, lastActivityAt: new Date(e.lastActivityAt) }));
+    .map((e) => ({
+      id: e.id,
+      // ADR-021: the plan limit is a property of the organization, so the
+      // counter's supported call form filters to an org id itself rather than
+      // trusting the rows it was handed. A row that does not know which org it
+      // belongs to cannot be passed to it — which is the point.
+      orgId: e.orgId,
+      status: e.status,
+      lastActivityAt: new Date(e.lastActivityAt),
+    }));
 }
 
 export function engagementById(id: string): EngagementRow {

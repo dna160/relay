@@ -72,7 +72,18 @@ export default async function PortfolioPage() {
             being filled in.
           */}
           <div className="flex flex-col items-start gap-2">
-            <NewEngagementForm templates={templates.ok ? templates.data : []} />
+            {/*
+              `plan` is threaded into the form as well as printed below it. The
+              record states the quantity; the form states the consequence of the
+              button — "this workspace takes active slot 3 of 3" — because
+              stamping a template is one click from a live board and the cap
+              must be stated, never sprung. Both read the same block, so there
+              is still exactly one evaluation of the counter (INV-8).
+            */}
+            <NewEngagementForm
+              templates={templates.ok ? templates.data : []}
+              plan={planUsage}
+            />
             {planUsage && (
               <PlanUsageRecord
                 plan={planUsage.plan}

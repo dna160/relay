@@ -99,8 +99,12 @@ describe('the fixture answers hold at any point in the future', () => {
 
     it(`counts the same active engagements per org — ${label}`, () => {
       for (const [orgId, expected] of Object.entries(EXPECTED_ACTIVE_AT_EVAL_NOW)) {
-        const rows = shifted.filter((e) => e.orgId === orgId);
-        expect(countActiveEngagements(rows, now), `org ${orgId} at ${label}`).toBe(expected);
+        // Every org's rows, unfiltered, and the org id named. The counter does
+        // the scoping (ADR-021), so handing it too much is the case worth
+        // running: a caller that loads three orgs still gets one org's answer.
+        expect(countActiveEngagements(orgId, shifted, now), `org ${orgId} at ${label}`).toBe(
+          expected,
+        );
       }
     });
   }
