@@ -61,7 +61,13 @@ export type DisagreementReason =
   /** The harness could not name the object's project, so it could not compare. */
   | 'project_unresolved'
   /** The set-valued form: the two paths returned different project sets. */
-  | 'visible_set_differs';
+  | 'visible_set_differs'
+  /**
+   * The other set-valued form: the shipped assignee list and the graph's
+   * disagree about who can be handed a card on one project. One row per person
+   * on either side of the difference.
+   */
+  | 'assignable_set_differs';
 
 /**
  * One permission decision, named well enough that a row in the log is
@@ -297,6 +303,76 @@ export async function compareVisibleProjects(
         'visible_set_differs',
         oldAllowed,
         allowed.get(projectId) ?? { role: null, via: null },
+        accountId,
+        clock,
+      );
+    }
+  } catch (error) {
+    console.warn(
+      JSON.stringify({
+        level: 'warn',
+        msg: 'access.shadow.failed',
+        endpoint: ctx.endpoint,
+        decisionPoint: ctx.decisionPoint,
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
+  }
+}
+
+/**
+ * The candidate-set form: who may be handed a card on one project.
+ *
+ * `GET /api/engagements/:id/members` returns the shipped answer — every `users`
+ * row in the engagement's organization, which is exactly what the write path
+ * accepts — and this compares it against `listAssignableAccounts()`, the graph's
+ * answer, one row per person the two disagree about.
+ *
+ * The comparison is in **legacy user ids**, because that is the only identifier
+ * the two sides share: the shipped list is `users` rows and the graph's is
+ * `accounts` rows joined back through `legacy_user_id`. An account with no
+ * legacy id cannot be assigned today and is therefore not a disagreement about
+ * assignability — it is the backfill gap `account_not_backfilled` already
+ * names, and it is counted there rather than twice.
+ *
+ * This is the endpoint where a role mapping that is wrong for one class of
+ * person shows up as a *name a colleague can see*, which is why it is worth
+ * instrumenting rather than assuming: an over-wide graph puts a stranger in a
+ * dropdown, and an under-wide one loses half a studio.
+ */
+export async function compareAssignableMembers(
+  exec: Executor,
+  ctx: ShadowContext,
+  shippedUserIds: readonly string[],
+  graphUserIds: readonly string[],
+  clock: ShadowClock = systemClock,
+): Promise<void> {
+  try {
+    const accountId = await accountForLegacyUser(exec, ctx.legacyUserId);
+    if (accountId === null) {
+      if (shippedUserIds.length > 0) {
+        await record(exec, ctx, 'account_not_backfilled', true, null, null, clock);
+      }
+      return;
+    }
+
+    const shipped = new Set(shippedUserIds);
+    const graph = new Set(graphUserIds);
+    const onlyShipped = [...shipped].filter((id) => !graph.has(id));
+    const onlyGraph = [...graph].filter((id) => !shipped.has(id));
+    if (onlyShipped.length === 0 && onlyGraph.length === 0) return;
+
+    for (const candidateUserId of [...onlyShipped, ...onlyGraph]) {
+      const inShipped = shipped.has(candidateUserId);
+      await record(
+        exec,
+        {
+          ...ctx,
+          input: { ...ctx.input, candidateUserId, side: inShipped ? 'shipped' : 'graph' },
+        },
+        'assignable_set_differs',
+        inShipped,
+        null,
         accountId,
         clock,
       );

@@ -2,7 +2,7 @@
 
 /**
  * WrapSlate — the persistent mono strip in the workspace header:
- * `WRAP +12d · PURGE IN 48d · EXPORT`
+ * `WRAP +12d · PURGE IN 48d · KEEP THIS WORKSPACE`
  *
  * Ephemerality is stated, never sprung. There is no dismiss control on this
  * component and adding one would be a product regression, not a UX improvement:
@@ -49,6 +49,7 @@
  * ephemerality in this product is stated, never sprung.
  */
 
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { agencyApi } from '@/lib/api-client.agency';
 import {
@@ -68,8 +69,7 @@ import {
   Rule,
   type PlateRow,
 } from '@/components/primitives';
-import { cn } from '@/components/style-tokens';
-import { ExportControl } from './export-control';
+import { buttonClass, cn } from '@/components/style-tokens';
 
 export interface WrapSlateProps {
   engagementId: string;
@@ -184,7 +184,45 @@ export function WrapSlate({
           )}
         </div>
 
-        <ExportControl engagementId={engagementId} tone="quiet" size="sm" />
+        {/*
+          The one control, and it is the agency's — not the client's.
+
+          This strip used to carry `Export everything`. `FLOWS.md` §3 assigns the
+          agency **Keep this workspace** (the conversion) and the client
+          **Export everything** (the rescue), and states that the two are never
+          swapped. Rendering the client's rescue on the agency's header was
+          exactly that swap, which meant the strip `DESIGN-SYSTEM.md` calls "the
+          conversion surface" was not one on the side that converts. Worse, on a
+          strip whose whole subject is deletion, a lone button reading `Export`
+          reads as the answer to it — and exporting is the one thing that does
+          *not* stop a purge. The settings page already says so in a sentence,
+          written because somebody had already made that mistake in prose.
+
+          A link, not a button, and it is never disabled: it goes to the
+          retention section of settings, which already carries the correct
+          sentence about what retaining is and what it is not. The anchor
+          already existed for the ≤14-day board strip to point at.
+
+          The agency's export has not been taken away — it lives on the settings
+          page beneath the sentence that distinguishes it from retaining, and on
+          the ≤14-day board strip where §3 already places both actions together.
+          Nobody exports a live workspace on day three, and putting the rescue
+          where the conversion belonged cost the product both.
+        */}
+        {countdown !== null && (
+          <Link
+            href={`/w/${engagementId}/settings#settings-retention`}
+            className={cn(buttonClass('quiet', 'sm'), 'shrink-0')}
+          >
+            Keep this workspace
+          </Link>
+        )}
+        {/*
+          On `RETAINED` the strip carries no control at all. There is nothing to
+          keep, the badge is the whole answer, and a button beside it would be a
+          control with no job — the same defect one step quieter (§6 rule 5:
+          one control, at most).
+        */}
       </div>
 
       {/*

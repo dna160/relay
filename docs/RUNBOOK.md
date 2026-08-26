@@ -586,24 +586,88 @@ free export exists and why it is never paywalled: it is the copy that survives.
 
 ## 7. Health checks
 
+`GET /api/health` is the deploy gate. `railway.json` and `.railway/railway.ts`
+both point `healthcheckPath` at it, so what it says decides whether a new
+deployment receives traffic.
+
+```json
+{"status":"ok","db":"ok","dbLatencyMs":7,"storage":"ok",
+ "checkedAt":"2026-08-26T09:14:02.118Z","release":"e59296d"}
+```
+
+| Field | Values | What it means |
+|---|---|---|
+| `status` | `ok` \| `degraded` | `ok` only when **every** probed subsystem is `ok`. |
+| `db` | `ok` \| `unreachable` | A real `SELECT 1`, 3s timeout. |
+| `storage` | `ok` \| `unconfigured` \| `unreachable` | A real `HeadBucket`, 2s timeout, cached 10s. |
+| `release` | 8 chars | The commit or deployment id this instance is serving. What §4 confirms a rollback against. |
+
+### What each answer does to the deploy
+
+| `db` | `storage` | HTTP | Effect |
+|---|---|---|---|
+| ok | ok | 200 | Traffic shifts. |
+| ok | `unconfigured` | **503** | **Deploy fails and holds on the old version.** |
+| ok | `unreachable` | 200 | Stays up, `status: degraded`. |
+| unreachable | any | 503 | Deploy fails. |
+
+### Why storage is probed now, when this section used to forbid it
+
+This section previously read *"The health check must not touch R2 or Resend. A
+third-party blip must not take the app out of rotation."* The concern was right
+and the conclusion was too wide, and the cost of the gap was paid on staging:
+the app deployed with no `S3_*` variables at all, health answered `ok`, Railway
+shifted traffic, and the first person to discover that uploads were impossible
+was a user being told *"could not reach the workspace"*.
+
+The distinction the old rule was missing is that **a misconfigured deployment
+and an unreachable dependency are not the same event.**
+
+- `unconfigured` is a fact about *this build*. No `S3_*` variables means presign
+  cannot work — not now, not on a retry, not for anybody — and it is always the
+  new deployment's fault. Holding traffic on the old version is exactly right.
+- `unreachable` is a fact about *somebody else's service*. Boards, comments,
+  transitions and approvals all still work; only uploads do not. Rolling a
+  working deployment back over an R2 blip is the outcome the old rule was
+  protecting against, and it still does not happen.
+
+So the rule is narrowed rather than reversed: **a third-party blip never takes
+the app out of rotation; a deployment that structurally cannot do its job never
+enters it.**
+
+The probe is `HeadBucket` — no bytes, so INV-10 is untouched — and its result is
+cached for ten seconds, because this route is polled by Railway and scanned by
+everyone else and an uncached probe turns that traffic into bucket traffic.
+
+### What health does **not** probe, and what you will see instead
+
+A green health check is a claim about this deployment, and these are the ways it
+can be false anyway. Every one of them is deliberate; each says what a user sees
+when it is wrong, because that sentence is what the next incident is triaged
+against. `tests/unit/health-claim.spec.ts` asserts that every variable in the
+§2 registry is either probed above or listed here — a new variable cannot
+quietly become a seventh blind spot.
+
+| Unprobed | Why not | Symptom when it is wrong |
+|---|---|---|
+| `RESEND_API_KEY`, `EMAIL_FROM` | An email provider outage must not roll back a deployment, and there is no cheap probe that does not send mail. | Nobody can sign in; **purge warnings silently do not go out** (§5). |
+| `AUTH_SECRET`, `AUTH_URL` | Correctness is only observable by completing a sign-in, which health cannot do unauthenticated. | Agency sign-in appears to work and the magic link 404s. |
+| `CLIENT_LINK_SECRET` | Same: only a real verification exercises it. | Every outstanding client link stops verifying. |
+| `CERTIFICATE_SIGNING_KEY` | Used by the worker, not the app, and only during a purge. | Purges cannot sign a certificate; INV-7 cannot complete. |
+| `S3_PUBLIC_BASE_URL` | Not read by presign, so `HeadBucket` cannot see it — and, as of this round, **not read anywhere in `src/` at all**. See §9. | Nothing today. A documented variable with no behaviour behind it. |
+| `S3_REGION` | Defaults to `auto`, which is correct for both R2 and MinIO, so unset is a working deployment rather than a broken one. | A 403 on a presigned URL, returned by the object store rather than by Relay. |
+| `NEXT_PUBLIC_APP_URL` | Inlined into the client bundle at **build** time. The value this route would read is not the value the browser has, so probing it here would answer about the wrong thing. | Client-side fetches resolve against the wrong origin. |
+| `RETENTION_ARCHIVE_DAYS`, `RETENTION_PURGE_DAYS` | Values, not connections. Every value is valid; the wrong one is a policy error, and both default correctly when unset. | Data is destroyed on the wrong day. Nothing fails, which is the problem. |
+| `E2E_SEED_TOKEN` | **Its absence is the correct production state** — it gates the seed and magic-link-capture endpoints, and their being unmountable is what makes them safe to ship. A probe would report a problem where "unset" is the goal. | Nothing in production. In CI, the seed endpoints 404 and the e2e run fails. |
+| Worker liveness | A separate process. The app cannot answer for it. | Queue depth grows; see the table below. |
+
+### The other checks, which are not this route
+
 | Check | Where | Good |
 |---|---|---|
-| App liveness | `GET /api/health` | 200, body `{"ok":true}` |
-| Database | inside `/api/health` | `SELECT 1` under 100ms |
 | Worker liveness | Railway process status | Running, one replica |
 | Queue depth | `SELECT count(*) FROM pgboss.job WHERE state='created'` | Steady. A growing backlog means the worker is down or wedged. |
-| Object storage | first presign of the day | 200 from R2 |
-
-> **Shipped in round 2** (`src/app/api/health/route.ts`). It checks database
-> connectivity, not just process liveness — a health check that only proves Node
-> is running reports healthy through a total database outage. Both
-> `railway.json` and `.railway/railway.ts` point at it, and
-> `tests/unit/railway-topology.spec.ts` asserts that the two agree, because a
-> health check path that drifts between the two config files fails the deploy
-> that uses the stale one.
-
-The health check must **not** touch R2 or Resend. A third-party blip must not
-take the app out of rotation.
+| Bucket credentials end to end | `npm run storage:check` | Creates the bucket and round-trips an object. `HeadBucket` proves reachability, not that a PUT is permitted. |
 
 ---
 
@@ -612,7 +676,7 @@ take the app out of rotation.
 | Symptom | First thing to check |
 |---|---|
 | Everything 500s right after a deploy | Did `preDeployCommand` fail? `railway logs --service app \| grep migrat` |
-| Uploads fail, everything else fine | The four `S3_*` variables. `storage.presign_failed` in the logs. |
+| Uploads fail, everything else fine | `curl -s $URL/api/health \| jq .storage`. `unconfigured` ⇒ the four `S3_*` variables are not set on this service; `unreachable` ⇒ the bucket is not answering. The presign route returns `STORAGE_NOT_CONFIGURED` or `STORAGE_UNREACHABLE` (503) respectively, and logs which variables are missing. |
 | Clients cannot verify their link | `CLIENT_LINK_SECRET` changed, or `RESEND_API_KEY` is dead. |
 | Agency cannot sign in, clients can | `AUTH_SECRET` or `AUTH_URL`. |
 | No warnings going out | `RESEND_API_KEY`; then whether the worker is running at all. |

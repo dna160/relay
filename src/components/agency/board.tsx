@@ -14,7 +14,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { AgencyLane } from '@/lib/types';
-import { agencyApi, agencyEventStreamUrl } from '@/lib/api-client.agency';
+import { agencyApi, agencyEventStreamUrl, type LaneRemoval } from '@/lib/api-client.agency';
 import { useCardReorder } from '@/lib/hooks/use-card-reorder';
 import { useEventStream } from '@/lib/hooks/use-server-events';
 import { useAction } from '@/lib/hooks/use-action';
@@ -25,6 +25,7 @@ import { LaneColumn } from './lane-column';
 import { TransitionControls } from './transition-controls';
 import { AddCardForm, AddLaneForm } from './board-add';
 import { ErrorPanel } from './error-panel';
+import { RemoveLaneControl } from './remove-controls';
 
 /** One step tighter than `size="sm"`: four of these sit inside a 280px card. */
 const moveButton = 'h-6 px-1.5';
@@ -90,10 +91,24 @@ export function Board({ engagementId, lanes: serverLanes, archived }: BoardProps
    * rather than inside the hook so that neither surface's route strings end up
    * in the other's bundle.
    */
+  const router = useRouter();
   const stream = useEventStream(agencyEventStreamUrl(engagementId), !archived);
   const { lanes, failure, announcement, move } = useCardReorder(engagementId, serverLanes);
   const [dragCardId, setDragCardId] = useState<string | null>(null);
   const [dropAt, setDropAt] = useState<{ laneId: string; beforeCardId: string | null } | null>(null);
+  /**
+   * The last lane removed, so the board can offer the way back.
+   *
+   * It lives here rather than in `RemoveLaneControl` because the control is
+   * inside the column it removes: the moment the removal lands, `router.refresh()`
+   * takes that column — and the control, and any undo it was rendering — off the
+   * page. The undo has to outlive the thing that produced it, so it is held one
+   * level up and drawn at the head of the board.
+   */
+  const [removedLane, setRemovedLane] = useState<{ removal: LaneRemoval; name: string } | null>(
+    null,
+  );
+  const restoreLane = useAction(agencyApi.restoreLane);
 
   const clearDrag = () => {
     setDragCardId(null);
@@ -120,6 +135,54 @@ export function Board({ engagementId, lanes: serverLanes, archived }: BoardProps
       <p aria-live="polite" className="sr-only">
         {announcement}
       </p>
+
+      {/*
+        The undo, offered where the action happened and not in a toast — there
+        are none in this product — and not on a timer, because there are none of
+        those either. It persists until the board changes, which is longer than
+        any toast would have lasted and costs nothing.
+
+        `Put it back` appears only for an archive. A discarded lane held nothing
+        and its row is gone, so there is nothing to restore and a control saying
+        otherwise would be the worst affordance in the feature.
+      */}
+      {removedLane && (
+        <p role="status" className={cn('text-14', muted)}>
+          <span className="text-ink">
+            {removedLane.removal.kind === 'archived'
+              ? `“${removedLane.name}” is archived${
+                  removedLane.removal.cardsHidden > 0
+                    ? `, with ${removedLane.removal.cardsHidden} deliverable${
+                        removedLane.removal.cardsHidden === 1 ? '' : 's'
+                      } standing in it`
+                    : ''
+                }. Nothing is deleted.`
+              : `“${removedLane.name}” held nothing and is deleted.`}
+          </span>{' '}
+          {removedLane.removal.kind === 'archived' && (
+            <Button
+              tone="quiet"
+              size="sm"
+              loading={restoreLane.pending}
+              loadingLabel="Putting it back"
+              onClick={async () => {
+                const r = await restoreLane.run(
+                  'Restored',
+                  removedLane.removal.laneId,
+                  { engagementId },
+                );
+                if (r.ok) {
+                  setRemovedLane(null);
+                  router.refresh();
+                }
+              }}
+            >
+              Put it back
+            </Button>
+          )}
+        </p>
+      )}
+      {restoreLane.failure && <ErrorPanel failure={restoreLane.failure} />}
 
       {/*
         A dropped stream is a *staleness* statement, not an error: the board on
@@ -154,11 +217,22 @@ export function Board({ engagementId, lanes: serverLanes, archived }: BoardProps
               key={lane.id}
               lane={lane}
               header={
-                <LaneVisibilityToggle
-                  engagementId={engagementId}
-                  lane={lane}
-                  archived={archived}
-                />
+                <>
+                  <LaneVisibilityToggle
+                    engagementId={engagementId}
+                    lane={lane}
+                    archived={archived}
+                  />
+                  {!archived && (
+                    <RemoveLaneControl
+                      engagementId={engagementId}
+                      laneId={lane.id}
+                      laneName={lane.name}
+                      cardCount={lane.cards.length}
+                      onRemoved={(removal, name) => setRemovedLane({ removal, name })}
+                    />
+                  )}
+                </>
               }
               isDropTarget={dropAt?.laneId === lane.id}
               onDragOver={(e) => {

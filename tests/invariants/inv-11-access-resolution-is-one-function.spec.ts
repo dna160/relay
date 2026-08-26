@@ -91,6 +91,36 @@ export const MEMBERSHIP_RAW_SQL = new RegExp(
 );
 
 /**
+ * The permission graph reached through drizzle's **relational** API, which
+ * needs no named import at all.
+ *
+ * `src/db/client.ts` passes the whole schema to `drizzle()` as
+ * `import * as schema`, which is correct and is also a hole in the scan above:
+ * `MEMBERSHIP_IMPORT` is import-shaped, and `db.query.projectMemberships
+ * .findMany({ with: { account: true } })` imports nothing but `db`. It is not
+ * an exotic shape — it is the *most natural* way to write "list everyone on
+ * this project with their account", which is exactly the read that arrived this
+ * round. Found by asking what the assignment read would look like if it were
+ * written the other obvious way.
+ */
+export const MEMBERSHIP_RELATIONAL = new RegExp(
+  String.raw`\.query\s*\.\s*(${MEMBERSHIP_SYMBOLS.join('|')})\b`,
+);
+
+/**
+ * The same table reached through a namespace binding rather than a named import.
+ *
+ * Deliberately anchored to a drizzle *table position* — `.from(x.y)`,
+ * `.innerJoin(x.y, …)`, `.insert(x.y)` — rather than to the bare symbol.
+ * `counts.projectMemberships` and `graph.projectMemberships` are result-object
+ * fields in `backfill-cli.ts` and `manifest.ts`, and a scan that flagged those
+ * would be a scan that gets relaxed rather than obeyed.
+ */
+export const MEMBERSHIP_NAMESPACED = new RegExp(
+  String.raw`\.(from|innerJoin|leftJoin|rightJoin|fullJoin|insert|update|delete)\s*\(\s*[A-Za-z0-9_$]+\s*\.\s*(${MEMBERSHIP_SYMBOLS.join('|')})\b`,
+);
+
+/**
  * An account id on either side of an equality test.
  *
  * This is "compares an account id to a membership row" written in TypeScript
@@ -244,6 +274,34 @@ describe('INV-11 the permission graph is read in exactly one place', () => {
       'a membership table was imported outside `src/domain/access/`. Take the ' +
         'resolved access as an argument instead — a file that can read the graph ' +
         'is a file that can disagree with the resolver.',
+    ).toEqual([]);
+  });
+
+  it('no file outside the access domain reaches a membership table without importing it', () => {
+    /**
+     * The two shapes the import scan cannot see, closed together.
+     *
+     * `src/db/client.ts` hands the whole schema to drizzle, so every module
+     * that imports `db` already has the permission graph in reach — through
+     * `db.query.projectMemberships` and through any namespace binding. The
+     * import scan is a scan for a *punctuation*, and neither of these uses it.
+     */
+    const offenders: string[] = [];
+    for (const file of FILES) {
+      if (underAny(file.path, READER_PREFIXES)) continue;
+      for (const pattern of [MEMBERSHIP_RELATIONAL, MEMBERSHIP_NAMESPACED]) {
+        for (const stmt of statementsMatching(file, pattern)) {
+          offenders.push(`${file.path}: ${stmt.slice(0, 160)}`);
+        }
+      }
+    }
+    expect(
+      offenders,
+      'the permission graph was read through the relational API or a namespace ' +
+        'binding. `db.query.projectMemberships.findMany({ with: { account: true } })` ' +
+        'is the most natural way to write "everyone on this project" and it names no ' +
+        'import at all — which is precisely why it belongs to `src/domain/access/` ' +
+        'like every other way of asking.',
     ).toEqual([]);
   });
 

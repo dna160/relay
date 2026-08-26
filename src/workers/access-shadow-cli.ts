@@ -30,6 +30,23 @@
  * `visible_set_differs` — a list endpoint returned a different set of projects.
  * One row per differing project, so the count is decisions and not requests.
  *
+ * `assignable_set_differs` — the assignee list at
+ * `GET /api/engagements/:id/members` and the membership graph disagree about
+ * who can be handed a card here. One row per person on either side, with
+ * `input.candidateUserId` and `input.side` naming which list they were in.
+ *
+ * This one is a **read** path, not a permission check, and it is the reason the
+ * harness turned out to cover more than it was designed to. `resolveAccess()`
+ * answering "may this person touch this project" and *"who are the people"* are
+ * the same question asked twice, and only the second one renders a dropdown. On
+ * an organization whose backfill has not run, the graph returns **zero**
+ * candidates while the shipped check goes on accepting every one of them — so
+ * shipping the graph's answer as the live one would have emptied every assignee
+ * picker in the product while the write path stayed wide open. A permission
+ * check cannot fail that way; a list can. Expect a burst of these from any
+ * tenant created after the last backfill run, and rerun
+ * `npm run backfill:identity` before reading anything else into them.
+ *
  * Step 4 of ADR-021 — deleting the old checks — is unlocked by seven
  * consecutive clean days *and* by the harness having been live that long.
  * `isSafeToDeleteOldChecks` answers both halves; this prints both.

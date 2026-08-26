@@ -12,7 +12,7 @@
  * (INV-6).
  */
 
-import { and, eq, isNotNull, ne, type SQL } from 'drizzle-orm';
+import { and, eq, isNotNull, isNull, ne, type SQL } from 'drizzle-orm';
 import type { PgColumn } from 'drizzle-orm/pg-core';
 import { assetVersions, cards, lanes } from '@/db/schema';
 import type { Session } from '@/lib/types';
@@ -29,8 +29,20 @@ export interface ClientScope {
   readonly publishedLanes: SQL;
 
   /**
-   * A card is visible when its lane is published, it is not overridden to
-   * private, and it is not a draft. Combine with `publishedLanes` on the join.
+   * `lanes.archived_at IS NULL` (ADR-026).
+   *
+   * Kept separate from `publishedLanes` rather than folded into it, because the
+   * two say different things and a predicate whose name stops describing it is
+   * how a reader stops checking. Every read that wants published lanes wants
+   * live ones too, so `visibleBoard` carries both and `visibleLanes()` names
+   * both explicitly.
+   */
+  readonly liveLanes: SQL;
+
+  /**
+   * A card is visible when its lane is published, it is not archived, it is not
+   * overridden to private, and it is not a draft. Combine with
+   * `publishedLanes` and `liveLanes` on the join.
    */
   readonly visibleCards: SQL;
 
@@ -54,7 +66,9 @@ export function clientScope(session: Session): ClientScope {
   const { engagementId, contactId } = session;
 
   const publishedLanes = eq(lanes.visibility, 'published');
+  const liveLanes = isNull(lanes.archivedAt);
   const visibleCards = and(
+    isNull(cards.archivedAt),
     ne(cards.visibilityOverride, 'private'),
     ne(cards.state, 'draft'),
   ) as SQL;
@@ -65,11 +79,13 @@ export function clientScope(session: Session): ClientScope {
     contactId,
     onEngagement: (column: PgColumn) => eq(column, engagementId),
     publishedLanes,
+    liveLanes,
     visibleCards,
     publishedVersions,
     visibleBoard: and(
       eq(cards.engagementId, engagementId),
       publishedLanes,
+      liveLanes,
       visibleCards,
     ) as SQL,
   };

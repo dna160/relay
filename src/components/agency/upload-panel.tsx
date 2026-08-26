@@ -41,6 +41,7 @@ import {
 } from '@/lib/upload';
 import { cn, input, mono, muted, surface } from '@/components/style-tokens';
 import { ErrorPanel } from './error-panel';
+import { failureCopy } from './failure-copy';
 import type { ApiFailure } from '@/lib/api-client.core';
 
 export type UploadTarget =
@@ -370,7 +371,18 @@ export function UploadPanel({
                     </Button>
                   )}
                   {(p.phase === 'failed' || p.phase === 'cancelled') &&
-                    (p.error?.retryable ?? true) && (
+                    (p.error?.retryable ?? true) &&
+                    /*
+                     * `uploadFile` marks a presign refusal retryable by default,
+                     * because from its side one refusal looks like any other.
+                     * From here we can see the actual answer: a deployment with
+                     * no object storage configured returns a 500 on every
+                     * presign it will ever be asked for, and offering "Try
+                     * again" next to copy that says retrying will not fix it is
+                     * the interface arguing with itself. `failureCopy` owns that
+                     * judgement so the words and the button cannot disagree.
+                     */
+                    (job.apiFailure === null || failureCopy(job.apiFailure).retryable) && (
                       <Button tone="quiet" size="sm" onClick={() => retry(job)}>
                         Try again
                       </Button>
@@ -390,12 +402,24 @@ export function UploadPanel({
                   </div>
                 )}
 
-                {p.error && p.error.code !== 'RECORD_FAILED' && (
+                {p.error && job.apiFailure === null && (
                   /*
                    * A storage-side failure has no `ErrorCode` and no
                    * `ApiFailure` to hand `ErrorPanel` — it never reached the
                    * app. Bold `--ink` and a leading rule, never `--breach`:
                    * red means a breached commitment and nothing else.
+                   *
+                   * The guard is `apiFailure === null` and no longer a list of
+                   * the codes that happen to have one. Whenever the app answered,
+                   * `ErrorPanel` below is the authority and this line is the same
+                   * failure said twice — as `STORAGE_NOT_CONFIGURED` showed the
+                   * moment it landed: the server's sentence and the product's
+                   * sentence stacked on top of each other, saying the same thing
+                   * in two registers. `failure-copy.ts` opens by drawing exactly
+                   * that distinction — the server sends a developer's sentence,
+                   * these are the product's — and printing both abandons it.
+                   * `RECORD_FAILED` was the only code named here before, which
+                   * was this rule discovered one code at a time.
                    */
                   <p role="alert" className="border-l-bar border-l-ink pl-2 text-12 font-semibold text-ink">
                     {p.error.message}

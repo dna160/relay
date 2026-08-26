@@ -8,7 +8,7 @@
 > behind it. This document is where that claim is either true or visibly not.
 > Read the **UNPROVEN** rows first; they are the whole point.
 
-**Generated at:** the Phase 7 round. Phases 1–6 landed; **PHASE-7's exit condition closed** — it had been UNPROVEN since round 1 and closed the hour `applyTemplate()` existed (§4F); 8 outstanding; 9 awaiting its shadow window.
+**Generated at:** the Phase 7 round, updated in the removal/health round. Phases 1–6 landed; **PHASE-7's exit condition closed** — it had been UNPROVEN since round 1 and closed the hour `applyTemplate()` existed (§4F); 8 outstanding; 9 awaiting its shadow window.
 **Live Postgres:** yes, at last. Most of what §4 listed as never-executed has now executed, and the rows that have not are named individually rather than as a category.
 **Owner:** QA. Update it in the same commit that changes what is provable.
 
@@ -77,12 +77,13 @@ inside a test that would have passed either way.
 | | ↳ on the stamping path | 🟢 live | Same file, `every plan-gate call site names the organisation` — a burn-down list asserted by equality, so a **new** caller on the deprecated positional form fails the build. Phase 7 added a caller. Behaviour: `template-stamping.db.spec.ts > a create refused by the plan gate stamps nothing and consumes no slot`. |
 | **INV-9** | Business logic lives in `src/domain/` | 🟢 live, **and the surface is no longer just `route.ts`** | `tests/invariants/inv-09-domain-purity.spec.ts` — 5 scans. The write scan covered `route.ts` only; a server action in `actions.ts` or a server component in `page.tsx` reaches the database on identical terms and was invisible. Now `route|actions|page|layout`, read as statements. A raw-SQL scan was added; the health probe is excluded and that exclusion is paid for by a test pinning it to a table-free `select 1`. Also an ESLint rule; the test is what catches someone disabling the rule inline. |
 | **INV-10** | File bytes never traverse the app server | 🟢 live, **and no longer a rule about a variable name** | `tests/invariants/inv-10-no-bytes-through-app.spec.ts` — 4 scans. Intake was pinned to a receiver called `req`/`request`: renaming the handler parameter to `r` let a 5 GB upload through a 512 MB container with the guard green. Egress scanned `src/app/` only, so the same stream in `src/lib/storage.ts` was invisible — it now covers `app`, `lib` and `workers`, and `storage.ts` is asserted to presign rather than fetch. Negative-tested against 6 planted intake shapes. |
+| **cross-cutting** | **Removal destroys nothing** (INV-2 + INV-3 + INV-4 + INV-7 + INV-1, together) | 🟢 **new this round — live** | `tests/invariants/removal-preserves-evidence.spec.ts` — 22 live cases. ADR-026 landed archive-and-discard; this is the conjunction the four invariants could not state separately. The forbidden set is **derived from the migrations' cascade graph**, not listed: `approvals.asset_version_id`, `asset_versions.card_id` and `cards.lane_id` are all `ON DELETE cascade`, so `DELETE FROM lanes` destroys approvals and the word `approvals` never appears. Every scan in `tests/invariants/` was blind to that. Negative-tested against 17 planted shapes in `invariant-scans-are-not-escapable.spec.ts`, **none of which mentions an approval** — which is the point. |
 
 ### The v1.1 platform layer — specified, and one of the four now has a suite
 
 | | Invariant | Status | Proven by |
 |---|---|---|---|
-| **INV-11** | All access decisions come from `resolveAccess()`. Deny by default | 🟢 **structural half live** / ⬜ behavioural half skipped | Two files, split for the reason INV-3 was split. **Structural:** `inv-11-access-resolution-is-one-function.spec.ts` — 24 live cases. **Behavioural:** `inv-11-access-resolution-is-one-function.db.spec.ts` — 74 cases, `describe.skip`, **UNSKIP IN: Phase 9 at EXIT**. See §6D. |
+| **INV-11** | All access decisions come from `resolveAccess()`. Deny by default | 🟢 **structural half live** / ⬜ behavioural half skipped | Two files, split for the reason INV-3 was split. **Structural:** `inv-11-access-resolution-is-one-function.spec.ts` — **25 live cases**, confirmed green against the assignment read that landed this round (`src/domain/access/assignable.ts`, `GET /api/engagements/:id/members`). The 25th closes two shapes that need no import at all — see §5, DEFECT-20. **Behavioural:** `inv-11-access-resolution-is-one-function.db.spec.ts` — 74 cases, `describe.skip`, **UNSKIP IN: Phase 9 at EXIT**. See §6D. |
 | | ↳ where a decision may be made | 🟢 live, and vacuous-by-design today | Structural file: nothing outside `src/domain/access/` may import a membership table, reach one in raw SQL, compare an account id, or branch on a role literal — and **nothing anywhere** may default a role. Negative-tested against 20 planted violations in `tests/unit/invariant-scans-are-not-escapable.spec.ts`, which is what stops "vacuous" meaning "blind". |
 | | ↳ the resolution table itself | 🟢 live, portable | Same file — the 64-cell cube is asserted to *be* a cube: full cross-product of org role × project role × org scoping × the Studio-tier switch, both-null → deny in all four scopings, and the whole effect of ADR-022 D3 confined to six cells. Runs without a database. |
 | | ↳ (org role × project role × object) against expected resolution | ⬜ **skipped, Phase 9 EXIT** | `…db.spec.ts` — 64 matrix cells plus 10 edge cases, against a real Postgres. Skipped because the Phase 9 shadow harness **returns the old result**: a green matrix over it would be asserting the answers of the system being replaced. |
@@ -93,8 +94,13 @@ inside a test that would have passed either way.
 **Command for the whole column:** `npm run test:invariants`
 **Skip audit:** `node .github/scripts/check-invariant-skips.mjs`
 
-Nine of ten v1 suites now execute, and INV-11's structural half joins them. At
-Phase 0 handover it was four.
+Nine of ten v1 suites now execute, INV-11's structural half joins them, and a
+cross-cutting removal suite joins them both. At Phase 0 handover it was four.
+
+**803 live assertions** — 631 unit, 172 invariant — plus **53** under `test:db`.
+Up from 731/52 at the start of this round: +22 removal, +17 health claim, +17
+planted negative controls, +1 INV-11 scan, +1 executed purge case over archived
+rows, and the rest carried.
 
 **The skip gate learned about the v1.1 four.** `check-invariant-skips.mjs` held a
 flat list of ten and one rule — nothing skipped from Phase 8. The first v1.1
@@ -966,6 +972,187 @@ of its own. `next.config.ts` would need to read `NEXT_DIST_DIR`, which is
 then, `verify:all` is not safe to run concurrently in one tree, and that is
 worth knowing before it is blamed on a page.
 
+**DEFECT-18 — `/api/health` said `ok` on a deployment where uploads were
+structurally impossible.** *Owner: back-end — **fixed this round**, in
+`src/app/api/health/route.ts` and `src/lib/storage.ts`. QA owns the claim.*
+**Severity: high — it reached a real user.**
+
+Production ran with `S3_ENDPOINT`, `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY`
+unset. Presign could not function. Health checked `select 1`, answered `ok`,
+passed its deploy gate, Railway shifted traffic, and the first person to find
+out was a user uploading a file and being told *"could not reach workspace"*.
+
+**This is the sixth instance of one shape in this build**, and the list is worth
+having in one place because the sixth is not a coincidence:
+
+| | The word | What was actually read |
+|---|---|---|
+| DEFECT-5 | "no bytes traverse the app" | a receiver named `req`/`request` |
+| DEFECT-4 | "business logic lives in `src/domain/`" | `route.ts` only |
+| DEFECT-6 | "the retention sweeps are excluded" | an exclusion nothing paid for |
+| §4E | "no PUT reached the app server" | a run containing no PUT |
+| DEFECT-16 | "one definition of active in this codebase" | `src/domain/` only |
+| **DEFECT-18** | **`ok`** | **`select 1`** |
+
+The back-end's fix is right and goes further than asked: `storage` is a probed
+field with **three** values, and the 200/503 split separates a deployment that
+*cannot* work (`unconfigured` — a deploy-time fact, 503, hold traffic on the old
+version) from a dependency that is momentarily quiet (`unreachable` — 200,
+`degraded`, stay up). The old rule in RUNBOOK §7 — *"the health check must not
+touch R2 or Resend"* — was right about blips and wrong about configuration.
+
+**What QA added is the half that stops the seventh instance.**
+`tests/unit/health-claim.spec.ts` (17 cases) does two things:
+
+1. **The matrix** — the shipped handler, over the full cross-product of database
+   state × storage state. `ok` is asserted to appear in exactly one of the six
+   cells, the HTTP code in each, that the storage probe runs *even when the
+   database has already failed* (so one deploy surfaces both reasons rather than
+   two), and that no host, port, credential, driver string or `S3_*` name
+   reaches the body on any path.
+2. **The registry, partitioned.** Every variable in RUNBOOK §2 is either
+   **probed** by a declared probe or a **declared blind spot** carrying a reason
+   *and* the symptom a user sees. A variable that is neither fails the build.
+   The declaration lives in `tests/fixtures/health-claim.ts`, and each blind
+   spot is required to appear in RUNBOOK §7 as well — because the person being
+   told `ok` at 3am reads the runbook, not the fixture.
+
+So the answer to *what does `ok` claim?* is now a closed set: **the database
+answered, and object storage is configured and reachable.** Eleven other
+variables can be wrong under a green check, and all eleven are written down.
+`RESEND_API_KEY` is the one to read twice: absent, **every purge warning fails
+silently**, and a purge nobody was warned about manufactures a contract breach
+for the agency with its own client. It is unprobed because a health endpoint
+must not send mail — not because the risk is small.
+
+**DEFECT-19 — a lane delete is an approval delete, and every guard was blind to
+it.** *Owner: QA (the guard hole). No product code was ever wrong.*
+**Severity: low as behaviour today, high as a hole.**
+
+INV-4's scan is `delete(assetVersions)`. INV-7's is the disposition table. Both
+are scans for a **spelling**, and the spelling is not how a removal destroys an
+approval:
+
+```
+approvals.asset_version_id   ON DELETE cascade
+asset_versions.card_id       ON DELETE cascade
+cards.lane_id                ON DELETE cascade
+cards.engagement_id          ON DELETE cascade
+lanes.engagement_id          ON DELETE cascade
+engagements.org_id           ON DELETE cascade
+```
+
+`DELETE FROM lanes WHERE id = $1` destroys every approval standing in that
+column — the evidence INV-3 exists to preserve — outside the purge worker, with
+no certificate, and without the string `approvals` appearing anywhere in the
+statement that did it. A removal feature is precisely the code that writes such
+a statement, and ADR-026 was landing while this was being written.
+
+The guard derives the forbidden set from the migrations rather than listing it:
+`cascadeAncestorsOf(['approvals', 'asset_versions'])` walks the cascade graph
+and returns `{approvals, asset_versions, cards, lanes, engagements,
+organizations, …}`. A later phase that adds a table with a cascade widens the
+set without anyone editing a list — which is the only way a list like this
+survives a phase boundary.
+
+**ADR-026 got this right independently**, which is worth recording: it chose
+archive-and-discard, and its discard path deletes only a row whose cascade has
+nothing to cascade to. The guard's job is to keep it that way, and to catch the
+next one, which will not be a lane.
+
+**DEFECT-20 — INV-11 could be walked around with no import at all.**
+*Owner: QA. **Fixed this round** — `MEMBERSHIP_RELATIONAL` and
+`MEMBERSHIP_NAMESPACED`.* **Severity: medium as a hole; nothing exploited it.**
+
+`MEMBERSHIP_IMPORT` is import-shaped — `import { projectMemberships } from …` —
+and `src/db/client.ts` hands the **entire schema** to drizzle as
+`import * as schema`. So every module holding `db` already has the permission
+graph in reach:
+
+```ts
+await db.query.projectMemberships.findMany({ with: { account: true } });
+await db.select().from(schema.orgMemberships);
+```
+
+Neither names an import, neither is raw SQL, neither compares an account id,
+neither branches on a role literal. All four INV-11 scans see nothing.
+
+This was found by asking what the assignment read landing this round would look
+like *if it had been written the other obvious way* — and the relational form is
+the more natural way to write "everyone on this project with their account". The
+namespaced pattern is anchored to a drizzle **table position** (`.from(x.y)`,
+`.innerJoin(x.y, …)`) rather than to the bare symbol, because
+`counts.projectMemberships` in `backfill-cli.ts` and `graph.projectMemberships`
+in `manifest.ts` are result fields, and a guard that fires on those is a guard
+that gets relaxed rather than obeyed. Both directions are planted in
+`invariant-scans-are-not-escapable.spec.ts`.
+
+**DEFECT-21 — `S3_PUBLIC_BASE_URL` is documented, deployed, and read by
+nothing.** *Owner: back-end (decide) / QA (the check's phrasing).*
+**Severity: low.**
+
+It is in RUNBOOK §2 with the consequence *"Download redirects point nowhere"*, in
+`.env.example`, and in `.railway/railway.ts` for both environments. `grep -rn
+S3_PUBLIC_BASE_URL src/` returns nothing. Either downloads need it and something
+is missing, or the registry documents a variable with no behaviour — and an
+operator triaging a broken download from that row spends the time before finding
+out.
+
+`check-env-registry.mjs` *does* list it, under **"documented but not yet read
+(fine early, suspicious late)"** — alongside `AUTH_SECRET`, `RETENTION_ARCHIVE_DAYS`,
+`RETENTION_PURGE_DAYS` and `CERTIFICATE_SIGNING_KEY`, all four of which **are**
+read, just not through a literal `process.env.X` the scanner can see (Auth.js
+reads one; the other three arrive through an injected `env` object). So the one
+real finding sits in a list of four false ones and reads as noise. That is the
+same shape as DEFECT-18 in the tool built to catch drift: the check reads
+narrower than the word it prints. Phase 8 is "late"; the heading's own hedge has
+expired.
+
+**DEFECT-22 — a discard leaves no audit record of itself.**
+*Owner: back-end — `src/domain/board/removal.ts`.* **Severity: low.**
+
+An **archive** is attributable: `archived_at` and `archived_by_user_id` are on
+the row. A **discard** is a real `DELETE`, and nothing is written anywhere —
+no `audit_log` row, no trace. It is correctly narrow (only a card carrying no
+versions, transitions or comments; only a lane holding no cards at all), so
+what is lost is a typo. But "the card I made is gone and nobody can tell me who
+removed it" is a support conversation with no answer, and `audit_log` is the
+table that exists for exactly this. One insert inside the transaction that
+already exists.
+
+**DEFECT-23 — DEFECT-17's fix broke `npm run lint`, and therefore `verify`.**
+*Owner: whoever added `NEXT_DIST_DIR` to `next.config.ts` — the fix is one line
+in `eslint.config.*`.* **Severity: blocking, trivial.**
+
+DEFECT-17 (two agents' `next build` corrupting one `.next`) has been fixed the
+right way: `next.config.ts` now reads `NEXT_DIST_DIR`, and `.gitignore` line 19
+carries `.next-*/`. A concurrent run gets `.next-frontend/` and the collision is
+gone.
+
+ESLint's ignore list was not updated with it:
+
+```
+{ ignores: ['.next/**', 'node_modules/**', 'src/db/migrations/**', …] }
+```
+
+`.next/**` is ignored; `.next-frontend/**` is not. So ESLint now lints Next's
+own emitted server chunks and fails with ~40 errors about `require()` and
+`exports` in generated code — which reads exactly like somebody's source being
+wrong, in a file nobody wrote. **`npm run verify` is red on this at handover and
+on nothing else**: `npx eslint . --ignore-pattern '.next-*/**'` exits 0, and the
+suite underneath is **803 passing**.
+
+Fix: add `'.next-*/**'` to the `ignores` array. `.gitignore` already uses that
+exact glob, which is the argument for using it here too — one convention for
+"this is a build output", honoured by both tools.
+
+Recorded rather than patched because `eslint.config.*` is not QA's file, and
+because the shape is worth one more line: a fix that gives a run its own output
+directory has to tell **every** tool that reads output directories, and the
+second tool fails in the costume of a source error. That is DEFECT-8, DEFECT-15
+and DEFECT-17's shape in a fourth costume — an investigation establishing that
+code which was never wrong is not wrong.
+
 ### Open — carried from earlier rounds
 
 1. ~~**`src/components/agency/card-tile.tsx` animates outside the motion
@@ -1037,6 +1224,41 @@ more now than it did when it was written.
   Phase 10 (§6D). Distinct from the two above in that the test exists and the
   condition for running it is written down; it becomes a genuine hole only if
   Phase 9 exits without the shadow-disagreement count reaching zero.
+
+**Added this round, and honestly UNPROVEN — the removal surface's behavioural
+half.** The structural conjunction is live (22 cases) and the purge half now
+*executes* — `inv-07 > destroys the removed half of the board too, and counts
+its bytes on the certificate` seeds an archived lane holding an archived card
+with a published version, an approval and real bytes, and asserts all of it is
+destroyed and counted. These are not proved by anything, and each names the
+test that would:
+
+- **A client cannot reach an archived card by a route that does not go through
+  the board.** The scope predicate is asserted in SQL and the projection refuses
+  in code, and no end-to-end case archives a card the client has already seen
+  and then asks for it at `/api/client/versions/:id`, `/api/client/download/
+  :versionId` and `/api/client/comments`. `tests/e2e/**` is not QA's to edit;
+  this is a request to the owner of the client e2e suite. **It is the highest
+  remaining risk on this feature**, because archiving is the one visibility
+  change that can happen to a card the client has *already approved* — every
+  other one (draft, private lane, private override) is true from the start.
+- **Restoring a lane restores its cards where they were.** `restoreLane()`
+  claims this and it follows from nothing about the cards having moved, which is
+  the design's own argument. Unasserted.
+- **The position gap is a pre-existing channel, not a new one.** An archived
+  card at position 1 of 3 leaves the client seeing positions 0 and 2 — and
+  `client-projection.spec.ts > ordering` already *asserts* raw positions with
+  gaps (`[0, 2, 4]`), because a private card does the same thing. Recorded so
+  that it is a known and accepted channel rather than something rediscovered as
+  a removal bug.
+- **`countAttentionCandidates()` and `loadEngagementSummaries()` and the archive.**
+  `attention.ts` filters `archived_at IS NULL` in all three of its reads;
+  `src/db/queries/engagements.ts` — the portfolio's per-engagement card totals,
+  its awaiting-client split and the possession clock it derives — does **not**,
+  at the time of writing. `removal.ts`'s header says an archived card "leaves
+  both boards and the attention list". Whether the portfolio counts are part of
+  that claim is a product question, and it is not asserted either way. *Owner:
+  back-end.*
 
 **The two exit conditions the agency e2e failures were blocking are unblocked.**
 PHASE-7's plan surface renders (DEFECT-13) and PHASE-8's full e2e matrix is

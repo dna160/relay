@@ -9,6 +9,25 @@
  *
  * Above 100 MB the response is multipart: part URLs plus presigned complete and
  * abort URLs, so a long upload survives an app restart.
+ *
+ * ## Two ways this fails, and they are not the same failure
+ *
+ * A deployment with no `S3_*` variables cannot presign at all — not now, not on
+ * a retry, not for anybody. A deployment whose bucket is briefly unreachable
+ * will work again shortly. Both used to leave here as an unhandled 500, which
+ * the agency surface renders as *"Could not reach the workspace — the
+ * connection dropped or the service is restarting. Try again in a moment."*
+ * That sentence is false in the first case in every particular: nothing
+ * dropped, nothing is restarting, and trying again in a moment will fail
+ * identically until somebody sets four environment variables. It shipped to
+ * production and a user hit it.
+ *
+ * So the two now answer differently — `STORAGE_NOT_CONFIGURED` and
+ * `STORAGE_UNREACHABLE`, both 503 and both in `ERROR_CODES`, so the front-end
+ * branches on the code rather than falling to a default. Neither body names a
+ * variable, a bucket, an endpoint or an SDK error. The operator's half of the story goes to
+ * the server log, where the caller cannot read it, and `GET /api/health`
+ * reports the same distinction so this state is visible before a user finds it.
  */
 
 import { NextResponse } from 'next/server';
@@ -18,10 +37,11 @@ import { cardBelongsToEngagement } from '@/db/queries/agency-board';
 import { loadEngagementDetail } from '@/db/queries/engagements';
 import { assertWritable } from '@/domain/engagement/lifecycle';
 import { notVisible, validationFailed } from '@/domain/errors';
-import { toErrorResponse } from '@/lib/errors';
+import { apiError, toErrorResponse } from '@/lib/errors';
 import {
   MAX_UPLOAD_BYTES,
   MULTIPART_THRESHOLD_BYTES,
+  StorageNotConfiguredError,
   presignUpload,
   shelfKey,
   versionKey,
@@ -65,7 +85,27 @@ export async function POST(request: Request): Promise<NextResponse> {
       ? versionKey(engagement.id, body.cardId, body.filename)
       : shelfKey(engagement.id, body.filename);
 
-    const presign = await presignUpload({ key, mime: body.mime, sizeBytes: body.size });
+    let presign;
+    try {
+      presign = await presignUpload({ key, mime: body.mime, sizeBytes: body.size });
+    } catch (error) {
+      if (error instanceof StorageNotConfiguredError) {
+        // The missing variable names go to the log and nowhere near the body.
+        console.error('[presign] object storage is not configured', {
+          missing: error.missing,
+        });
+        return apiError(
+          'STORAGE_NOT_CONFIGURED',
+          'File storage is not set up on this deployment, so uploads are unavailable. ' +
+            'This will not resolve by retrying — it needs an administrator.',
+        );
+      }
+      console.error('[presign] object storage did not respond', error);
+      return apiError(
+        'STORAGE_UNREACHABLE',
+        'File storage did not respond. Nothing was uploaded; try again in a moment.',
+      );
+    }
 
     return NextResponse.json({
       presign,

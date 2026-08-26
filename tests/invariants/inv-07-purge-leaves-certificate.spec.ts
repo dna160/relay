@@ -44,6 +44,7 @@ import {
   contentCensus,
   dropSeed,
   listObjects,
+  objectExists,
   seedPurgeable,
   sentinelPath,
   spawnPurge,
@@ -273,13 +274,76 @@ describe('INV-7 under a live database', () => {
     MINUTE,
   );
 
+  it(
+    'destroys the removed half of the board too, and counts its bytes on the certificate',
+    async () => {
+      /**
+       * ADR-026's archive, against INV-7.
+       *
+       * A row that is invisible to the UI and survives a purge is worse than
+       * either outcome on its own: the certificate is the compliance artifact
+       * an agency forwards to its client's legal team, and it would be *false*.
+       * The failure needs no bad intent — the purge inherits one predicate from
+       * a board read, or a shared "load the live cards" helper grows an
+       * `archived_at IS NULL`, and the archived card, its published bytes and
+       * its approval quietly outlive the engagement they belong to.
+       *
+       * The structural half of this is in
+       * `removal-preserves-evidence.spec.ts`, which scans everything the purge
+       * imports for such a predicate. This is the half that executes.
+       */
+      const s = await seed({ label: 'archived' });
+
+      const before = await pool.query<{ n: string }>(
+        `SELECT count(*) AS n FROM cards WHERE engagement_id = $1 AND archived_at IS NOT NULL`,
+        [s.engagementId],
+      );
+      expect(
+        Number(before.rows[0]?.n ?? 0),
+        'the fixture seeded no archived card, so this test asserts over an empty set',
+      ).toBe(1);
+      expect(objectExists(store, `engagements/${s.engagementId}/versions/${s.archivedVersionId}/rejected.png`)).toBe(true);
+
+      const { code } = await run(s.engagementId);
+      expect(code).toBe(0);
+
+      const rows = await pool.query<{ table_name: string; n: string }>(
+        `SELECT 'cards' AS table_name, count(*) AS n FROM cards WHERE id = $1
+         UNION ALL SELECT 'lanes', count(*) FROM lanes WHERE id = $2
+         UNION ALL SELECT 'asset_versions', count(*) FROM asset_versions WHERE id = $3
+         UNION ALL SELECT 'approvals', count(*) FROM approvals WHERE asset_version_id = $3`,
+        [s.archivedCardId, s.archivedLaneId, s.archivedVersionId],
+      );
+      for (const row of rows.rows) {
+        expect(
+          Number(row.n),
+          `${row.table_name} belonging to an archived card survived the purge`,
+        ).toBe(0);
+      }
+
+      expect(
+        objectExists(store, `engagements/${s.engagementId}/versions/${s.archivedVersionId}/rejected.png`),
+        'the archived card kept its object bytes through a certified purge',
+      ).toBe(false);
+
+      const cert = await certificates(s.engagementId);
+      expect(
+        cert.objectCount,
+        'the certificate did not count the archived card\'s object. A number that ' +
+          'excludes what removal hid is a number that understates the destruction it ' +
+          'is signing for.',
+      ).toBe(5);
+    },
+    MINUTE,
+  );
+
   /* ---------------------------------------------------------- condition 2 */
 
   it(
     'purging deletes every object key it listed, including one no row points at',
     async () => {
       const s = await seed({ label: 'c2' });
-      expect(listObjects(store).length, 'the fixture wrote no objects').toBe(4);
+      expect(listObjects(store).length, 'the fixture wrote no objects').toBe(5);
       expect(
         listObjects(store),
         'the fixture must include an orphan, or the bucket-listing half of the manifest is untested',
@@ -289,7 +353,7 @@ describe('INV-7 under a live database', () => {
 
       expect(listObjects(store), 'object bytes survived the purge').toEqual([]);
       const cert = await certificates(s.engagementId);
-      expect(cert.objectCount, 'the certificate undercounts what it destroyed').toBe(4);
+      expect(cert.objectCount, 'the certificate undercounts what it destroyed').toBe(5);
       expect(cert.totalBytes).toBeGreaterThan(0);
     },
     MINUTE,
@@ -401,7 +465,7 @@ describe('INV-7 under a live database', () => {
       // The certificate describes what was there, not what a manifest rebuilt
       // after the deletion would have found. A zero here is the bug the stored
       // manifest exists to prevent.
-      expect(cert.objectCount, 'the certificate claims nothing was destroyed').toBe(4);
+      expect(cert.objectCount, 'the certificate claims nothing was destroyed').toBe(5);
       expect(cert.totalBytes).toBeGreaterThan(0);
     },
     2 * MINUTE,

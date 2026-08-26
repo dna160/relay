@@ -1,5 +1,5 @@
 /**
- * The client's wrap slate — `WRAP +12d · PURGE IN 48d · EXPORT`.
+ * The client's wrap slate — `WRAP +12d · DELETED IN 48d · EXPORT EVERYTHING`.
  *
  * Rendered on **both** sides (COMPONENTS.md §6, rule 2). The client sees the
  * same countdown the agency sees, because the agency's contract with its client
@@ -96,7 +96,23 @@ export function WrapSlate({
   if (wrapAge) rows.push({ term: 'Wrap', value: wrapAge });
   if (countdown !== null) {
     rows.push({
-      term: 'Purge',
+      /*
+       * `DELETED`, not `PURGE`.
+       *
+       * `PURGE` is Relay's own noun, from the vocabulary table, and it is
+       * correct on the agency's surface. Here it was an internal word printed at
+       * somebody who has never used Relay and did not choose to be here — one
+       * line above a control they are then expected to infer the purpose of.
+       * Every other piece of client copy in the product already says *deleted*,
+       * including this row's own `title` directly below, which has been saying
+       * "Everything here is deleted on…" under a term reading `PURGE` the whole
+       * time.
+       *
+       * One `<dt>` string. The value, the `<time>`, the `title` and the whole
+       * escalation ladder are untouched — this is the difference between a
+       * record and a record in a language the reader speaks.
+       */
+      term: 'Deleted',
       tone: RECORD_TONE[band],
       value: (
         <time dateTime={purgeOnISO ?? undefined} className={heavy ? 'font-semibold' : undefined}>
@@ -137,11 +153,23 @@ export function WrapSlate({
         {/*
           Followed, never fetched. The archive is streamed from storage and the
           route is a direct link, which is also why it survives an archived
-          workspace and a page with no JavaScript on it at all. Same label as the
-          full-size control on the board strip (FLOWS.md §3), `quiet` here.
+          workspace and a page with no JavaScript on it at all.
+
+          `Export everything`, and never `Export` — the same label wherever it
+          appears: slate, board strip, settings page, email (FLOWS.md §3, and the
+          verb-takes-an-object rule in DESIGN-SYSTEM.md). This comment already
+          claimed it was "the same label as the full-size control on the board
+          strip" while rendering a different one, which is how a copy rule dies:
+          not by being argued with, but by a comment asserting compliance next to
+          the exception.
+
+          The client's control never changes with the plan, in either direction.
+          Their right to take a copy is not a function of somebody else's
+          billing, so this renders on `RETAINED` too — unlike the agency strip,
+          which carries no control there at all.
         */}
-        <a className={buttonClass('quiet', 'sm')} href={hrefs.clientExport()}>
-          Export
+        <a className={cn(buttonClass('quiet', 'sm'), 'shrink-0')} href={hrefs.clientExport()}>
+          Export everything
         </a>
       </div>
 

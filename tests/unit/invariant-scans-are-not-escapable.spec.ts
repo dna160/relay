@@ -46,9 +46,17 @@ import {
   ACCOUNT_ID_COMPARISON,
   DEFAULT_ROLE_FALLBACK,
   MEMBERSHIP_IMPORT,
+  MEMBERSHIP_NAMESPACED,
   MEMBERSHIP_RAW_SQL,
+  MEMBERSHIP_RELATIONAL,
   ROLE_LITERAL_BRANCH,
 } from '@tests/invariants/inv-11-access-resolution-is-one-function.spec';
+import {
+  ARCHIVED_PREDICATE,
+  deletePattern,
+  functionBody,
+} from '@tests/invariants/removal-preserves-evidence.spec';
+import { cascadeAncestorsOf } from '@tests/invariants/_sql';
 
 /** Builds the shape `sourceFiles()` hands a scan, comments already stripped. */
 function planted(path: string, text: string): SourceFile {
@@ -501,5 +509,235 @@ describe('comment stripping cannot be used to smuggle a violation past a scan', 
   it('prose alone is not an offender', () => {
     const file = planted('src/app/x/route.ts', '// never write await db.insert(cards) here\nconst x = 1;');
     expect(statementsMatching(file, APP_LAYER_WRITE)).toEqual([]);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+
+describe('INV-11 — the two shapes that need no import at all', () => {
+  /**
+   * `src/db/client.ts` hands the entire schema to drizzle as
+   * `import * as schema`, so every module holding `db` already has the
+   * permission graph within reach. `MEMBERSHIP_IMPORT` is a scan for a
+   * punctuation — `import { … } from` — and neither shape below uses it.
+   *
+   * Found by asking what the assignment read that landed this round would look
+   * like if it had been written the *other* obvious way. Both of these are
+   * ordinary drizzle, not evasion.
+   */
+
+  it('catches the relational API, which names no table symbol', () => {
+    const PLANTS = [
+      'const rows = await db.query.projectMemberships.findMany({ where: eq(t.projectId, id) });',
+      'const m = await db.query.orgMemberships.findFirst({ with: { account: true } });',
+      // The shape a "who can be assigned" read is most likely to take.
+      [
+        'const members = await db.query',
+        '  .projectMemberships',
+        '  .findMany({ where: eq(projectMemberships.projectId, projectId) });',
+      ].join('\n'),
+      'const t = await tx.query.teamMembers.findMany();',
+    ];
+    for (const code of PLANTS) {
+      expect(
+        statementsMatching(
+          planted('src/db/queries/assignable.ts', code),
+          MEMBERSHIP_RELATIONAL,
+        ),
+        `a relational read of the permission graph escaped the scan: ${JSON.stringify(code)}`,
+      ).not.toEqual([]);
+    }
+  });
+
+  it('catches a membership table reached through a namespace binding', () => {
+    const PLANTS = [
+      "import * as schema from '@/db/schema';\nconst r = await db.select().from(schema.projectMemberships);",
+      'const r = await db.select().from(accounts).innerJoin(s.orgMemberships, on);',
+      'await db.insert(schema.projectMemberships).values(row);',
+    ];
+    for (const code of PLANTS) {
+      expect(
+        statementsMatching(planted('src/app/api/engagements/[id]/members/route.ts', code), MEMBERSHIP_NAMESPACED),
+        `a namespaced membership read escaped the scan: ${JSON.stringify(code)}`,
+      ).not.toEqual([]);
+    }
+  });
+
+  it('does not mistake a result field for a table read', () => {
+    /**
+     * The false positive that would have made this scan unusable, and it is
+     * live in the tree today: `backfill-cli.ts` prints
+     * `counts.projectMemberships` and `manifest.ts` reads
+     * `graph.projectMemberships`. Both are numbers on a result object. A guard
+     * that flagged them would be a guard someone relaxes.
+     */
+    for (const code of [
+      'console.log(`project memberships ${String(counts.projectMemberships)}`);',
+      "{ table: 'project_memberships', rows: graph.projectMemberships },",
+      'const same = undone.orgMemberships === first.orgMemberships;',
+    ]) {
+      const file = planted('src/workers/backfill-cli.ts', code);
+      expect(
+        statementsMatching(file, MEMBERSHIP_RELATIONAL),
+        `a result field was reported as a relational read: ${JSON.stringify(code)}`,
+      ).toEqual([]);
+      expect(
+        statementsMatching(file, MEMBERSHIP_NAMESPACED),
+        `a result field was reported as a namespaced read: ${JSON.stringify(code)}`,
+      ).toEqual([]);
+    }
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+
+describe('removal — the evidence scans catch what a delete button would write', () => {
+  /**
+   * `removal-preserves-evidence.spec.ts` is green over the tree as shipped, and
+   * a scan that is green because the tree is clean is indistinguishable from a
+   * scan that is green because it cannot see. These are the violations ADR-026
+   * chose *not* to write, written out.
+   *
+   * The one that matters most is the third: **none of them mention an
+   * approval.** That is the whole point of deriving the forbidden set from the
+   * cascade graph rather than listing tables by hand.
+   */
+
+  it('catches an approval deleted in either dialect, however the chain wraps', () => {
+    const PLANTS = [
+      'await db.delete(approvals).where(eq(approvals.assetVersionId, id));',
+      'await db.execute(sql`DELETE FROM approvals WHERE asset_version_id = ${id}`);',
+      'await pool.query(`delete from "approvals" where id = $1`, [id]);',
+      // The house style, wrapped by the formatter.
+      ['await tx', '  .delete(approvals)', '  .where(inArray(approvals.id, ids));'].join('\n'),
+    ];
+    for (const code of PLANTS) {
+      expect(
+        statementsMatching(planted('src/domain/board/removal.ts', code), deletePattern('approvals')),
+        `an approval delete escaped the scan: ${JSON.stringify(code)}`,
+      ).not.toEqual([]);
+    }
+  });
+
+  it('does not mistake a Map or a Set delete for a database delete', () => {
+    // `src/lib/sse.ts` and `src/app/api/_stream.ts` both do this. A guard that
+    // fired on them would be a guard that gets an exclusion, and the exclusion
+    // would be a hole in the shape of the thing being forbidden.
+    for (const code of [
+      'cleanupBySignal.delete(request.signal);',
+      'current.listeners.delete(listener);',
+      'seen.delete(approvalsById);',
+    ]) {
+      expect(
+        statementsMatching(planted('src/lib/sse.ts', code), deletePattern('approvals')),
+        `an in-memory delete was reported as a database delete: ${JSON.stringify(code)}`,
+      ).toEqual([]);
+    }
+  });
+
+  it('catches the lane and card deletes that destroy approvals without naming one', () => {
+    /**
+     * The case the whole file exists for. Every plant here is a statement a
+     * reasonable removal feature writes, none of them contains the word
+     * `approvals`, and every one of them destroys approvals through
+     * `cards.lane_id` -> `asset_versions.card_id` -> `approvals.asset_version_id`.
+     */
+    const forbidden = cascadeAncestorsOf(['approvals', 'asset_versions']);
+    expect(forbidden, 'the cascade derivation stopped reaching lanes').toContain('lanes');
+    expect(forbidden, 'the cascade derivation stopped reaching cards').toContain('cards');
+
+    const PLANTS: { code: string; table: string }[] = [
+      { code: 'await db.delete(lanes).where(eq(lanes.id, laneId));', table: 'lanes' },
+      { code: 'await db.delete(cards).where(eq(cards.id, cardId));', table: 'cards' },
+      {
+        code: 'await db.execute(sql`DELETE FROM lanes WHERE engagement_id = ${id}`);',
+        table: 'lanes',
+      },
+      {
+        code: ['await tx', '  .delete(cards)', '  .where(inArray(cards.id, ids));'].join('\n'),
+        table: 'cards',
+      },
+      {
+        code: 'await db.delete(engagements).where(eq(engagements.id, id));',
+        table: 'engagements',
+      },
+    ];
+
+    for (const { code, table } of PLANTS) {
+      expect(code, 'the plant names an approval, which defeats its own purpose').not.toContain(
+        'approval',
+      );
+      expect(
+        statementsMatching(planted('src/app/api/lanes/[id]/route.ts', code), deletePattern(table)),
+        `a cascade-ancestor delete escaped the scan: ${JSON.stringify(code)}`,
+      ).not.toEqual([]);
+    }
+  });
+
+  it('catches a removal predicate on the path to a purge manifest, in either dialect', () => {
+    const PLANTS = [
+      'const rows = await exec.select().from(cards).where(and(eq(cards.engagementId, id), isNull(cards.archivedAt)));',
+      'await exec.execute(sql`select id from cards where engagement_id = ${id} and archived_at IS NULL`);',
+      'const live = rows.filter((r) => r.archivedAt == null);',
+      'if (card.archivedAt !== null) continue;',
+      ['const visible = rows.filter(', '  (r) => r.archivedAt === null,', ');'].join('\n'),
+    ];
+    for (const code of PLANTS) {
+      expect(
+        statementsMatching(planted('src/domain/retention/manifest.ts', code), ARCHIVED_PREDICATE),
+        `a removal predicate escaped the purge-path scan: ${JSON.stringify(code)}`,
+      ).not.toEqual([]);
+    }
+  });
+
+  it('does not report the schema column definition as a filter', () => {
+    // `src/db/schema/board.ts` has to name `archived_at` — it defines it. The
+    // purge scan skips the schema directory, and the pattern itself must not
+    // fire on a definition either, or the exclusion is doing load-bearing work
+    // it was not meant to do.
+    for (const code of [
+      "archivedAt: tstz('archived_at'),",
+      "archivedByUserId: uuid('archived_by_user_id').references(() => users.id),",
+      'readonly archivedAt: Date | null;',
+    ]) {
+      expect(
+        statementsMatching(planted('src/db/schema/board.ts', code), ARCHIVED_PREDICATE),
+        `a column definition was reported as a filter: ${JSON.stringify(code)}`,
+      ).toEqual([]);
+    }
+  });
+
+  it('reads the right function body when two neighbours have opposite obligations', () => {
+    /**
+     * `removeLane` must **not** filter its occupancy count on `archived_at`;
+     * `restoreLane`, forty lines below it, **must**. A file-wide scan cannot
+     * tell them apart, and getting it wrong in either direction is a build
+     * failure for the wrong reason.
+     */
+    const text = [
+      'export async function removeLane(db, id) {',
+      '  const total = await tx.select({ n: count() }).from(cards).where(eq(cards.laneId, id));',
+      '  return total;',
+      '}',
+      '',
+      'export async function restoreLane(db, id) {',
+      '  const live = await tx.select({ n: count() }).from(cards)',
+      '    .where(and(eq(cards.laneId, id), isNull(cards.archivedAt)));',
+      '  return live;',
+      '}',
+    ].join('\n');
+
+    const remove = functionBody(text, 'removeLane');
+    const restore = functionBody(text, 'restoreLane');
+    expect(remove, 'removeLane was not found').not.toBeNull();
+    expect(restore, 'restoreLane was not found').not.toBeNull();
+    expect(
+      ARCHIVED_PREDICATE.test(remove ?? ''),
+      'the body reader leaked restoreLane into removeLane',
+    ).toBe(false);
+    expect(
+      ARCHIVED_PREDICATE.test(restore ?? ''),
+      'the body reader cannot see a predicate that is there',
+    ).toBe(true);
   });
 });

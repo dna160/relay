@@ -43,9 +43,10 @@ async function visibleLanes(exec: Executor, scope: ClientScope): Promise<LaneRow
       name: lanes.name,
       position: lanes.position,
       visibility: lanes.visibility,
+      archivedAt: lanes.archivedAt,
     })
     .from(lanes)
-    .where(and(scope.onEngagement(lanes.engagementId), scope.publishedLanes));
+    .where(and(scope.onEngagement(lanes.engagementId), scope.publishedLanes, scope.liveLanes));
 }
 
 async function visibleCards(exec: Executor, scope: ClientScope): Promise<CardRow[]> {
@@ -61,6 +62,7 @@ async function visibleCards(exec: Executor, scope: ClientScope): Promise<CardRow
       roundsUsed: cards.roundsUsed,
       contractedRounds: cards.contractedRounds,
       visibilityOverride: cards.visibilityOverride,
+      archivedAt: cards.archivedAt,
     })
     .from(cards)
     .innerJoin(lanes, eq(lanes.id, cards.laneId))

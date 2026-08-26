@@ -27,7 +27,7 @@
  * expensive one.
  */
 
-import { and, eq, inArray, ne, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import { cards, engagements, stateTransitions } from '@/db/schema';
 import type { Executor } from '@/db/types';
 import type { AttentionItem } from '@/lib/types';
@@ -106,7 +106,7 @@ export async function loadAttention(
     .innerJoin(engagements, eq(engagements.id, cards.engagementId))
     // A signed-off card is finished; the ranker drops it too, but not reading
     // it is cheaper than reading it to throw it away.
-    .where(and(orgRunningCards, ne(cards.state, 'signed_off')));
+    .where(and(orgRunningCards, ne(cards.state, 'signed_off'), isNull(cards.archivedAt)));
 
   if (cardRows.length === 0) return [];
 
@@ -120,7 +120,7 @@ export async function loadAttention(
     .from(stateTransitions)
     .innerJoin(cards, eq(cards.id, stateTransitions.cardId))
     .innerJoin(engagements, eq(engagements.id, cards.engagementId))
-    .where(and(orgRunningCards, ne(cards.state, 'signed_off')));
+    .where(and(orgRunningCards, ne(cards.state, 'signed_off'), isNull(cards.archivedAt)));
 
   /**
    * The last movement per card, for the "silently rotting" bucket. Computed
@@ -166,6 +166,13 @@ export async function countAttentionCandidates(
     .select({ total: sql<number>`count(*)::int` })
     .from(cards)
     .innerJoin(engagements, eq(engagements.id, cards.engagementId))
-    .where(and(eq(engagements.orgId, orgId), RUNNING_ENGAGEMENT, ne(cards.state, 'signed_off')));
+    .where(
+      and(
+        eq(engagements.orgId, orgId),
+        RUNNING_ENGAGEMENT,
+        ne(cards.state, 'signed_off'),
+        isNull(cards.archivedAt),
+      ),
+    );
   return rows[0]?.total ?? 0;
 }

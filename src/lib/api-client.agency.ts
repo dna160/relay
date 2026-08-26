@@ -333,6 +333,88 @@ export interface ExportJob {
   readyAt?: string;
 }
 
+/**
+ * `GET /api/engagements/:id/members` — who can be assigned a card here.
+ *
+ * `id` is the value to send back as `assigneeId`: a `users.id`, not an account
+ * id and not a membership id. The route's own header is explicit about that,
+ * because Phase 9 introduced an account graph and the two are not the same
+ * column.
+ *
+ * The list is scoped to *this engagement*, never to the org. That is what makes
+ * the single-member rule in COMPONENTS.md §17 a fact about the picker rather
+ * than a guess: when this returns one row, one person can hold this card.
+ */
+export interface AssignableMember {
+  id: string;
+  name: string | null;
+  email: string;
+}
+
+/**
+ * What `DELETE /api/cards/:id` did (ADR-026).
+ *
+ * `kind` is reported rather than assumed because the caller does not choose it:
+ * `removeCard()` takes the least destructive mechanism that satisfies the
+ * request, which is a real delete only when the cascade has nothing to cascade
+ * to. The surface needs to know which happened — an "Undo" offered on a row
+ * that no longer exists is the worst affordance in the feature.
+ */
+export interface CardDependents {
+  versions: number;
+  transitions: number;
+  comments: number;
+}
+
+export interface CardRemoval {
+  kind: 'discarded' | 'archived';
+  cardId: string;
+  /** Null when discarded. There is nothing left to carry a timestamp. */
+  archivedAt: string | null;
+  kept: CardDependents;
+}
+
+export interface LaneRemoval {
+  kind: 'discarded' | 'archived';
+  laneId: string;
+  archivedAt: string | null;
+  /** Zero on a discard: a lane is only discarded when it holds nothing. */
+  cardsHidden: number;
+}
+
+/**
+ * `GET /api/engagements/:id/archive` — what has been removed and can come back.
+ *
+ * A separate read from the board rather than a flag on it, because an archived
+ * card whose lane was archived too has no lane to sit in. `versionCount` is the
+ * number that makes the design legible: it is precisely why the card was
+ * archived instead of deleted.
+ */
+export interface ArchivedLane {
+  id: string;
+  name: string;
+  position: number;
+  archivedAt: string;
+  archivedByName: string | null;
+  cardsHidden: number;
+}
+
+export interface ArchivedCard {
+  id: string;
+  laneId: string;
+  laneName: string;
+  title: string;
+  state: string;
+  archivedAt: string;
+  archivedByName: string | null;
+  versionCount: number;
+}
+
+export interface ArchivedBoard {
+  lanes: ArchivedLane[];
+  cards: ArchivedCard[];
+}
+
 /* ---------------------------------------------------------------- agency api */
 
 export const agencyApi = {
@@ -384,6 +466,80 @@ export const agencyApi = {
   /** GET /api/engagements/:id/board */
   board(id: string, ctx?: RequestContext) {
     return request<AgencyBoard>(`/api/engagements/${encodeURIComponent(id)}/board`, { ctx });
+  },
+
+  /**
+   * GET /api/engagements/:id/members — the assignee picker's candidates.
+   *
+   * Readable rather than writable on the route's side, deliberately: an
+   * archived engagement's board still renders assignee names, and a picker that
+   * 423'd here would make the read-only board unopenable.
+   */
+  members(id: string, ctx?: RequestContext) {
+    return request<{ members: AssignableMember[] }>(
+      `/api/engagements/${encodeURIComponent(id)}/members`,
+      { ctx },
+    ).then((r) => pick(r, (p) => p.members));
+  },
+
+  /** GET /api/engagements/:id/archive — removed lanes and cards, restorable. */
+  archive(id: string, ctx?: RequestContext) {
+    return request<{ archive: ArchivedBoard }>(
+      `/api/engagements/${encodeURIComponent(id)}/archive`,
+      { ctx },
+    ).then((r) => pick(r, (p) => p.archive));
+  },
+
+  /**
+   * DELETE /api/cards/:id?engagementId= — remove a deliverable.
+   *
+   * The engagement id rides in the query string because a DELETE with a body is
+   * legal but inconsistently forwarded by proxies and `fetch` implementations.
+   * The route says so too; this is the caller's half of that decision.
+   *
+   * Named `removeCard` and not `deleteCard`, matching the domain: what comes
+   * back may be `archived`, and a method whose name promised deletion would be
+   * lying about half its outcomes.
+   */
+  removeCard(id: string, engagementId: string, ctx?: RequestContext) {
+    return request<{ removal: CardRemoval }>(
+      `/api/cards/${encodeURIComponent(id)}?engagementId=${encodeURIComponent(engagementId)}`,
+      { method: 'DELETE', ctx },
+    ).then((r) => pick(r, (p) => p.removal));
+  },
+
+  /**
+   * POST /api/cards/:id/restore — put an archived deliverable back.
+   *
+   * `laneIsArchived` is the field that must not be dropped on the floor. A card
+   * can come back into a lane that is itself still archived, in which case the
+   * board *still* will not show it — and a restore that reported success while
+   * the card stayed invisible is precisely the bug that makes people stop
+   * trusting an undo. The domain reports it rather than silently un-archiving
+   * the whole column, because that would be a larger action than the one asked
+   * for, so the surface has to say it instead.
+   */
+  restoreCard(id: string, body: { engagementId: string }, ctx?: RequestContext) {
+    return request<{ restored: { cardId: string; laneIsArchived: boolean } }>(
+      `/api/cards/${encodeURIComponent(id)}/restore`,
+      { method: 'POST', body, ctx },
+    ).then((r) => pick(r, (p) => p.restored));
+  },
+
+  /** DELETE /api/lanes/:id?engagementId= — remove a lane and hide what stands in it. */
+  removeLane(id: string, engagementId: string, ctx?: RequestContext) {
+    return request<{ removal: LaneRemoval }>(
+      `/api/lanes/${encodeURIComponent(id)}?engagementId=${encodeURIComponent(engagementId)}`,
+      { method: 'DELETE', ctx },
+    ).then((r) => pick(r, (p) => p.removal));
+  },
+
+  /** POST /api/lanes/:id/restore — put a lane and its cards back. */
+  restoreLane(id: string, body: { engagementId: string }, ctx?: RequestContext) {
+    return request<{ restored: { laneId: string; cardsRestored: number } }>(
+      `/api/lanes/${encodeURIComponent(id)}/restore`,
+      { method: 'POST', body, ctx },
+    ).then((r) => pick(r, (p) => p.restored));
   },
 
   /** GET /api/engagements/:id/shelf */

@@ -19,6 +19,13 @@ export interface LaneRow {
   name: string;
   position: number;
   visibility: 'published' | 'private';
+  /**
+   * Removal (ADR-026). Optional because a caller that does not select it is a
+   * caller reading a set the SQL already narrowed to live rows — the query
+   * layer is the enforcing half here, exactly as it is for lane visibility, and
+   * this is the second net.
+   */
+  archivedAt?: Date | null;
 }
 
 export interface CardRow {
@@ -32,6 +39,8 @@ export interface CardRow {
   roundsUsed: number;
   contractedRounds: number | null;
   visibilityOverride: 'inherit' | 'private';
+  /** Removal (ADR-026). See `LaneRow.archivedAt`. */
+  archivedAt?: Date | null;
   // Agency-only below. Never referenced in this file.
   assigneeId: string | null;
   internalNotes: string | null;
@@ -79,11 +88,16 @@ export interface ClientLane {
 }
 
 export function isLaneVisibleToClient(lane: LaneRow): boolean {
+  if (lane.archivedAt != null) return false;
   return lane.visibility === 'published';
 }
 
 export function isCardVisibleToClient(card: CardRow, lane: LaneRow): boolean {
   if (!isLaneVisibleToClient(lane)) return false;
+  // Archived is checked before the override and before the state, because it is
+  // the only one of the three that can be true of a card the client has already
+  // approved. ADR-026: removal is orthogonal to the machine.
+  if (card.archivedAt != null) return false;
   if (card.visibilityOverride === 'private') return false;
   if (AGENCY_ONLY_STATES.has(card.state)) return false;
   return true;
@@ -135,11 +149,15 @@ export function toClientCard(card: CardRow, lane: LaneRow, versions: VersionRow[
   if (!isCardVisibleToClient(card, lane)) {
     throw new ClientVisibilityError(
       card.id,
-      lane.visibility === 'private'
-        ? 'its lane is private'
-        : card.visibilityOverride === 'private'
-          ? 'it is overridden to private'
-          : `its state is ${card.state}`,
+      lane.archivedAt != null
+        ? 'its lane is archived'
+        : lane.visibility === 'private'
+          ? 'its lane is private'
+          : card.archivedAt != null
+            ? 'it is archived'
+            : card.visibilityOverride === 'private'
+              ? 'it is overridden to private'
+              : `its state is ${card.state}`,
     );
   }
   const aliased = (CLIENT_STATE_ALIAS[card.state] ?? card.state) as ClientCard['state'];

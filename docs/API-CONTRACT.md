@@ -305,3 +305,58 @@ same id throws — the caller asked for that template specifically.
 engagement's start date, and a clock as arguments. That is what makes "stamping
 twice produces structurally identical graphs" a property provable by calling a
 function twice, rather than a claim about two database writes.
+
+### A14 — removal, restore, the archive, and the assignee list
+*Round 9, from product-owner feedback. ADR-026.*
+
+| Method | Path | Response |
+|---|---|---|
+| `DELETE` | `/api/cards/:id?engagementId=…` | `{ removal: { kind: 'discarded' \| 'archived', cardId, archivedAt: string \| null, kept: { versions, transitions, comments } } }` |
+| `POST` | `/api/cards/:id/restore` | `{ restored: { cardId, laneIsArchived: boolean } }` |
+| `DELETE` | `/api/lanes/:id?engagementId=…` | `{ removal: { kind: 'discarded' \| 'archived', laneId, archivedAt: string \| null, cardsHidden: number } }` |
+| `POST` | `/api/lanes/:id/restore` | `{ restored: { laneId, cardsRestored: number } }` |
+| `GET` | `/api/engagements/:id/archive` | `{ archive: { lanes: ArchivedLane[], cards: ArchivedCard[] } }` |
+| `GET` | `/api/engagements/:id/members` | `{ members: { id, name, email }[] }` |
+
+**`DELETE` does not take an instruction, it reports one.** The caller says
+"remove this"; the server discards when deleting destroys no other row and
+archives otherwise, and `kind` says which. This is the one departure from A5:
+the engagement id rides in the **query string** rather than the body, because a
+DELETE with a body is legal and inconsistently forwarded. The two `POST`s follow
+A5 and carry `{ engagementId }`.
+
+`kind: 'discarded'` means the row is gone and there is no undo — the restore
+route answers 404 for it, deliberately. A surface that offers Undo reads `kind`
+first. `kept` is why archiving was necessary and is the count of immutable rows
+a delete would have destroyed.
+
+Archived lanes and cards are absent from `GET /api/engagements/:id/board` and
+from every client response, in SQL, not in the UI (INV-1). `/archive` is the
+separate read for them and works on an archived engagement — `assertReadable`,
+not `assertWritable`.
+
+`GET /api/engagements/:id/members` is the read that makes an assignee picker
+possible; `id` is the value to send as `assigneeId`, and the list is exactly the
+set the write path accepts. No `role` yet — see ADR-026: the definition of
+record is the membership graph, the shipped answer is the legacy one for the
+length of Phase 9's shadow window, and a role attached to a list the graph did
+not produce would be a fact about nothing.
+
+### A15 — two 503 codes for object storage
+
+`ERROR_CODES` gains `STORAGE_NOT_CONFIGURED: 503` and `STORAGE_UNREACHABLE: 503`.
+`POST /api/uploads/presign` raises them through the ordinary `apiError()` path,
+so both sides branch on a named code rather than on a default.
+
+The distinction is the point: **not configured** cannot resolve by retrying and
+needs an administrator; **unreachable** is a blip and can. Collapsed into one
+500 they reached production as *"Could not reach the workspace… try again in a
+moment"*, which was false in every clause. Neither body names a variable, a
+bucket, an endpoint or an SDK error.
+
+`GET /api/health` reports the same split as `storage: 'ok' | 'unconfigured' |
+'unreachable'`, and `status` is `ok` only when every probed subsystem is. An
+`unconfigured` deployment answers **503** and fails its own deploy gate; an
+`unreachable` bucket answers 200 and `degraded`, because a third-party blip must
+not roll back a working deployment. RUNBOOK §7 carries the full table and the
+list of what health does not probe.

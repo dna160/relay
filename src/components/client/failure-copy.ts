@@ -43,13 +43,47 @@ export function failureCopy(f: ApiFailure): FailureCopy {
       };
     case 'VALIDATION_FAILED':
       return { title: 'That did not go through', body: f.message || 'Check the fields and try again.' };
-    case 'PLAN_LIMIT_REACHED':
+
+    /**
+     * 429, and on this surface it is almost always the sign-in code: six digits
+     * in a fifteen-minute window is a guessable space, so `POST
+     * /api/auth/client/verify` throttles. The old copy for this was "the
+     * connection dropped … try again in a moment", which is both untrue and an
+     * instruction to keep guessing.
+     *
+     * A client contact did not do anything wrong here — a mistyped code twice
+     * over reaches this — so the words say what to do, not what went wrong.
+     */
+    case 'RATE_LIMITED':
+      return {
+        title: 'Too many tries',
+        body: 'For safety this pauses after several attempts. Wait a few minutes, then ask for a fresh code — a new one will work.',
+      };
+
+    /**
+     * The request never reached us. The only failure here that is actually
+     * about the connection, and the only one where trying again is worth doing
+     * straight away.
+     */
     case 'NETWORK':
+      return {
+        title: 'Your connection dropped',
+        body: 'The request did not reach us. Check your connection and try again — nothing has been lost.',
+      };
+
+    /**
+     * Everything else got an answer, so it is ours to fix and not something a
+     * client contact can retry their way out of. `PLAN_LIMIT_REACHED` stays
+     * folded in here deliberately: 402 is the agency's billing problem and
+     * naming it would leak how their account is configured (see the note at the
+     * top of this file).
+     */
+    case 'PLAN_LIMIT_REACHED':
     case 'MALFORMED':
     default:
       return {
-        title: 'Could not load this workspace',
-        body: 'The connection dropped or the service is restarting. Try again in a moment.',
+        title: 'Something went wrong at our end',
+        body: 'Your connection is fine — this one is ours. Reload the page, and if it keeps happening, tell your agency contact so they can chase it. Nothing you have approved or sent has been affected.',
       };
   }
 }

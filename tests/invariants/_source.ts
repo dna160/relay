@@ -488,3 +488,59 @@ export function queriesReachableFromClientRoutes(
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
+
+/* -------------------------------------------------------------------------- */
+/* Reachability from an arbitrary entry file.                                 */
+/*                                                                            */
+/* `clientImportGraph()` above walks out from a set of *directories* and       */
+/* tracks query symbols, because that is INV-1's question. INV-7's question is */
+/* different and needs the same machinery: **what does the purge walk read?**  */
+/*                                                                            */
+/* A removal feature that adds `removed_at` and a `isNull(cards.removedAt)`   */
+/* predicate to a shared read makes a removed card invisible to the purge      */
+/* manifest — and then the certificate says the engagement was destroyed while */
+/* a row and its object survive. That is worse than either a leak or a         */
+/* deletion, because the artifact the whole subsystem exists to produce        */
+/* becomes false. The predicate need not be written in `purge.ts`; it only has */
+/* to be somewhere `purge.ts` reaches.                                        */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Every module reachable from `entryPaths`, mapped to the import chain that
+ * reached it. Entry paths are repo-relative, e.g. `src/workers/purge.ts`.
+ *
+ * Module-level rather than symbol-level: a file that exports the offending
+ * predicate beside an innocent one is still a file the walk has to look at,
+ * and the alternative — trusting which export was taken — is the signature
+ * assumption `queriesImportedByClientRoutes` already had to be fixed for.
+ */
+export function modulesReachableFrom(entryPaths: readonly string[]): Map<string, string[]> {
+  const all = sourceFiles();
+  const byPath = new Map(all.map((f) => [f.path, f]));
+  const known = new Set(byPath.keys());
+
+  const reached = new Map<string, string[]>();
+  const queue: Array<{ file: SourceFile; chain: string[] }> = [];
+
+  for (const path of entryPaths) {
+    const file = byPath.get(path);
+    if (!file) continue; // Not written yet. A walk over an empty set holds.
+    reached.set(path, [path]);
+    queue.push({ file, chain: [path] });
+  }
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current) break;
+    for (const edge of importsOf(current.file, known)) {
+      if (reached.has(edge.module)) continue;
+      const target = byPath.get(edge.module);
+      if (!target) continue;
+      const chain = [...current.chain, edge.module];
+      reached.set(edge.module, chain);
+      queue.push({ file: target, chain });
+    }
+  }
+
+  return reached;
+}

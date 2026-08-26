@@ -94,6 +94,14 @@ export interface SeededEngagement {
   cardId: string;
   versionIds: string[];
   contactId: string;
+  /**
+   * The removed half of the board (ADR-026). Archived, not deleted — so these
+   * rows are invisible to every board read in the product and must still be
+   * destroyed by the purge and counted on its certificate.
+   */
+  archivedLaneId: string;
+  archivedCardId: string;
+  archivedVersionId: string;
   /** Storage keys written as real files under the store root. */
   keys: string[];
   /** An orphan object with no row pointing at it. A purge must still take it. */
@@ -131,6 +139,18 @@ export async function seedPurgeable(
     comment: uuidv7(),
     transition: uuidv7(),
     shelf: uuidv7(),
+    /**
+     * ADR-026's removal, seeded so that INV-7's "every content row" is asserted
+     * over a set that actually contains one. An archived card carrying a
+     * version and an approval, standing in an archived lane, is invisible to
+     * both boards — and a purge that inherited any part of the board's own
+     * `archived_at IS NULL` would leave it, its object bytes, and its approval
+     * behind while certifying that the engagement was destroyed.
+     */
+    archivedLane: uuidv7(),
+    archivedCard: uuidv7(),
+    v3: uuidv7(),
+    archivedApproval: uuidv7(),
   };
   const now = Date.now();
   const archiveAt = new Date(now - 31 * DAY_MS);
@@ -212,6 +232,45 @@ export async function seedPurgeable(
       [id.transition, id.card, id.user],
     );
 
+    /* --- the removed half of the board (ADR-026) ------------------------ */
+
+    await c.query(
+      `INSERT INTO lanes (id, engagement_id, name, position, visibility, archived_at)
+       VALUES ($1, $2, 'Scrapped concepts', 1, 'published', now())`,
+      [id.archivedLane, id.engagement],
+    );
+    await c.query(
+      `INSERT INTO cards (id, engagement_id, lane_id, title, position, archived_at)
+       VALUES ($1, $2, $3, 'Rejected key art', 0, now())`,
+      [id.archivedCard, id.engagement, id.archivedLane],
+    );
+    await c.query(
+      `INSERT INTO asset_versions
+         (id, card_id, version_no, storage_key, filename, mime, size_bytes, sha256,
+          uploaded_by_user_id, published_to_client_at)
+       VALUES ($1, $2, 1, $3, 'rejected.png', 'image/png', 512, $4, $5, now())`,
+      [
+        id.v3,
+        id.archivedCard,
+        `engagements/${id.engagement}/versions/${id.v3}/rejected.png`,
+        sha,
+        id.user,
+      ],
+    );
+    /**
+     * An approval on an archived card. This is the row the whole design exists
+     * to keep: the client said something about these bytes, the card was taken
+     * off the board afterwards, and the record of the decision is untouched by
+     * that. It goes only when the engagement goes, and then it is certified.
+     */
+    await c.query(
+      `INSERT INTO approvals
+         (id, asset_version_id, decision, decided_by_contact_id, decided_by_side,
+          version_sha256, note)
+       VALUES ($1, $2, 'approved', $3, 'client', $4, 'fine, but we went another way')`,
+      [id.archivedApproval, id.v3, id.contact, sha],
+    );
+
     const shelfKey = `engagements/${id.engagement}/shelf/${id.shelf}/brief.pdf`;
     keys.push(shelfKey);
     await c.query(
@@ -260,6 +319,9 @@ export async function seedPurgeable(
   const keys = [
     `engagements/${id.engagement}/versions/${id.v1}/art-v1.png`,
     `engagements/${id.engagement}/versions/${id.v2}/art-v2.png`,
+    // The archived card's bytes. A manifest built from a board read would miss
+    // this key, and the certificate would understate what it destroyed.
+    `engagements/${id.engagement}/versions/${id.v3}/rejected.png`,
     `engagements/${id.engagement}/shelf/${id.shelf}/brief.pdf`,
   ];
   const orphanKey = `engagements/${id.engagement}/versions/orphan/interrupted-upload.png`;
@@ -271,8 +333,11 @@ export async function seedPurgeable(
     engagementId: id.engagement,
     laneId: id.lane,
     cardId: id.card,
-    versionIds: [id.v1, id.v2],
+    versionIds: [id.v1, id.v2, id.v3],
     contactId: id.contact,
+    archivedLaneId: id.archivedLane,
+    archivedCardId: id.archivedCard,
+    archivedVersionId: id.v3,
     keys,
     orphanKey,
   };

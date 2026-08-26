@@ -48,6 +48,27 @@ export interface CardRecord {
  *
  * 404 rather than 400: which user ids exist is not a fact this caller is
  * entitled to, and `NOT_VISIBLE` is how the rest of the codebase says so.
+ *
+ * ## A reviewer's id cannot get through here
+ *
+ * A reviewer is a `client_contacts` row. It is refused twice: this select finds
+ * no `users` row for it and throws 404, and `cards.assignee_id` REFERENCES
+ * `users(id)`, so even an unchecked insert would be rejected by the database.
+ * Nothing is written on either path.
+ *
+ * ## What this check does **not** know, and who has to fix that
+ *
+ * It is role-blind. It asks "is this person in the org", which is the shipped
+ * definition and must stay the shipped definition for the length of Phase 9's
+ * shadow window. `canHoldAssignment()` in `src/domain/access/roles.ts` is the
+ * graph's narrower rule — an account with project role `reviewer` is excluded
+ * from the picker — and no account holds that role yet, so the two agree today.
+ *
+ * **When ADR-021 step 4 replaces this function, the replacement must call
+ * `canHoldAssignment()`.** A graph check that asks only "does this account have
+ * access" would accept somebody the picker refuses to offer, and the pair below
+ * would silently stop agreeing. Until then the disagreement would be logged
+ * rather than hidden — see `assignable_set_differs`.
  */
 async function assertAssigneeInOrg(
   exec: Executor,
@@ -61,6 +82,44 @@ async function assertAssigneeInOrg(
     .where(and(eq(users.id, assigneeId), eq(engagements.id, engagementId)))
     .limit(1);
   if (!rows[0]) throw notVisible('Assignee not found');
+}
+
+export interface AssignableUser {
+  id: string;
+  name: string | null;
+  email: string;
+}
+
+/**
+ * The list form of the check above, and it lives here **because** the check
+ * above lives here.
+ *
+ * `assigneeId` was accepted by two write routes with nothing anywhere listing
+ * who could be named, so no picker could be built. The hazard in fixing that is
+ * subtle and one-directional: a list that is wider than the check offers people
+ * the write path answers 404 for, and a list that is narrower hides colleagues
+ * who can be assigned by anyone who types the id. Neither fails loudly.
+ *
+ * So the two share a file and a predicate — `users.org_id = engagements.org_id`,
+ * spelled once above and once here — and the pair is the thing to keep true. If
+ * one of them moves, move the other in the same edit.
+ *
+ * This is the **shipped** answer during Phase 9's shadow window. The definition
+ * of record is `listAssignableAccounts()` in `src/domain/access/`; the route
+ * runs both, returns this one, and logs any difference (ADR-023). Returning the
+ * graph's answer today would empty every picker on a deployment whose backfill
+ * has not run, which is the failure mode the shadow window exists to avoid.
+ */
+export async function listAssignableUsers(
+  exec: Executor,
+  engagementId: string,
+): Promise<AssignableUser[]> {
+  return exec
+    .select({ id: users.id, name: users.name, email: users.email })
+    .from(users)
+    .innerJoin(engagements, eq(engagements.orgId, users.orgId))
+    .where(eq(engagements.id, engagementId))
+    .orderBy(users.name, users.email);
 }
 
 export async function createCard(

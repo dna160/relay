@@ -51,7 +51,7 @@ import { POSSESSION } from '@/domain/card/state-machine';
 import type { AgencyCard } from '@/lib/types';
 import { formatDue, formatRounds, roundsBreached, shortHash, versionPip } from '@/lib/format';
 import { useOneEvent } from '@/lib/hooks/use-one-event';
-import { Plate, type PlateRow } from '@/components/primitives';
+import { Badge, Plate, type PlateRow } from '@/components/primitives';
 import { chip, cn, crossfade, mono, muted } from '@/components/style-tokens';
 import { PossessionEdge, PossessionLabel } from './possession-bar';
 import { StateChip } from './state-chip';
@@ -186,6 +186,33 @@ export function CardTile({ card, href, controls, dragging }: CardTileProps) {
 
       <div className="mt-2 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <PossessionLabel possession={card.possession} state={card.state} />
+        {/*
+          The weighting here is inverted from the usual, on purpose.
+
+          On a board whose home screen buckets by *who is blocked*, the missing
+          name is the more consequential fact — an unassigned card is the one
+          that will rot into `NO MOVEMENT IN 7 DAYS` without ever reaching
+          anybody's `BLOCKED ON YOU`. So the absence gets the stamp and the
+          presence stays quiet: an assigned card is normal, and normal is not
+          marked.
+
+          A name is prose, so it is not `Mono` — and it is not an avatar either.
+          This product has no images and no illustrations anywhere, and an
+          avatar on a card tile would be the first one.
+
+          `tone="neutral"`: no hue, and never `--breach`. An unassigned card is
+          not a breached commitment — `--breach` stays exhaustively
+          `roundsUsed > contractedRounds`. `PossessionBar` beside it is
+          untouched for the same reason: possession is a *side*, assignment is a
+          *person*, and they are different axes.
+        */}
+        {card.assignee ? (
+          <span className="min-w-0 truncate font-sans text-12 text-muted" title={card.assignee.name}>
+            {card.assignee.name}
+          </span>
+        ) : (
+          <Badge tone="neutral">UNASSIGNED</Badge>
+        )}
       </div>
 
       {controls && (

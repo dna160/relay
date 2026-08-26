@@ -7,7 +7,16 @@
 export { cn } from './cn';
 export { Button, type ButtonProps, type ButtonTone, type ButtonSize } from './Button';
 export { Chip, type ChipProps, type ChipTone, type ChipVariant } from './Chip';
-export { Field, Textarea, type FieldProps, type TextareaProps } from './Field';
+export {
+  Field,
+  Textarea,
+  Select,
+  type FieldProps,
+  type TextareaProps,
+  type SelectProps,
+  type SelectOption,
+} from './Field';
+export { CopyField, type CopyFieldProps } from './CopyField';
 export { Dialog, type DialogProps } from './Dialog';
 export { Badge, type BadgeProps, type BadgeTone } from './Badge';
 export { Mono, type MonoProps } from './Mono';

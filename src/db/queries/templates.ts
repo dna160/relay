@@ -11,7 +11,7 @@
  * A 403 on a template id is a probe that confirms the id is real.
  */
 
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, isNull } from 'drizzle-orm';
 import { cards, engagements, lanes, referenceFiles, templates } from '@/db/schema';
 import type { Executor } from '@/db/types';
 import type { TemplateDefinition, TemplateSummary } from '@/lib/types';
@@ -150,7 +150,9 @@ export async function loadTemplateSource(
         visibility: lanes.visibility,
       })
       .from(lanes)
-      .where(eq(lanes.engagementId, engagementId)),
+      // Archived lanes and cards are off the board, so they are not the shape
+      // anybody meant to save (ADR-026).
+      .where(and(eq(lanes.engagementId, engagementId), isNull(lanes.archivedAt))),
     exec
       .select({
         laneId: cards.laneId,
@@ -161,7 +163,7 @@ export async function loadTemplateSource(
         contractedRounds: cards.contractedRounds,
       })
       .from(cards)
-      .where(eq(cards.engagementId, engagementId)),
+      .where(and(eq(cards.engagementId, engagementId), isNull(cards.archivedAt))),
     exec
       .selectDistinct({ groupLabel: referenceFiles.groupLabel })
       .from(referenceFiles)

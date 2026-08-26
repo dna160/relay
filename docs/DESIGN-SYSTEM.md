@@ -123,8 +123,34 @@ JavaScript. It is the product's central event and it is the only thing in the
 interface that gets that weight. `docs/design/MOTION.md` §4.
 
 **The wrap slate.** A persistent mono strip in the workspace header:
-`WRAP +12d · PURGE IN 48d · EXPORT`. Ephemerality is stated, never sprung. It is
-also the conversion surface, and it must never be dismissible.
+`WRAP +12d · PURGE IN 48d`, plus **one control, and it is the control this side
+of the product actually needs**. Ephemerality is stated, never sprung, and the
+strip must never be dismissible.
+
+*Round 4 correction.* This paragraph used to end "It is also the conversion
+surface", and the strip shipped with `EXPORT` on it — on both surfaces. Those
+two sentences cannot both be true, and the second one is the one that shipped:
+`FLOWS.md` §3 assigns the agency **Keep this workspace** (a conversion) and the
+client **Export everything** (a rescue), and says in terms that they are never
+swapped. The slate swapped them. It put the client's rescue on the agency's
+header and then relied on the word *conversion* in this document to explain why
+it was there.
+
+So the strip carries the side's own one action and never the other side's:
+
+| Surface | The control | When there is no purge date (`RETAINED`) |
+|---|---|---|
+| Agency | `Keep this workspace` | no control — the badge is the answer |
+| Client | `Export everything` | `Export everything`, unchanged |
+
+The agency's export is not lost; it was never supposed to live here. It is on
+the settings page, under the one sentence that distinguishes it from retaining,
+and on the ≤14-day board strip where `FLOWS.md` §3 already specifies both
+actions side by side. Nobody exports a workspace on day three.
+
+The client's control does not follow the plan, in either direction: the client's
+export is never paywalled and never withdrawn, because the client's right to
+take a copy is not a function of somebody else's billing.
 
 ## Components
 
@@ -136,7 +162,13 @@ also the conversion surface, and it must never be dismissible.
 - `VersionStack` — reverse-chronological, each row `v4 · 12.4 MB · 3a91f2…`
 - `DecisionBar` — client surface: Approve / Request changes, note required on
   the second, disabled until the note has content
-- `WrapSlate` — countdown + export
+- `WrapSlate` — countdown + the side's own one action (see above)
+- `ClientLinkHandoff` — the one place the agency gets the client's link out of
+  the screen and into an email. Two ways to hand over, ordered
+- `AssigneePicker` — who on the agency's side owns a card, and the control that
+  moves it out of `draft`
+- `RemovalDialog` — the confirmation for taking a card or a lane off the board.
+  It leads with what *survives*, because in this product that is the answer
 - `AttentionList` — portfolio home, grouped by actionability: *blocked on you*,
   *blocked on your team*, *with the client*, *no movement in 7 days*
 - `UploadDock` — drop zone plus per-file queue: hashing, transfer, multipart
@@ -164,6 +196,45 @@ keeps its name through the flow: the button that says **Publish to client**
 produces **Published to client**. Empty states instruct rather than apologise: an
 empty lane reads "Nothing here yet. Add the first deliverable." A purge warning
 states the date, the count, and the one action that prevents it.
+
+Three rules added in round 4, each because the shipped product broke it and a
+person who had used the product said so.
+
+**A verb takes an object.** `Export` is not a label; `Export everything` is.
+`Copy` is not a label; `Copy link` is. A bare verb is legible only to the person
+who put it there, and it is illegible in exactly the place it matters most — a
+control standing alone on a strip, where a reader will assume it is the answer
+to whatever else is on that strip. The wrap slate is the case in point: `EXPORT`
+beside a deletion countdown reads as *the thing that stops the deletion*, which
+is the one thing it does not do.
+
+**Never name a phase, a ticket, a sprint, a version or an endpoint in
+customer-facing copy.** "Phase 7" means nothing to the person paying for this,
+and it dates: the settings page shipped a section promising two things "in Phase
+7" and stayed on screen after Phase 7 shipped. Internal build vocabulary on a
+customer surface is stale the moment it is written and there is no process that
+catches it, because nothing fails when it rots.
+
+**Two of the vocabulary table's words are ours and not the client's.** *Purge*
+and *wrap* are agency nouns. The client's word for what happens on the purge
+date is **deleted**, and `FLOWS.md` §3 has always written the client's copy that
+way — "This workspace is deleted on 12 May 2026". The client's wrap slate
+nonetheless shipped a plate term reading `PURGE`, which is Relay's internal noun
+printed at a person who has never used Relay and never will, directly above a
+control they are then expected to understand. On the client surface that term is
+**`DELETED`**; the value, the record and the countdown are unchanged. Everywhere
+the agency reads it, it stays `PURGE`. Two other words join the table in round
+4: **archive** (a card or lane off both boards, nothing destroyed, reversible)
+and **discard** (deleted outright, permitted only when it carries nothing).
+
+**Do not advertise what the product cannot do.** A settings page that enumerates
+its own absences reads as unfinished software however finished it is, and a
+roadmap in a settings page is a commitment nobody is accountable for. There is
+exactly one exception: **an absence a person is about to be surprised by** —
+where the interface invites an action and then does not show its result. That
+gets one sentence, in the place the surprise happens, in the user's own words,
+saying what *did* happen. It never gets a heading, it never gets a date, and it
+never gets a list.
 
 ## Quality floor
 
@@ -369,4 +440,17 @@ client board's critical path, which matters against a 1.5s FCP budget on 4G.
 | `src/styles/a11y-contract.ts` | The same floor as importable data: contrast pairs, `contrastRatio()`, focus-ring expectations, the motion contract, the forbidden-pattern list. |
 | `docs/design/MOTION.md` | The motion system: the beat and the duration ladder, the easings and amplitudes, the label-attach specified stop by stop, the named inventory, the restraint list with a reason per entry, orchestration and staggering, the reduced-motion equivalent of every entry, and the measured cost against the FCP budget. |
 | `docs/design/LABEL-SYSTEM.md` | The spec-label vernacular: what ships, where each piece goes, and — the more useful half — what was rejected and why. |
-| `src/components/primitives/` | `Button`, `Chip`, `Field`/`Textarea`, `Dialog`, `Badge`, `Mono`, `Rule`, `Stack`/`Row`, `Plate`, `Barcode`, `RegistrationMark`, `cn`. |
+| `src/components/primitives/` | `Button`, `Chip`, `Field`/`Textarea`/`Select`, `CopyField`, `Dialog`, `Badge`, `Mono`, `Rule`, `Stack`/`Row`, `Plate`, `Barcode`, `RegistrationMark`, `cn`. |
+
+Three primitives were added in round 4 and each closes a documented gap rather
+than opening a new vocabulary:
+
+- **`CopyField`** — a value the interface is *handing over*. Relay hands over
+  three: the client link, a full sha256, an export job id, and every one of them
+  was raw text with no affordance on it.
+- **`Select`** — a native `<select>` in the existing field shell. There was no
+  select in the product, so the assignee picker would have been built from the
+  legacy `input` string, which computes to 38px at 14px and is under both floors.
+- **`labelHidden`** on `Field` / `Textarea` / `Select` — the first of the two
+  gaps `style-tokens.ts` names as blocking the deletion of that legacy string.
+  The second, a mono control, is still open.

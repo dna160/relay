@@ -17,6 +17,7 @@ import {
   CreateMultipartUploadCommand,
   DeleteObjectsCommand,
   GetObjectCommand,
+  HeadBucketCommand,
   ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
@@ -41,21 +42,74 @@ const PUT_EXPIRY_SECONDS = 60 * 60;
 /** A download link the client follows immediately. It does not need an hour. */
 const GET_EXPIRY_SECONDS = 5 * 60;
 
+/* ------------------------------------------------ configured vs. reachable */
+
+/**
+ * The four variables without which nothing here can work.
+ *
+ * `S3_REGION` is absent deliberately: it defaults to `auto`, which is correct
+ * for R2 and for MinIO, so an unset region is a working deployment and does not
+ * belong in a list of reasons uploads are broken.
+ */
+export const REQUIRED_STORAGE_ENV = [
+  'S3_ENDPOINT',
+  'S3_ACCESS_KEY_ID',
+  'S3_SECRET_ACCESS_KEY',
+  'S3_BUCKET',
+] as const;
+
+/**
+ * Raised when object storage is not configured on this deployment.
+ *
+ * A distinct class rather than a bare `Error` because the two failures it
+ * separates are genuinely different and used to read the same: a deployment
+ * with no `S3_ENDPOINT` cannot presign *at all*, ever, for anybody, and a
+ * deployment whose bucket is briefly unreachable will work again in a minute.
+ * Collapsed into one 500 they both reached the user as "could not reach the
+ * workspace" — which tells an operator nothing and tells a user to retry
+ * something that will never succeed.
+ *
+ * `missing` is for the server log. It never reaches a response body.
+ */
+export class StorageNotConfiguredError extends Error {
+  readonly code = 'STORAGE_NOT_CONFIGURED';
+  readonly missing: readonly string[];
+  constructor(missing: readonly string[]) {
+    super(`object storage is not configured: ${missing.join(', ')} unset`);
+    this.name = 'StorageNotConfiguredError';
+    this.missing = missing;
+  }
+}
+
+/** Which of the required variables are unset. Pure; no network, no client. */
+export function missingStorageEnv(): string[] {
+  return REQUIRED_STORAGE_ENV.filter((name) => {
+    const value = process.env[name];
+    return value === undefined || value.length === 0;
+  });
+}
+
+export function isStorageConfigured(): boolean {
+  return missingStorageEnv().length === 0;
+}
+
 let client: S3Client | undefined;
 
 export function storageClient(): S3Client {
   if (client) return client;
-  const endpoint = process.env.S3_ENDPOINT;
-  const region = process.env.S3_REGION ?? 'auto';
-  const accessKeyId = process.env.S3_ACCESS_KEY_ID;
-  const secretAccessKey = process.env.S3_SECRET_ACCESS_KEY;
-  if (!endpoint || !accessKeyId || !secretAccessKey) {
-    throw new Error('S3_ENDPOINT, S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY must be set');
-  }
+  const missing = missingStorageEnv();
+  if (missing.length > 0) throw new StorageNotConfiguredError(missing);
+
   client = new S3Client({
-    endpoint,
-    region,
-    credentials: { accessKeyId, secretAccessKey },
+    endpoint: process.env.S3_ENDPOINT,
+    region: process.env.S3_REGION ?? 'auto',
+    credentials: {
+      // `missingStorageEnv()` above is the proof these are set. The assertions
+      // are absent on purpose (CLAUDE.md standing rules), so the fallbacks are
+      // empty strings that the check has already ruled out.
+      accessKeyId: process.env.S3_ACCESS_KEY_ID ?? '',
+      secretAccessKey: process.env.S3_SECRET_ACCESS_KEY ?? '',
+    },
     forcePathStyle: true,
   });
   return client;
@@ -63,8 +117,48 @@ export function storageClient(): S3Client {
 
 export function bucket(): string {
   const name = process.env.S3_BUCKET;
-  if (!name) throw new Error('S3_BUCKET is not set');
+  if (!name) throw new StorageNotConfiguredError(['S3_BUCKET']);
   return name;
+}
+
+/** What `/api/health` reports about object storage, and what presign maps to. */
+export type StorageHealth = 'ok' | 'unconfigured' | 'unreachable';
+
+/**
+ * A real round trip to the bucket, cached for a few seconds.
+ *
+ * `/api/health` is the most-hit route on any deployment — Railway polls it, and
+ * so does everything else on the internet. An uncached probe would turn that
+ * traffic into traffic against the object store, so the answer is memoised for
+ * long enough to stop that and short enough that an operator watching a
+ * recovery does not think the check is stuck.
+ *
+ * `HeadBucket` is the cheapest call that proves credentials *and* reachability
+ * *and* that the bucket exists. It moves no bytes, so INV-10 is untouched.
+ */
+const STORAGE_PROBE_TTL_MS = 10_000;
+
+let probe: { at: number; result: StorageHealth } | undefined;
+
+export async function checkStorage(timeoutMs = 3_000): Promise<StorageHealth> {
+  if (!isStorageConfigured()) return 'unconfigured';
+
+  const now = Date.now();
+  if (probe && now - probe.at < STORAGE_PROBE_TTL_MS) return probe.result;
+
+  let result: StorageHealth;
+  try {
+    await storageClient().send(new HeadBucketCommand({ Bucket: bucket() }), {
+      requestTimeout: timeoutMs,
+    });
+    result = 'ok';
+  } catch (error) {
+    console.error('[health] object storage check failed', error);
+    result = 'unreachable';
+  }
+
+  probe = { at: now, result };
+  return result;
 }
 
 /**

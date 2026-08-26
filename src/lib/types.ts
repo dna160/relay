@@ -158,6 +158,90 @@ export interface AttentionItem {
   roundsBreached: boolean;
 }
 
+/* ------------------------------------------------------------------ removal */
+
+/**
+ * What happened when a lane or card was removed (ADR-026).
+ *
+ * There is no `delete` in this product's vocabulary except purge. A card
+ * carries approvals that bind a version hash so "approved" survives a dispute
+ * (INV-3), versions that only the purge worker may delete (INV-4), and the
+ * transition rows the possession clock is derived from (INV-5). Deleting one
+ * would destroy all three through a path that is not purge — and purge is the
+ * only path that ends in a certificate (INV-7).
+ *
+ * So removal takes the least destructive mechanism that works, and **the
+ * caller does not choose**: a person clicking remove cannot know whether a
+ * card has an approval behind it, and asking them is how the wrong answer gets
+ * clicked. `kind` reports which happened.
+ */
+export type RemovalKind = 'discarded' | 'archived';
+
+/** Rows a hard delete would have taken with it. Empty means discard is safe. */
+export interface CardDependents {
+  readonly versions: number;
+  readonly transitions: number;
+  readonly comments: number;
+}
+
+export interface CardRemoval {
+  readonly kind: RemovalKind;
+  readonly cardId: string;
+  /** Null when discarded — there is nothing left to carry a timestamp. */
+  readonly archivedAt: string | null;
+  /** Why archiving was necessary. Zeroes when discarded. */
+  readonly kept: CardDependents;
+}
+
+export interface LaneRemoval {
+  readonly kind: RemovalKind;
+  readonly laneId: string;
+  readonly archivedAt: string | null;
+  /** Zero on a discard: a lane is only discarded when it holds nothing. */
+  readonly cardsHidden: number;
+}
+
+export interface RestoredCard {
+  readonly cardId: string;
+  /**
+   * The card came back into a lane that is itself archived, so the board still
+   * will not show it. Reported rather than silently fixed — un-archiving a
+   * whole column because someone restored one card in it is a larger action
+   * than the one that was asked for.
+   */
+  readonly laneIsArchived: boolean;
+}
+
+export interface RestoredLane {
+  readonly laneId: string;
+  /** Cards returning with it — the ones not separately archived. */
+  readonly cardsRestored: number;
+}
+
+export interface ArchivedLane {
+  readonly id: string;
+  readonly name: string;
+  readonly position: number;
+  readonly archivedAt: string;
+  readonly archivedByName: string | null;
+  readonly cardsHidden: number;
+}
+
+export interface ArchivedCard {
+  readonly id: string;
+  readonly laneId: string;
+  readonly laneName: string;
+  readonly title: string;
+  readonly state: CardState;
+  readonly archivedAt: string;
+  readonly archivedByName: string | null;
+  /**
+   * What archiving kept, and the number that makes the design legible: it is
+   * precisely why this card was archived instead of discarded.
+   */
+  readonly versionCount: number;
+}
+
 /* ---------------------------------------------------------------- templates */
 
 /**
@@ -240,6 +324,21 @@ export const ERROR_CODES = {
    * thing INV-1 protects.
    */
   NOT_VISIBLE: 404,
+  /**
+   * This build cannot accept uploads at all — object storage is unconfigured.
+   * A fact about the deployment, not about the request, and never worth a
+   * retry. 503 rather than 500 so a deploy gate holds traffic on the old
+   * version rather than promoting one that cannot take a file.
+   */
+  STORAGE_NOT_CONFIGURED: 503,
+  /**
+   * Object storage is configured and not answering. Somebody else's outage,
+   * and a retry is exactly the right response — which is the whole reason it
+   * is a separate code from the one above. The old copy collapsed both into
+   * "could not reach the workspace", which told a user to retry something that
+   * could never succeed.
+   */
+  STORAGE_UNREACHABLE: 503,
   VALIDATION_FAILED: 400,
   UNAUTHENTICATED: 401,
   /**

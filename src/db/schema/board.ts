@@ -9,6 +9,13 @@
  * (INV-2). `state_transitions` is the sole source of possession data (INV-5,
  * ADR-010) — no running total is stored anywhere, because totals denormalise
  * badly and cannot be recomputed after a bug.
+ *
+ * `archived_at` on both tables is removal, and it is deliberately **not** a
+ * card state (ADR-026). Archived is orthogonal to the approval machine: an
+ * archived card that was `awaiting_client` is still awaiting the client if it
+ * comes back, and a machine with a trapdoor from every state to one state and
+ * back is not a machine. A nullable timestamp keeps `cards.state` untouched, so
+ * removal writes nothing INV-2 governs.
  */
 
 import { relations, sql } from 'drizzle-orm';
@@ -33,10 +40,24 @@ export const lanes = pgTable(
     name: text('name').notNull(),
     position: integer('position').notNull().default(0),
     visibility: laneVisibilityEnum('visibility').notNull().default('published'),
+    /**
+     * Removal (ADR-026). Null is a live lane. An archived lane and everything
+     * standing in it disappears from both boards — the same shape private
+     * visibility already has, where the lane hides its cards without touching
+     * a single card row.
+     */
+    archivedAt: tstz('archived_at'),
+    archivedByUserId: uuid('archived_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
     createdAt: tstzNow('created_at'),
   },
   (t) => ({
     byEngagement: index('lanes_engagement_position_idx').on(t.engagementId, t.position),
+    /** The board read. Partial, because the archive is the rare half. */
+    live: index('lanes_engagement_live_idx')
+      .on(t.engagementId, t.position)
+      .where(sql`archived_at IS NULL`),
   }),
 );
 
@@ -66,6 +87,16 @@ export const cards = pgTable(
     visibilityOverride: text('visibility_override', { enum: CARD_VISIBILITY_OVERRIDES })
       .notNull()
       .default('inherit'),
+    /**
+     * Removal (ADR-026). Null is a live card. Set, the card is off both boards
+     * and out of the attention list, and every version, approval, transition
+     * and comment it carries is untouched — which is the entire reason this
+     * column exists rather than a `DELETE`.
+     */
+    archivedAt: tstz('archived_at'),
+    archivedByUserId: uuid('archived_by_user_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
     createdAt: tstzNow('created_at'),
     updatedAt: tstzNow('updated_at'),
   },
@@ -75,6 +106,10 @@ export const cards = pgTable(
     byAssignee: index('cards_assignee_state_idx')
       .on(t.assigneeId, t.state)
       .where(sql`state <> 'signed_off'`),
+    /** Every board read carries `archived_at IS NULL`; this is what serves it. */
+    live: index('cards_engagement_live_idx')
+      .on(t.engagementId, t.laneId, t.position)
+      .where(sql`archived_at IS NULL`),
   }),
 );
 

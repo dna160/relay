@@ -13,8 +13,11 @@
 
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { formatDue, formatRounds, roundsBreached } from '@/lib/format';
+import { formatDue, formatPurgeDate, formatRounds, roundsBreached } from '@/lib/format';
 import { breach, chip, cn, display, eyebrow, mono, muted, surface } from '@/components/style-tokens';
+import { AssigneePicker } from '@/components/agency/assignee-picker';
+import { RemoveCardControl } from '@/components/agency/remove-controls';
+import { movedEver, onClientBoard } from '@/components/agency/removal-facts';
 import { ErrorPanel } from '@/components/agency/error-panel';
 import { PossessionBar } from '@/components/agency/possession-bar';
 import { StateChip } from '@/components/agency/state-chip';
@@ -103,12 +106,34 @@ export default async function CardPage({
           Move this on
         </h2>
         <div className="mt-3">
-          <TransitionControls
-            engagementId={id}
-            cardId={card.id}
-            state={card.state}
-            readOnly={archived}
-          />
+          {/*
+            In `draft`, the forward control *is* the picker.
+
+            `draft → assigned` is the only edge out of `draft`
+            (`domain/card/state-machine.ts`), so the generic control here was a
+            button labelled "Assign" that assigned the card to nobody — it moved
+            the state and left `assigneeId` null, which is the exact shape that
+            fills `NO MOVEMENT IN 7 DAYS` while `BLOCKED ON YOU` stays empty.
+            Choosing a person and moving the card is one act for the person;
+            INV-2 makes it two requests underneath, which is the back-end's
+            business and not theirs (COMPONENTS.md §17).
+          */}
+          {card.state === 'draft' && !archived ? (
+            <AssigneePicker
+              engagementId={id}
+              cardId={card.id}
+              assignee={card.assignee}
+              variant="forward"
+              isDraft
+            />
+          ) : (
+            <TransitionControls
+              engagementId={id}
+              cardId={card.id}
+              state={card.state}
+              readOnly={archived}
+            />
+          )}
         </div>
       </section>
 
@@ -179,9 +204,23 @@ export default async function CardPage({
           Backstage
         </h2>
         <dl className={cn(surface, 'mt-3 divide-y divide-rule')}>
-          <div className="flex justify-between gap-3 px-3 py-2">
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-3 py-2">
+            {/*
+              The `<dt>` is the control's label — `AssigneePicker` renders the
+              `Select` with `labelHidden` rather than printing "Assignee" a
+              second time inside a row that already says it.
+            */}
             <dt className={cn('text-14', muted)}>Assignee</dt>
-            <dd className="text-14 text-ink">{card.assignee?.name ?? 'Unassigned'}</dd>
+            <dd className="flex min-w-0 justify-end text-14 text-ink">
+              <AssigneePicker
+                engagementId={id}
+                cardId={card.id}
+                assignee={card.assignee}
+                variant="row"
+                readOnly={archived}
+                isDraft={card.state === 'draft'}
+              />
+            </dd>
           </div>
           <div className="flex justify-between gap-3 px-3 py-2">
             <dt className={cn('text-14', muted)}>Effort estimate</dt>
@@ -196,6 +235,48 @@ export default async function CardPage({
             </dd>
           </div>
         </dl>
+      </section>
+
+      {/*
+        Removal is last on the page and it is not in the Backstage list, because
+        it is an act and that list is a set of records. `RemoveCardControl`
+        decides for itself whether this is a discard or an archive and says so
+        before the press — the counts it needs are already on this page, so it
+        does not cost a read.
+      */}
+      <section aria-labelledby="card-remove">
+        <h2 id="card-remove" className={cn(eyebrow, 'border-b border-ink pb-1')}>
+          Remove
+        </h2>
+        <div className="mt-3">
+          {archived ? (
+            <p className={cn(mono, 'text-12', muted)}>
+              read-only · archived, so nothing can be removed
+            </p>
+          ) : (
+            <RemoveCardControl
+              engagementId={id}
+              cardId={card.id}
+              cardTitle={card.title}
+              laneName={lane.name}
+              purgeOn={
+                engagement.ok
+                  ? formatPurgeDate(engagement.data.engagement.daysToPurge, Date.now())
+                  : null
+              }
+              facts={{
+                versions: card.versions.length,
+                comments: discussion.ok ? discussion.data.length : 0,
+                hasMoved: movedEver(card.possession),
+                visibleToClient: onClientBoard({
+                  state: card.state,
+                  visibilityOverride: card.visibilityOverride,
+                  laneVisibility: lane.visibility,
+                }),
+              }}
+            />
+          )}
+        </div>
       </section>
     </article>
   );

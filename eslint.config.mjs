@@ -3,7 +3,15 @@ import tseslint from 'typescript-eslint';
 import reactHooks from 'eslint-plugin-react-hooks';
 
 export default tseslint.config(
-  { ignores: ['.next/**', 'node_modules/**', 'src/db/migrations/**', 'playwright-report/**', 'test-results/**', 'next-env.d.ts'] },
+  // The ignore glob matches every `.next` variant, not just the default one,
+  // so that it agrees with the `.next-*` line in `.gitignore`.
+  //
+  // The two lists named the same intent — "this is build output" — and did not
+  // name the same paths. A `distDir` of `.next-frontend` is gitignored and was
+  // linted, so a second dev server running beside the first put nine thousand
+  // errors from generated chunks into `npm run verify` and stopped the gate for
+  // everybody. Same shape as DEFECT-6: two lists that must agree, kept by hand.
+  { ignores: ['.next*/**', 'node_modules/**', 'src/db/migrations/**', 'playwright-report/**', 'test-results/**', 'next-env.d.ts'] },
   ...tseslint.configs.recommended,
   {
     files: ['**/*.{ts,tsx}'],

@@ -16,6 +16,7 @@ import { z } from 'zod';
 import { db } from '@/db/client';
 import { loadEngagementDetail } from '@/db/queries/engagements';
 import { updateAndPlaceCard, updateCard } from '@/domain/card/mutate';
+import { removeCard } from '@/domain/board/removal';
 import { assertWritable } from '@/domain/engagement/lifecycle';
 import { validationFailed } from '@/domain/errors';
 import { toErrorResponse } from '@/lib/errors';
@@ -87,6 +88,59 @@ export async function PATCH(
 
     const card = await updateCard(db, engagement.id, id, patch, now);
     return NextResponse.json({ card });
+  } catch (error) {
+    return toErrorResponse(error);
+  }
+}
+
+/**
+ * `DELETE /api/cards/:id?engagementId=…` — take this card off the board.
+ *
+ * The caller does not say *how*. ADR-026: the route discards the card when
+ * deleting it destroys nothing else, and archives it otherwise, and the
+ * response says which one happened so the surface knows whether to offer an
+ * undo. A person clicking a remove button cannot be expected to know whether
+ * this particular card has an approval bound to a sha256 behind it, and asking
+ * them is how the wrong answer gets clicked.
+ *
+ * The engagement id rides in the query string rather than a body: a DELETE with
+ * a body is legal and is inconsistently forwarded by proxies and by `fetch`
+ * implementations, and it is not worth being clever about.
+ */
+const removeQuery = z.object({ engagementId: z.string().uuid() });
+
+export async function DELETE(
+  request: Request,
+  context: RouteContext<{ id: string }>,
+): Promise<NextResponse> {
+  try {
+    const session = await requireAgency();
+    const { id } = await context.params;
+    const { engagementId } = removeQuery.parse({
+      engagementId: new URL(request.url).searchParams.get('engagementId'),
+    });
+    const now = new Date();
+
+    const engagement = await shadowed('DELETE /api/cards/[id]', session, engagementId, () =>
+      loadEngagementDetail(db, engagementId, session.orgId, now),
+    );
+    assertWritable(engagement);
+
+    const removal = await removeCard(
+      db,
+      { engagementId: engagement.id, orgId: session.orgId, actorUserId: session.userId },
+      id,
+      now,
+    );
+
+    return NextResponse.json({
+      removal: {
+        kind: removal.kind,
+        cardId: removal.cardId,
+        archivedAt: removal.archivedAt?.toISOString() ?? null,
+        kept: removal.kept,
+      },
+    });
   } catch (error) {
     return toErrorResponse(error);
   }

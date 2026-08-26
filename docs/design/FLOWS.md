@@ -624,3 +624,229 @@ Relay!"). Relay's empty states instruct; so does its first screen.
   span) so the end of the slug — the part being typed — stays visible.
 - The Button is full width at `size="lg"` (44px).
 - "Signed in as …" wraps to two lines with `Sign out` on the second.
+
+---
+
+## 6. The handoff — giving a client the link
+
+> Added in round 4, after a person who had used the deployed product asked:
+> *"Can the client access link be copiable? I don't know what the string of
+> words means."*
+
+### Who this is for
+
+The agency-side person who has just built a board and now has to get somebody
+into it. This is the **single most important action on the settings page** and
+arguably in the agency surface: it is how a client enters the workspace at all,
+and PRD §8 makes *client time-to-first-action after invite* a headline metric.
+Every second of this flow is charged against that metric before the client has
+even been reached.
+
+### What was wrong, in the order a person hits it
+
+1. **It is not a link.** The page renders `/e/{token}` — a *path*. You cannot
+   paste a path into an email and have it work. `src/lib/links.ts` has exported
+   `clientWorkspaceUrl()` since Phase 1 and it produces the absolute URL that
+   the invite email already uses. The settings page and the email have been
+   disagreeing about what the client link is.
+2. **There is no way to take it.** Raw text, no control. The value is a
+   64-character HMAC and the expectation is a triple-click and a drag.
+3. **Nothing says what it is.** "The client's link" is above it, which names it
+   but does not say what it grants, who it works for, or what to do with it. An
+   opaque signed token with no explanation beside it is a string of words.
+4. **Two ways to hand over, unordered and unrelated.** The `InviteForm` below it
+   *also* hands over a link — by email, and by creating the contact record an
+   approval is attributed to. The page presents copy-the-token and send-the-
+   invite as unrelated neighbours, and they are not: **a link copied to somebody
+   who is not on the contact list is a dead end.** They will land on Verify,
+   type their address, and be told "That email isn't on this engagement." The
+   interface currently makes that footgun the more prominent of the two.
+
+### The shape
+
+`Client access`, in this order and no other:
+
+```
+h2   CLIENT ACCESS
+
+┌ 1. the invite — the default path ─────────────────────────┐
+│  InviteForm                                                │
+│  [ name@client.com          ]  [ Send the link ]           │
+│  They get a link to this workspace only. Their verified     │
+│  email is what an approval is recorded against.             │
+└────────────────────────────────────────────────────────────┘
+
+┌ 2. the link itself — for sending it yourself ─────────────┐
+│  CopyField secret                                          │
+│  The client’s link                                          │
+│  [ ···························· ] [ Show ] [ Copy link ]    │
+│  Only contacts you have invited can get in with this link.  │
+│  Send an invite first, or they’ll be turned away at the      │
+│  email step.                                                │
+└────────────────────────────────────────────────────────────┘
+```
+
+**Invite first, copy second, and the order is the design.** The invite is the
+path that *finishes the job* — it creates the contact record an approval is
+attributed to, and it sends the link. Copying is the path for the agency that
+wants to paste the link into their own client email thread, which is a real and
+common thing to want, and which does **not** finish the job on its own: the
+recipient is turned away at the email step unless they are already a contact.
+
+Presenting the incomplete path first makes it the one a hurried person takes,
+and the failure it produces is silent on the agency's side and lands on the
+client — the worst possible distribution. The `CopyField` hint carries the
+condition ("anyone you have invited on this engagement"), which is necessary and
+not sufficient: order is the part a hurried reader actually obeys.
+
+*As shipped, `ClientLink` sits above `InviteForm`. This is a one-line reorder in
+`settings/page.tsx` and it is the last open item in this flow.*
+
+### The one action
+
+**`Copy link`.** One press, from either state — masked or revealed. The result
+is a `role="status"` line under the control reading **"Copied to your
+clipboard."** No toast, no timer, no label mutation. `COMPONENTS.md` §15.
+
+### Should the raw token ever be visible?
+
+**Masked by default. Revealable. Copyable without revealing.**
+
+The reasoning has to start from what the token actually is, because "it is a
+credential, hide it" and "it grants nothing, print it" are both wrong here:
+
+- **It is not a bearer credential to the workspace.** ADR-012 is explicit: the
+  token names the engagement and grants nothing. Possession of it only lets
+  somebody *request a code* for an address already on the contact list, and the
+  request endpoint answers identically for addresses that are not. Email
+  verification is a second factor and it is not optional. Treating the token as
+  a password — never displayed, never copyable, rotate-only — would be theatre,
+  and it would break the legitimate reason an agency wants it.
+- **But it has no per-engagement revocation.** Also ADR-012: revoking one link
+  means removing the contact, and rotating `CLIENT_LINK_SECRET` invalidates
+  *every outstanding link in the product at once*. So the cost of a leak is
+  unusually blunt, and the cost of masking is zero — nobody transcribes a
+  64-character HMAC by hand, so nothing is lost by not printing it continuously
+  on a page that gets screen-shared in a status call.
+
+Mask by default; `Show` for the person who wants to eyeball it; `Copy link`
+never requires the reveal. That is the smallest treatment that respects both
+halves of what the token is.
+
+### Copy
+
+| Element | Exact string |
+|---|---|
+| Field label | `The link that lets a client in` |
+| Button | `Copy link` |
+| Reveal | `Show` / `Hide` |
+| Confirmation | `Copied. Paste it into an email or a message to your client.` |
+| Hint | `Send it to anyone you have invited on this engagement. They open it, verify their email, and they are in — no account to create, no password to remember. It opens this engagement and no other.` |
+| Credential line, *after* the control | `Treat it like a password. Anyone holding this link can ask for a sign-in code for this engagement, so send it to a person rather than posting it in a shared channel.` |
+| Clipboard refused | `Your browser would not let the page copy this. It is selected above — press ⌘C or Ctrl-C.` |
+
+The label is not "The client's link", which is what the page said before and
+what the first draft of this section specified. *The link that lets a client in*
+says what it does; *the client's link* names a thing the reader has not been
+introduced to. The credential sentence sits **after** the control, not before
+it: somebody here to send a link should not have to read a warning to find the
+button, and somebody deciding where to paste it will read on.
+
+Not used: "Share link". "Magic link". "Invite link" (it is not the invite — the
+invite is the thing above it). "Secret". "Token" — the reader does not need the
+word for the implementation, and it is the word that made this feel like
+something they were not supposed to touch.
+
+### What must never happen
+
+- The link must never appear in a URL bar, a query string, a log line or an
+  analytics event.
+- The revealed state must not persist across a navigation. `Show` is for the
+  moment somebody is looking; the next render is masked again.
+- A `role="status"` confirmation must never claim a copy that did not happen.
+  The clipboard can refuse, and the fallback path is specified because the
+  failure is silent by default and a silent failure here costs the whole flow.
+
+### Measuring it
+
+The metric already exists — PRD §8, client time-to-first-action after invite.
+The number this flow moves is the part of it that happens *before* the invite is
+sent, which nothing currently measures because nobody thought it was a step.
+
+---
+
+## 7. The settings page — what belongs on it, and what does not
+
+> Added in round 4, after: *"What's with the 'Not yet'? I thought it's all
+> done?"*
+
+### The finding
+
+`src/app/(agency)/w/[id]/settings/page.tsx` ships a section headed **"Not yet"**
+listing three things the product cannot do. Two problems, and the second is the
+one that costs money.
+
+**It is stale.** Two of the three lines promise Phase 7, and Phase 7 shipped —
+`docs/state/PROGRESS.md` has it complete. Nothing failed when it rotted, because
+nothing tests prose.
+
+**It leaks internal build vocabulary onto a customer surface.** "Phase 7" means
+nothing to the person paying for this. There is no phase table they can see, no
+date attached, and no one accountable for it. And the deeper cost is not the
+word: **a settings page that enumerates what the product cannot do reads as
+unfinished software regardless of how finished it is.** The product owner read
+three bullets and concluded the build was incomplete. It is not. The section
+told them otherwise more loudly than the working software told them anything.
+
+### The decision
+
+**Delete the section.** A roadmap in a settings page is a decision, not a
+default, and this one was never decided — it was scaffolding that outlived the
+scaffold. The three lines do not need a new home each; they need to be sorted
+into three different categories, and only one of them survives as text.
+
+| Line | Where it goes |
+|---|---|
+| *White-label logo and brand colour — Phase 7* | **Nowhere.** When there is a control it is a control in this page. Nobody arrives at settings expecting a logo upload they were never told about, so its absence surprises no one, and announcing it converts a non-event into a visible gap. |
+| *Default contracted rounds — editable in Phase 7* | **Kept as a fact, stripped of the promise.** The number is the input to the one thing the board paints red, so it is worth stating. There is no `PATCH` for it — it is accepted at `POST /api/engagements` — so the honest description is "set when this engagement was created", not "editable in Phase 7". Shipped as its own `Rounds` section; a row in the retention register would have been equally correct. |
+| *The list of who has been invited and who has verified* | **One sentence in the Client access section**, and this is the exception. |
+
+### The one exception, and its rule
+
+`DESIGN-SYSTEM.md`'s copy rules now state it: do not advertise what the product
+cannot do, **except where a person is about to be surprised by the absence** —
+where the interface invites an action and then does not show its result.
+
+The contacts list is exactly that. The page lets you invite three people and
+then shows you no list, and an agency-side reader will reasonably conclude the
+invites failed. That earns one sentence, in the section where the surprise
+happens, in the reader's own words, saying what *did* happen:
+
+> Relay doesn't list this engagement's contacts here yet. Each invite is
+> confirmed above as it sends.
+
+It gets **no heading, no date, no phase, no bullet list** — and it disappears
+the day the contacts read endpoint lands, at which point the sentence is
+replaced by the list rather than by a different apology.
+
+*As shipped, the whole "Not yet" section was deleted and this sentence did not
+survive with it. That is one step too far and it is the second open item on this
+page: an agency that invites three people and is shown no list will conclude the
+invites failed, which is a support ticket the sentence costs nothing to prevent.
+Deleting a roadmap and answering a question the interface provokes are different
+acts, and only the first one was the finding.*
+
+### The precedent this page already set, and should be read as the model
+
+The retention section already handles an unbuilt capability correctly, and it
+does it three paragraphs above the "Not yet" section:
+
+> **To keep this workspace:** move this organisation to a retaining plan.
+> Billing is not wired up in this build, so the change is made by contacting us
+> — the retention dates clear as soon as it lands, and the engagement stops
+> counting down the same day.
+
+That is the right shape: it is attached to an action a person is actually
+trying to take, it says what to do *instead*, it names no phase, and it will
+read correctly the day billing ships and be deleted in the same commit. Copy the
+shape, not the "Not yet" heading.

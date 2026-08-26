@@ -25,6 +25,7 @@
 import { db } from '@/db/client';
 import { isDomainError } from '@/domain/errors';
 import {
+  compareAssignableMembers,
   compareVisibleProjects,
   withShadow,
   type ShadowContext,
@@ -145,5 +146,31 @@ export async function shadowVisible(
       input: { returned: visibleProjectIds.length },
     },
     visibleProjectIds,
+  );
+}
+
+/**
+ * The assignee picker's set comparison.
+ *
+ * Same contract as everything else here: the caller has already produced the
+ * list it is going to return, and nothing in this call can change it or fail
+ * the request.
+ */
+export async function shadowAssignable(
+  endpoint: string,
+  session: AgencySession,
+  projectId: string,
+  shippedUserIds: readonly string[],
+  graphUserIds: readonly string[],
+  decisionPoint = 'assignable',
+): Promise<void> {
+  await compareAssignableMembers(
+    db,
+    contextFor(endpoint, decisionPoint, session, projectId, {
+      shipped: shippedUserIds.length,
+      graph: graphUserIds.length,
+    }),
+    shippedUserIds,
+    graphUserIds,
   );
 }

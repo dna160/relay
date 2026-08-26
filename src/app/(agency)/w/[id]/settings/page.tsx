@@ -19,6 +19,9 @@
 import { agencyApi } from '@/lib/api-client.agency';
 import { formatDate, formatPurgeCountdown, formatPurgeDate, purgeDateISO, plural } from '@/lib/format';
 import { chip, cn, eyebrow, mono, muted, surface } from '@/components/style-tokens';
+import { appUrl } from '@/lib/links';
+import { ArchiveRegister } from '@/components/agency/archive-register';
+import { ClientLink } from '@/components/agency/client-link';
 import { EmptyState } from '@/components/agency/empty-state';
 import { ErrorPanel } from '@/components/agency/error-panel';
 import { ExportControl } from '@/components/agency/export-control';
@@ -41,7 +44,14 @@ export default async function SettingsPage({ params }: { params: Promise<{ id: s
 
   if (!engagement.ok) return <ErrorPanel failure={engagement} />;
   const e = engagement.data.engagement;
-  const clientLink = `/e/${engagement.data.clientLinkToken}`;
+  /*
+   * Absolute, and built from the same `appUrl()` that `clientWorkspaceUrl()`
+   * uses for the invite email. A relative `/e/{token}` is dead the moment it
+   * leaves the page, and this string exists only to leave the page. If the two
+   * were composed separately, an agency could paste a link that differs from
+   * the one their client was emailed and neither would know which is real.
+   */
+  const clientLink = `${appUrl()}/e/${engagement.data.clientLinkToken}`;
   const archived = e.status !== 'active';
   const nowMs = Date.now();
   const purge = formatPurgeCountdown(e.daysToPurge);
@@ -54,16 +64,30 @@ export default async function SettingsPage({ params }: { params: Promise<{ id: s
         <h2 id="settings-access" className={cn(eyebrow, 'border-b border-ink pb-1')}>
           Client access
         </h2>
+        {/*
+          The invite comes first, and the order is the argument.
+
+          Copying a link does not finish the job — a link sent to someone who is
+          not on the contact list is a dead end, and its failure is silent on the
+          agency's side and lands entirely on the client. Inviting is the act
+          that completes; copying is what you do afterwards, or instead, when the
+          person is already invited and has lost the email. Leading with the copy
+          control put the incomplete half of the flow first.
+        */}
         <div className="mt-3 flex flex-col gap-4">
-          <div className={cn(surface, 'px-3 py-2')}>
-            <p className={cn('text-12', muted)}>The client&rsquo;s link</p>
-            <p className={cn(mono, 'mt-1 break-all text-14 text-ink')}>{clientLink}</p>
-            <p className={cn('mt-2 text-12', muted)}>
-              One link, this engagement only. Anyone who opens it still has to verify their email
-              before they can see anything.
-            </p>
-          </div>
           <InviteForm engagementId={e.id} disabled={archived} />
+          {/*
+            Where "Not yet" used to promise a contacts roster. Deleting a
+            roadmap and leaving a provoked question unanswered are two different
+            acts: an agency that invites three people and then sees no list
+            anywhere will conclude the invites failed. One sentence, no heading,
+            no phase number, no date.
+          */}
+          <p className={cn('text-12', muted)}>
+            Relay doesn&rsquo;t list this engagement&rsquo;s contacts here yet. Each invite is
+            confirmed above as it sends.
+          </p>
+          <ClientLink url={clientLink} />
         </div>
       </section>
 
@@ -96,6 +120,72 @@ export default async function SettingsPage({ params }: { params: Promise<{ id: s
             </ul>
           )}
         </div>
+      </section>
+
+      {/*
+        The durable half of the undo. The board and the card page each offer an
+        immediate "Put it back" where the action happened; this is the one that
+        is still here on Thursday, when somebody asks where a deliverable went
+        and the person who removed it is not at their desk.
+
+        Directly under the lane register, because the two answer the same
+        question one after the other: what is on this board, and what used to be.
+      */}
+      <section aria-labelledby="settings-archive">
+        <h2 id="settings-archive" className={cn(eyebrow, 'border-b border-ink pb-1')}>
+          Removed from this board
+        </h2>
+        <p className={cn('mt-2 text-14', muted)}>
+          Removing a lane or a deliverable that carries anything archives it rather than deleting
+          it — every version, approval, comment and transition stays exactly where it was. Only
+          something that carried nothing at all is deleted outright, and that is not listed here
+          because there is nothing left of it.
+        </p>
+        <div className="mt-3">
+          <ArchiveRegister engagementId={e.id} readOnly={archived} />
+        </div>
+      </section>
+
+      {/*
+        This section replaces a line that used to sit under a heading reading
+        "Not yet", next to the words "editable in Phase 7". Two separate
+        problems: the phase number is internal vocabulary that means nothing to
+        the person paying for this, and a settings page whose last section is a
+        list of things the product cannot do reads as unfinished software.
+
+        The number itself is worth keeping, because it is the input to the one
+        thing the board paints red. It is stated here as a fact about how this
+        engagement is set up, which is what it is — `contractedRoundsDefault` is
+        accepted at `POST /api/engagements` and there is no PATCH for it, so
+        "set when the engagement is created" is the honest description rather
+        than a deferral. The white-label line and the invited-contacts roster
+        went with the section; neither exists, and a customer does not need a
+        roadmap on a settings page.
+      */}
+      <section aria-labelledby="settings-rounds">
+        <h2 id="settings-rounds" className={cn(eyebrow, 'border-b border-ink pb-1')}>
+          Rounds
+        </h2>
+        <p className={cn('mt-2 text-14', muted)}>
+          {e.contractedRoundsDefault === null ? (
+            <>
+              Deliverables on this engagement are created without a round limit, so nothing here is
+              ever flagged as over contract. A deliverable can still be given its own limit when you
+              add it.
+            </>
+          ) : (
+            <>
+              New deliverables here start with{' '}
+              <span className={cn(mono, 'text-ink')}>
+                {plural(e.contractedRoundsDefault, 'round', 'rounds')}
+              </span>{' '}
+              of revisions. Past that, the board marks the deliverable as over contract — that
+              marking is the only thing in Relay that turns red, and it means exactly one thing.
+              This number is fixed when the engagement is created, and each deliverable can carry
+              its own instead.
+            </>
+          )}
+        </p>
       </section>
 
       <section aria-labelledby="settings-template">
@@ -192,21 +282,6 @@ export default async function SettingsPage({ params }: { params: Promise<{ id: s
         </div>
       </section>
 
-      <section aria-labelledby="settings-later">
-        <h2 id="settings-later" className={cn(eyebrow, 'border-b border-ink pb-1')}>
-          Not yet
-        </h2>
-        <ul className={cn('mt-3 flex flex-col gap-1 text-14', muted)}>
-          <li>White-label logo and brand colour — Phase 7.</li>
-          <li>
-            Default contracted rounds for new cards — currently{' '}
-            <span className={mono}>{e.contractedRoundsDefault}</span>, editable in Phase 7.
-          </li>
-          <li>
-            The list of who has been invited and who has verified — needs a contacts read endpoint.
-          </li>
-        </ul>
-      </section>
     </div>
   );
 }

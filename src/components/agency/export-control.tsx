@@ -38,7 +38,16 @@ export function ExportControl({
   engagementId,
   tone = 'quiet',
   size = 'sm',
-  label = 'Export',
+  /**
+   * `Export everything`, never a bare `Export`.
+   *
+   * Every call site already passes this string explicitly, which meant the
+   * default was a bare verb that nothing used and any new call site would
+   * inherit — a copy rule kept by four separate call sites remembering it. The
+   * label is the same wherever it appears (FLOWS.md §3), so the default is now
+   * the rule rather than the exception to it.
+   */
+  label = 'Export everything',
   className,
 }: {
   engagementId: string;

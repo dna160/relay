@@ -475,40 +475,112 @@ This is the component's primary environment. Assume a phone.
 A persistent mono strip in the workspace header. Ephemerality is stated, never
 sprung.
 
+> **Round 4 — the control changed, and the reason is worth more than the
+> change.** A person who had used the deployed product asked: *"What's the
+> export button for? Any reason why it should be on the front?"* The placement
+> was right and the control was wrong, and the two are not in tension. Three
+> things were true at once, and all three had to be fixed:
+>
+> 1. **The label was a bare verb.** `Export` with no object, standing alone on a
+>    strip whose subject is deletion. A reader with no other information will
+>    take the only control on a strip to be the answer to the strip, and
+>    exporting is the one thing that does *not* stop a purge. The settings page
+>    already knew this and says so in a sentence — "Exporting takes a copy; it
+>    does not stop the destruction" — which is a sentence written because
+>    somebody already made this mistake in prose. The strip made it in a button.
+> 2. **The control was the other side's.** `FLOWS.md` §3 assigns the agency
+>    **Keep this workspace** and the client **Export everything**, and states
+>    that they are never swapped. The slate rendered the client's action on the
+>    agency's header, which is precisely the swap that section forbids — and
+>    then `DESIGN-SYSTEM.md` called the strip "the conversion surface", which on
+>    the agency side it therefore was not. Neither document was wrong; the
+>    component satisfied one sentence of one of them and inherited the other.
+> 3. **There is no context beside the countdown for 46 of the 60 days.**
+>    `FLOWS.md` §3 attaches explanatory prose only at ≤14 days. Before that the
+>    strip is two numbers and an unexplained verb, which is exactly the state
+>    the feedback was filed against.
+>
+> The diagnosis in the brief — *one control doing two unrelated jobs* — is
+> nearly right and inverted. The control was doing one job. The **strip** was
+> claiming two, and the control it had could only do the smaller one.
+
 ### Anatomy
 
 ```
 <aside role="region" aria-label="Engagement lifecycle">
   <Row justify=between gap=3>
     ├─ Row gap=2 (the records)
-    │   ├─ Mono  WRAP +12d
-    │   ├─ span  ·
-    │   ├─ Mono  PURGE IN 48d
-    │   └─ Badge RETAINED            (paid plan only, replaces the countdown)
-    └─ Button quiet sm   Export
+    │   ├─ RegistrationMark
+    │   ├─ Plate layout="strip"      WRAP +12d · PURGE IN 48d
+    │   └─ Badge RETAINED            (retaining plan only, replaces the countdown)
+    └─ ONE control — see the table below
   </Row>
 </aside>
 ```
 
+### The one control
+
+| Surface | `daysToPurge` | Control | Tone / size |
+|---|---|---|---|
+| Agency | a number | **`Keep this workspace`** | `<Button tone="quiet" size="sm">` |
+| Agency | `null` (`RETAINED`) | *none* | — |
+| Client | a number | **`Export everything`** | `<a class={buttonClass('quiet','sm')}>` |
+| Client | `null` (`RETAINED`) | **`Export everything`** | unchanged |
+
+- **The agency's control links to the retention section of the engagement's
+  settings page**, which already carries the correct sentence about what
+  retaining is and what it is not. It is not a new destination and not a new
+  paragraph; the anchor already exists for the ≤14-day board strip to point at.
+- **The agency's export does not live here.** It lives on the settings page,
+  beneath the sentence that distinguishes it from retaining, and on the ≤14-day
+  board strip where §3 of `FLOWS.md` already places both actions together.
+  Nobody exports a live workspace on day three, and putting the rescue where the
+  conversion belongs cost the product both.
+- **On `RETAINED` the agency strip carries no control.** There is nothing to
+  keep. The badge is the whole answer and a button beside it would be a control
+  with no job — the same defect one step quieter.
+- **The client's control never changes with the plan**, in either direction. The
+  client's export is never paywalled and never withdrawn: their right to take a
+  copy is not a function of somebody else's billing (`FLOWS.md` §3).
+- **`Export everything`, never `Export`.** Same label wherever it appears —
+  slate, board strip, settings page, email — per `FLOWS.md` §3 and the
+  verb-takes-an-object rule in `DESIGN-SYSTEM.md`.
+
+### The client does not read the word "purge"
+
+The plate's terms are `WRAP` and `PURGE`. Those are Relay's nouns, from the
+vocabulary table, and they are correct on the agency's surface. On the client's
+surface `PURGE` is an internal word printed at somebody who has never used
+Relay — one line above a control they are then expected to infer the purpose of.
+Every other piece of client copy in the product already says *deleted*.
+
+**Client surface: the term is `DELETED`.** The value (`IN 48d`), the `<time>`,
+the `title` and the escalation are untouched — this is one `<dt>` string, and it
+is the difference between a record and a record in a language the reader speaks.
+
 ### Rules
 
 1. **Never dismissible.** No close control, no collapse, no "remind me later".
-   It is also the conversion surface.
 2. Rendered on **both** sides. The client sees the same countdown the agency
-   sees (PRD §5.6). It is not an agency-internal warning.
+   sees (PRD §5.6). It is not an agency-internal warning. *The countdown is what
+   is shared; the control is not.*
 3. `daysToPurge === null` (retaining plan) → the countdown is replaced by
    `<Badge tone="neutral">RETAINED</Badge>` and the strip stays. The strip's job
    is to say what happens to this workspace; "nothing" is an answer.
-4. Full mono. This whole strip is a record.
+4. Full mono for the records. The control is not mono — a button label is never
+   mono (`Mono`'s own contract).
+5. **One control, at most.** Two controls on a 36px strip is unreadable at
+   360px and it re-opens the question this section exists to close: which of
+   these is the answer to the countdown?
 
 ### Tokens
 
 | Part | Class |
 |---|---|
 | Strip | `w-full bg-paper border-b-hairline border-rule-strong px-3 h-9 sticky top-0 z-slate` |
-| Records | `<Mono tone="ink" size="12">`, uppercase source strings |
+| Records | `<Plate layout="strip">`, `<Mono tone="ink" size="12">`, uppercase terms |
 | Separator | `text-muted` middle dot, `aria-hidden` |
-| Export | `<Button tone="quiet" size="sm">Export</Button>` |
+| Control | `<Button tone="quiet" size="sm">` — never `agency`/`client` filled: it does not hand the ball over |
 
 ### Escalation — by weight, never by hue
 
@@ -531,21 +603,30 @@ contract working. See `FLOWS.md` §3 for the full purge-warning experience.
 | hover / focus | Only on `Export`. |
 | loading | The strip renders with `WRAP —` / `PURGE IN —` in `text-muted`. It never disappears while loading; a lifecycle strip that flickers out is worse than one that says "—". |
 | empty | Not possible — an engagement always has a status. |
-| disabled | Export disabled only while an export is already running; label becomes `Preparing…` with `<Button loading>`. |
-| error | Export failed: the strip keeps its records and the button reverts, with `role="alert"` text below: "Export failed. Try again — nothing has been deleted." |
+| disabled | Client: export disabled only while an export is already running; label becomes `Preparing…` with `<Button loading>`. Agency: `Keep this workspace` is a link and is never disabled — it goes to a page that explains itself. |
+| error | Client, export failed: the strip keeps its records and the button reverts, with `role="alert"` text below: "Export failed. Try again — nothing has been deleted." |
+| not wrapped yet (agency) | The `WRAP` control stays exactly where it is, at the head of the strip, before the records. It is the control that *starts* the countdown and it is not the one control this section is about — a strip with no countdown on it yet has nothing to convert against. Once `wrappedAt` is set it disappears and `Keep this workspace` is the only control. |
 
 ### Name / role
 
 `role="region"`, `aria-label="Engagement lifecycle"`. Each `Mono` carries its own
-`label`: "Days since wrap", "Days until purge". A reader hears
-"Engagement lifecycle region: days since wrap 12, days until purge 48, Export
-button".
+`label`: "Days since wrap", "Days until purge" — on the client, "Days until this
+workspace is deleted". A reader hears "Engagement lifecycle region: days since
+wrap 12, days until purge 48, Keep this workspace link".
+
+The control takes `aria-describedby` pointing at the countdown's `<dd>`, so a
+reader who tabs straight to it hears *what it is the answer to* rather than an
+orphaned verb. This is the accessible form of the same fix: the control and the
+countdown are one statement, and only one of them said so.
 
 ### 360
 
 - Height grows to `h-auto`, `py-1.5`, and the records wrap to two lines.
-- `Export` stays on the first line, right-aligned, and shrinks to `size="sm"` —
-  it is already the smallest size.
+- The control stays on the first line, right-aligned, at `size="sm"` — it is
+  already the smallest size. `Keep this workspace` is three words and wraps
+  badly at 360px; it truncates from the right with no ellipsis and keeps its
+  full accessible name. Do not shorten it to `Keep` — that is the bare verb
+  again, one screen size down.
 - The strip remains sticky. It costs 36–56px and it is the one piece of chrome
   that must never be scrolled away.
 
@@ -1169,3 +1250,346 @@ to look, the motion has failed at the thing it was for.
 entry for it in `tests/unit/a11y-source.spec.ts` is now stale — QA's file, QA's
 call, but an empty `KNOWN_CALL_SITE_OFFENDERS` asserts more than a subset check
 with one dead name in it.)*
+
+---
+
+# Round 4 — the handoff, the picker, and the destructive-action pattern
+
+> Added after the product owner used the deployed build. Two of the three items
+> below were not visible from the code — they are only visible to somebody
+> holding the interface and trying to get a job done with it.
+
+## 15. `CopyField` (primitive)
+
+A value the interface is **handing over**: one that has to leave the screen and
+land somewhere else. Relay hands over three — the client link, a full sha256,
+an export job id — and before round 4 every one of them was printed as raw text
+with no affordance on it.
+
+### The anatomy
+
+```
+<div>
+  ├─ label            The client’s link                     14 / body / medium
+  ├─ Row
+  │   ├─ code         https://…/e/6b1f…                     mono, break-all, bg-field
+  │   ├─ Button ghost Show                                  only when `secret`
+  │   └─ Button quiet Copy link                              the primary act
+  ├─ p                what the value is for                 12 / muted
+  └─ p role=status    Copied to your clipboard.             12 / muted
+</div>
+```
+
+### Rules
+
+1. **The button carries the verb and the object.** `Copy link`, not `Copy`. A
+   page with four copyable things and four buttons reading `Copy` has four
+   controls a reader has to disambiguate by position.
+2. **The result is shown where the action was taken** — a `role="status"` line
+   under the control, the same shape `ExportControl` already uses. There are no
+   toasts in this product. The button label does **not** mutate into `Copied`: a
+   control that stops saying what it does has traded its label for a receipt.
+3. **Nothing is on a timer.** No two-second revert, no fade. This product has
+   one duration token and a dwell is not a duration; a state that vanishes on
+   its own is also one a screen reader can miss. The status line stays until the
+   value changes. A second press re-announces (the message is keyed by a press
+   counter) rather than going silent because the string did not change.
+4. **The value is a `<code>`, not an `<input readOnly>` and not an `<output>`.**
+   A read-only input invites a click that does nothing. `<output>` is an
+   implicit live region — revealing a masked value would read the whole token
+   aloud to somebody who only wanted to look at it.
+5. **The clipboard is allowed to refuse.** `navigator.clipboard` needs a secure
+   context and a permission a browser may withhold. On refusal the component
+   does not fail silently and does not claim success: it reveals the value,
+   selects it, and says which keys to press. The point is that the person leaves
+   with the value.
+6. **`secret` masks by default and copy still works masked.** Revealing is for
+   the person who wants to check the value, not a step on the path to taking it.
+
+### When a value earns `secret`
+
+Only when **all three** are true: it is a credential or credential-adjacent, it
+is long enough that nobody would ever transcribe it by hand, and it has no
+cheap per-item revocation. The client link is the only value in Relay that
+qualifies today (see §17 below and `FLOWS.md` §6). A sha256 fails the first
+test; an export job id fails all three.
+
+### 360
+
+The value and the buttons stack: `code` full width on line one, the buttons
+right-aligned on line two. The buttons never shrink below `size="md"` (36px) —
+this is the one control on the page whose job is to be pressed successfully on
+the first attempt.
+
+---
+
+## 16. `Select` (primitive)
+
+A native `<select>` in the `Field` shell.
+
+Native for the same reason `Dialog` is built on `<dialog>` and the decision
+bar's choice is two real radios: the platform ships the keyboard behaviour, the
+typeahead, the mobile wheel and the screen-reader semantics, and a bespoke
+listbox is a dependency's worth of code that gets one of those subtly wrong.
+
+- Same control tokens as `Field`: 44px tall, 16px text, `bg-field`,
+  `border-rule-strong`. Both numbers are floors, not preferences.
+- `labelHidden` is available on `Field`, `Textarea` and `Select`. It hides the
+  label visually and never removes it, and it exists for exactly two shapes: an
+  inline box under a heading that already names it, and a control inside a `<dl>`
+  whose `<dt>` is its name. It is the first of the two gaps `style-tokens.ts`
+  names as blocking deletion of the legacy `input` string. The second — a mono
+  control — is still open.
+- **A select is for choosing among values that already exist. It is not for
+  choosing among one.** See §17.
+
+---
+
+## 17. `AssigneePicker`
+
+Who on the agency's side owns a card. Agency bundle only: `assignee` is an
+internal field and the client projection cannot emit it (INV-1).
+
+### Why this is not a detail-panel property
+
+Two facts in the code make assignment structural rather than decorative, and
+both were invisible from the design docs until round 4:
+
+1. **`draft → assigned` is the only transition out of `draft`**
+   (`domain/card/state-machine.ts`). The board's first move is literally named
+   after this control. A product with no picker has a state machine whose first
+   edge nobody can walk deliberately.
+2. **`rankAttention()` buckets on `assigneeId`.** `blocked_on_you` requires
+   `assigneeId === viewerUserId`; `assigneeId === null && stale` falls into
+   `no_movement_7d`. So on a board where nothing is assigned, **`BLOCKED ON YOU`
+   is permanently empty and `NO MOVEMENT IN 7 DAYS` silently fills up** — the
+   agency's home screen degrades into a rot list, and it does so quietly, seven
+   days after anyone would connect it to a missing picker.
+
+That second one is the argument. The picker is not a convenience on a card; it
+is the input to the screen the agency opens every morning.
+
+### Two mounts, one component
+
+| Mount | Shape | What it does |
+|---|---|---|
+| **Card detail, the assignee row** | `<Select labelHidden>` inside the existing `<dl>`; the `<dt>` "Assignee" is its label | a plain edit |
+| **Card detail, while `state === 'draft'`** | the forward control reads **`Assign to…`** and *is* the picker | choosing a person is the transition |
+
+In `draft`, assignment and the `draft → assigned` transition are **one act for
+the person**. Whether that is one request or two is the back-end's call — INV-2
+means only the state machine writes `cards.state`, so it may well be two — but
+the interface must not ask somebody to pick a name and then separately press a
+second button to tell the board about it. That is the shape that produces boards
+full of unassigned cards.
+
+**Not on `CardTile`.** The tile shows the result, never sets it: the tile is one
+link and a control inside a link is a bad target, and there is no room at 304px.
+This mirrors `FLOWS.md` §2 — the publish gate is not on a card tile either.
+
+### The single-member case
+
+An org with one member does not get a menu of one.
+
+| Assignable members | Control |
+|---|---|
+| 1 | **`Assign to me`** — `<Button tone="agency">`. No `Select` is rendered at all. |
+| 2+ | the `Select`, first option `Unassigned` |
+| 0 | impossible — the viewer is one. If the endpoint returns zero that is a bug; render `Assign to me`, never an empty menu. |
+
+Three reasons this is the right answer and not a special case:
+
+- **Do not hide the control.** A solo agency still needs the card to leave
+  `draft`, and there is no other edge out of it.
+- **Do not auto-assign.** A card that assigns itself fills somebody's
+  `BLOCKED ON YOU` with work they never accepted, and it is the same species of
+  inference INV-14 forbids one step short of sending mail about it.
+- **A menu of one is the interface making the user do its arithmetic.** One
+  press, no list, no explanation — and when a second member appears the control
+  becomes the picker with no migration and nothing to announce.
+
+The count that decides this is **the members assignable on this engagement,
+already resolved by `resolveAccess()`** (INV-11) — never a raw membership-row
+comparison in the component, and never "every user in the org".
+
+### `Unassigned` is a first-class option, not an ✕
+
+`cards.assignee_id` is `ON DELETE SET NULL`, so the product already manufactures
+unassigned cards without anybody choosing it — a person leaves, and their cards
+become unassigned. A card that became unassigned that way must look identical to
+one that was never assigned, because it *is* the same thing. So the null case is
+the first option in the list, reading **`Unassigned`** — not "None", not "—".
+
+### What an unassigned card looks like against an assigned one
+
+| | Rendering on `CardTile` and `AttentionRow` |
+|---|---|
+| **Assigned** | the person's name, `font-sans text-12 text-muted truncate`, in the footer `Row` beside `PossessionBar.Label`. Not an avatar — this product has no images and no illustrations, and an avatar would be the first one. A name is prose, so it is not `Mono`. |
+| **Unassigned** | `<Badge tone="neutral">UNASSIGNED</Badge>`, in the same slot |
+
+The weighting is deliberately inverted from the usual. On a board whose home
+screen buckets by *who is blocked*, the **missing** name is the more
+consequential fact, so the absence gets the stamp and the presence stays quiet.
+An assigned card is normal, and normal is not marked.
+
+- **Never `--breach`, and no hue at all.** An unassigned card is not a breached
+  commitment. `--breach` remains exhaustively `roundsUsed > contractedRounds`.
+- **`PossessionBar` is untouched.** Possession is a *side*; assignment is a
+  *person*. They are different axes and an assigned and an unassigned card in
+  `in_progress` both carry the pine bar. Do not tint the bar by assignment.
+- **In `AttentionList`**, an unassigned card in `no_movement_7d` renders the
+  badge. That is the only place the rot bucket says *why* it is rotting, and it
+  is what turns the bucket from a list of shame into a list of actions.
+
+### Copy
+
+The action keeps its name through the flow: the control says **`Assign to…`**,
+the result says **`Assigned to Priya`**, the state chip already says
+**`Assigned`**. One word, whole flow. Never "Owner", never "Responsible",
+never "@".
+
+### States
+
+| State | Rendering |
+|---|---|
+| default | As above. |
+| loading (members not yet read) | The row renders the current value as text with no control, `aria-busy`. Never an empty select. |
+| saving | `<Select disabled>`; the chip crossfade on success is the feedback. |
+| error | The previous value is restored and `role="alert"` reads "That didn't save. {server message}" in `text-ink font-semibold`. Not `--breach`. |
+| archived engagement | The row renders the name as text and no control. There is no action to explain — same call `LaneColumn` makes about its Add button. |
+
+### Motion
+
+**None.** The chip crossfades `Draft → Assigned` through the existing
+`chip-in`/`chip-out`, and that crossfade is the feedback — the same answer the
+publish gate gives, where the chip change *is* the notification. `stamp` is not
+extended to assignment: `stamp` means a record was made (a version published, a
+decision recorded, a round consumed) and an assignment is an edit. Keeping the
+trigger list short is what keeps `stamp` meaning anything.
+
+### Name / role
+
+`<select>` labelled by the `<dt>` via `labelHidden`. `aria-describedby` carries
+"Only people on this engagement can be assigned." where the list is shorter than
+the org. The single-member button's accessible name is its visible label.
+
+### 360
+
+Full width; in the `<dl>` the row goes to two lines with the control on the
+second. 44px, 16px — the agency has phones too, and the token set is one.
+
+---
+
+## 18. The destructive-action pattern
+
+> Applies to every control in the product that removes something. Today that is
+> a card and a lane; the shape is written so the next one does not get invented
+> from scratch.
+
+### First, the fact that determines the whole pattern
+
+**Relay destroys bytes in exactly one place, and it is not a button.**
+
+`lanes → cards → asset_versions → approvals` are all `ON DELETE CASCADE`, so a
+literal `DELETE FROM lanes` would destroy the approvals that ADR-004 says must
+survive a dispute six months later, the versions INV-4 says are append-only, and
+the possession ledger INV-5 says is the sole source of the clock. INV-7 gives
+exactly one path that may destroy an engagement's content and it ends in a
+`purge_certificate`.
+
+So `removeCard()` / `removeLane()` (ADR-026) take the **least destructive
+mechanism that satisfies the request** and report which one they used:
+
+- **discard** — a real delete, permitted only when the cascade has nothing to
+  cascade to: no versions, no transitions, no comments. That is a typo or a
+  mis-drag.
+- **archive** — everything else. It leaves both boards; every version, approval,
+  transition and comment stays exactly where it was.
+
+### The design obligation that creates
+
+**The caller does not choose the mechanism. The interface must still say which
+one is about to happen, before the press.**
+
+"Nothing is destroyed" and "this row is deleted" are different promises and only
+one of them can be made about any given card. A single confirmation that hedged
+across both would be false half the time — and it would be false in the
+direction that matters, because the half it comforts wrongly is the half
+carrying approvals. `cardDependents()` is a read, the counts are knowable in
+advance, and therefore the dialog is written from them.
+
+### The three tiers, chosen by what survives — never by how frightening the word is
+
+| Act | Surface | Confirmation |
+|---|---|---|
+| **Discard** a card carrying nothing | card | **No dialog.** A `ghost` control and a `role="status"` undo line. Nothing is being destroyed; a modal here trains people to click through modals. |
+| **Archive** a card carrying versions, approvals or history | card | `Dialog dismissible` — the survivor plate, below |
+| **Discard** an empty lane | lane | `Dialog dismissible`, one line: it holds nothing |
+| **Archive** a lane holding cards | lane | `Dialog dismissible` — **and the card count is the headline**, because hiding twelve cards with one press is the largest blast radius available to a person in this product |
+| **Wrap** | engagement | `Dialog dismissible` stating the purge date it creates |
+| **Purge** | engagement | **not a control.** A deadline the interface has stated since screen one |
+
+### The dialog
+
+```
+<Dialog title="Archive this deliverable?" dismissible>
+  ├─ p   text-14 text-ink     what leaves
+  ├─ Plate layout="stack"     WHAT IS KEPT — versions, approvals, comments, first/last dates
+  ├─ p   text-14 text-muted   the guarantee, with the purge date in it
+  └─ footer   [Cancel ghost]  [Archive it  quiet]
+```
+
+**Rules, and every one of them is a rejection of a habit:**
+
+1. **Lead with what survives.** A normal delete confirmation leads with what is
+   destroyed. In Relay the answer is usually "nothing", so leading with the
+   destruction would be leading with a falsehood. Never ship the sentence
+   "This cannot be undone" on an act that can be.
+2. **The survivor list is a `Plate`, not prose.** Counts are records and this
+   product sets records in mono (`LABEL-SYSTEM.md` §3a). It is also the object
+   that makes the decision, so it should be the densest thing in the dialog.
+3. **Say whether the client has seen it.** A card silently vanishing from a
+   client's board is a worse outcome than the removal itself, and it is the one
+   the agency cannot see. Zero transitions is a sound proof of never-seen
+   (INV-2 + INV-5), so the dialog can say it truthfully:
+   - seen: **"The client has seen this. It disappears from their board too."**
+   - not: **"The client has never seen this."**
+4. **No `--breach`, and no red button.** The `Button` primitive has no `breach`
+   tone and must not grow one — a red Delete would spend the one colour that
+   means a contracted round was exceeded. Destructive confirm is
+   `tone="quiet"`; Cancel is `ghost`.
+5. **No hazard rule.** `Rule weight="hazard"` has exactly one referent in this
+   product — the purge boundary (`LABEL-SYSTEM.md` §3d) — and a removal dialog
+   is not it. This is the entry that keeps that rejection real.
+6. **`dismissible` is `true`.** A dialog you cannot escape is for an act that
+   cannot be undone. Archiving can be undone; discarding an empty card destroys
+   nothing anyone will miss.
+7. **No typed confirmation.** Reserved for an act that destroys bytes, which is
+   nothing a user can press today. Making somebody type `DELETE` to archive a
+   card inflates the act and trains the reflex that will one day type through
+   the one that matters.
+8. **Nothing animates beyond the dialog's own `sheet-in` / `scrim-in`.** No
+   shake, no flash, no red pulse.
+9. **The undo is offered where the action happened.** A `role="status"` line at
+   the head of the lane: *"Hero film cutdown archived. `[ Put it back ]`"*. Not
+   a toast — there are none. Not on a timer — there are none. It persists until
+   the page changes, which is longer than any toast and costs nothing.
+
+### How it differs from wrap and from purge
+
+A person should be able to read these three sentences off the interface without
+a manual, and the axis they differ on is **when the bytes go** — which is not
+the same axis as "how alarming is this button":
+
+- **Archive** takes one deliverable, or one column, off the board. *Nothing is
+  deleted.* Reversible.
+- **Wrap** ends the engagement and starts the countdown. *Nothing is deleted
+  yet* — it sets the date.
+- **Purge** destroys the bytes on that date and leaves one certificate. It is
+  not a control; it is the deadline the wrap slate, the sign-in footer and four
+  emails have all been stating from the beginning.
+
+Archiving a card is not a breach and never renders `--breach`. Archiving a card
+whose `roundsUsed > contractedRounds` does not un-breach anything either — the
+breach lives in the approval record, and the approval record survives. That is
+the whole point of the pattern.
