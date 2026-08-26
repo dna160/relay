@@ -22,8 +22,19 @@ import { sql } from 'drizzle-orm';
 import { db } from '@/db/client';
 
 /** Never cached, never statically rendered — a cached health check is a lie. */
-/** Injected by Railway at build time; `dev` locally. */
-const RELEASE = (process.env.RAILWAY_GIT_COMMIT_SHA ?? 'dev').slice(0, 7);
+/**
+ * What this instance is serving.
+ *
+ * A git deploy gets the commit sha. A `railway up` from a working tree has no
+ * commit to name — it uploads source — so it falls back to the deployment id,
+ * which is the thing a rollback actually changes and therefore the honest
+ * answer either way. `dev` locally.
+ */
+const RELEASE = (
+  process.env.RAILWAY_GIT_COMMIT_SHA ??
+  process.env.RAILWAY_DEPLOYMENT_ID ??
+  'dev'
+).slice(0, 8);
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
