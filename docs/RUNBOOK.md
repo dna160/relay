@@ -714,3 +714,61 @@ rollback. Migrations are forward-only and never edited after commit, so a
 rollback re-runs already-applied migrations as a no-op — proven separately, and
 it held here. **A rollback does not undo a migration**, and a schema change that
 the old code cannot tolerate needs the two-deploy dance in §4, not this.
+
+---
+
+## Appendix — the staging topology, as actually stood up
+
+Built 2026-08-26. Everything here was executed.
+
+| Service | Source | Region | Start | preDeploy |
+|---|---|---|---|---|
+| `relay-web` | `dna160/relay@main` | Southeast Asia | `npm run start` | `npm run db:migrate` |
+| `relay-worker` | `dna160/relay@main` | Southeast Asia | `npm run worker` | **none** |
+| `Postgres` | Railway managed | Southeast Asia | — | — |
+
+`https://relay-web-staging.up.railway.app`
+
+### `railway.json` had to be deleted, not superseded
+
+Config as Code is **per-repo**, so both services read one `startCommand`. The
+worker therefore ran `next start` — a second copy of the web server — and ran
+the `preDeployCommand`, so two services raced the same migration. That file's
+own comment warns the ordering is the classic first outage; it simply could not
+express an exception for itself.
+
+Applying `.railway/railway.ts` set the correct per-service commands and Railway
+accepted them — **and the next deployment still ran `next start`.** With both
+files present the deprecated one wins. Migrating means removing it.
+
+Verified afterwards, and this is the check worth repeating after any config
+change:
+
+```bash
+railway logs --service relay-web -d    | grep -iE 'migrat|next start'   # both
+railway logs --service relay-worker -d | grep -ciE 'db:migrate'          # 0
+```
+
+The worker's startup line names its queues, which is the fastest way to see it
+is a worker and not a web server:
+
+```
+worker.started queues=["retention.archive","retention.warn",
+  "retention.purge-sweep","purge.engagement","export.build"]
+```
+
+### Two CLI facts the earlier procedure assumed wrongly
+
+- **`railway redeploy` has no `--deployment` flag**, and no CLI command selects
+  an older deployment. Roll back by redeploying the previous tree (§ rollback).
+- **`railway service source connect` reports `ServiceInstance not found`** and
+  connects the repo anyway, if run immediately after `railway add`. Check
+  `railway service list` before believing the error.
+
+### Still outstanding
+
+Production environment, a custom domain, `S3_*` and `RESEND_API_KEY` (both
+`preserve()` in the IaC file and unset on staging, so uploads and email are
+inert there), and the `invariant-change` GitHub label that
+`check-invariant-weakening.mjs` requires on any PR removing an invariant
+assertion.
