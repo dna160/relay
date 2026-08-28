@@ -23,22 +23,31 @@
  * role is a `Badge` — a stamp on the document, in the display face, like
  * PRIVATE on a lane — because it is a classification and not a measurement.
  *
- * ## `lastSeenAt` is on the shape and is deliberately not rendered
+ * ## The one date, and why it is never a negative claim
  *
- * "Never signed in" is the single most useful thing this roster could say — it
- * is how an agency finds out an invitation was accepted by nobody — and it
- * would be **false**. `OrgMember.lastSeenAt` reads `users.last_seen_at`, and
- * nothing in this codebase writes that column: `verify-contact.ts` stamps
- * `client_contacts.last_seen_at` for a reviewer, and there is no equivalent on
- * the agency side. Every member would therefore be labelled as never having
- * signed in, including the person reading the page.
+ * `users.last_seen_at` was written by nothing when this roster first shipped —
+ * `verify-contact.ts` stamped the *reviewer's* column and the agency side had
+ * no equivalent — so "never signed in" would have been printed beside every
+ * member including the person reading the page. The roster showed the join date
+ * instead and said nothing it could not back. Establishing a session now stamps
+ * the column, so the value is real.
  *
- * A colleague who joined this morning renders identically to one who has been
- * here a year, which is the shape of every other guard this build has been
- * bitten by: a value that cannot distinguish the two states it claims to
- * distinguish. So the roster states the join date, which is real, and says
- * nothing it cannot back. Raised with the back-end — when a sign-in stamps the
- * column, this is one line.
+ * It is still not used to make a **negative** statement, and that is the part
+ * worth keeping. One path still bypasses the stamp: Auth.js's own magic-link
+ * callback creates its session through the adapter rather than through
+ * `establishAccountSession()`. It is the fallback route now that the code flow
+ * is primary and there is no magic-link form left in the product — but it is
+ * not nothing, and "never signed in" printed against somebody who signs in
+ * weekly is worse than saying less.
+ *
+ * So the slot shows the *stronger true thing*: the last sign-in when there is
+ * one, the join date when there is not. A null reads as "no sign-in recorded
+ * here", which is what the column actually means, and never as a claim about
+ * what the person did. One slot either way, so the row does not grow a fourth
+ * item at the 360px floor.
+ *
+ * The question this roster no longer has to answer is "did the invitation
+ * land?" — an unaccepted invitation is sitting in the list below, by name.
  *
  * ## No entrance animation, deliberately
  *
@@ -96,7 +105,9 @@ export function TeamRoster({ members }: { members: readonly OrgMember[] }) {
             {orgRoleLabel(m.role).toUpperCase()}
           </Badge>
           <span className={cn(mono, 'text-12', muted)}>
-            since {formatDate(m.joinedAt)}
+            {m.lastSeenAt === null
+              ? `since ${formatDate(m.joinedAt)}`
+              : `last in ${formatDate(m.lastSeenAt)}`}
           </span>
         </li>
       ))}

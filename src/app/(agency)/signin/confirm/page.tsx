@@ -43,9 +43,9 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getSession } from '@/lib/auth';
+import { safeCallback } from '@/lib/links';
 import { cn, display, muted } from '@/components/style-tokens';
 import { ConfirmSignIn } from '@/components/agency/confirm-signin';
-import { safeCallback } from '../safe-callback';
 
 export const metadata: Metadata = { title: 'Confirm it is you · Relay' };
 

@@ -31,9 +31,9 @@
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import { getSession, pendingOnboarding } from '@/lib/auth';
+import { safeCallback } from '@/lib/links';
 import { cn, display, muted } from '@/components/style-tokens';
 import { AccountSignInForm } from '@/components/agency/account-signin-form';
-import { safeCallback } from './safe-callback';
 
 export const metadata: Metadata = { title: 'Sign in · Relay' };
 
@@ -66,6 +66,24 @@ export default async function SignInPage({
     searchParams,
   ]);
 
+  /**
+   * `safeCallback` lives in `@/lib/links` and not beside this page, and the
+   * move is the point rather than a tidy-up.
+   *
+   * This module had its own copy for one round, with a header that argued
+   * against exactly that: "a second copy is a second place for the `//` case to
+   * be forgotten." It became true the moment the back-end needed the same rule
+   * to build the *emailed* link — the destination now travels in the mail, so
+   * the validator is used by a route as well as by two pages, and `links.ts`
+   * already owns where links point. Two implementations of an open-redirect
+   * guard is the kind of duplication that is harmless until the day one of them
+   * is patched.
+   *
+   * The intermediate step — leaving this file as a one-line re-export — was
+   * rejected. It removes the second *implementation* and keeps a second
+   * *name*, so `grep safeCallback` still finds two places and the next reader
+   * still has to work out which is real.
+   */
   const callbackUrl = safeCallback(query.callbackUrl);
 
   if (session?.kind === 'agency') redirect(callbackUrl);

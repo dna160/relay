@@ -53,20 +53,29 @@ export interface InviteFailureCopy {
 /**
  * The two spellings of a refusal, collapsed to one value.
  *
- * `ERROR_CODES` gained `INVITE_ADDRESS_MISMATCH` (409), `INVITE_EXPIRED` (410)
- * and `INVITE_CONSUMED` (409), which is where this is going: a named code is a
- * fact the contract states. `POST /api/invites/:token/redeem` still answers a
- * 400 `VALIDATION_FAILED` carrying `details: { reason }`, which is what ships
- * today.
+ * `POST /api/invites/:token/redeem` now answers each refusal with its own code
+ * — `INVITE_ADDRESS_MISMATCH` (409), `INVITE_EXPIRED` (410), `INVITE_CONSUMED`
+ * (409) — **and** keeps `details: { reason }` beside it, both from one `switch`
+ * so they cannot drift. The code is the contract; the reason is what makes a
+ * log line say `address_mismatch` rather than `409`.
  *
- * Both are read, code first. Reading only the codes would render the generic
- * sentence for every refusal on the current build — the ambiguous failure this
- * file exists to prevent — and reading only `details` would rot the day the
- * route moves. `ApiFailure.code` is compared as a widened string because these
- * three are not in the `ErrorCode` union this module can see; a `case` for a
- * literal the union does not contain will not compile, and a cast asserting it
- * does would be a lie about the contract. Same move
- * `agency/failure-copy.ts`'s storage block makes.
+ * The code is read first and the reason is the fallback. That ordering is now
+ * belt to braces rather than load-bearing, and it is kept for one reason: a
+ * front-end and a back-end do not deploy in the same instant, and a build of
+ * this page running against a server that predates the codes would otherwise
+ * render the generic sentence for every refusal — the ambiguous failure this
+ * file exists to prevent, appearing exactly during a rollout.
+ *
+ * `ApiFailure.code` is compared as a widened string rather than switched on:
+ * `ErrorCode` is a union this module resolves from `@/lib/types`, and writing a
+ * `case` for a literal is only safe while the two agree. Same move
+ * `agency/failure-copy.ts`'s storage block makes, and the same reasoning.
+ *
+ * **`unknown_token` and `target_gone` are 404 with no details, deliberately.**
+ * Both mean "there is nothing here", and a caller must not be able to tell a
+ * token that never existed from one whose organisation was deleted. They fall
+ * through to the 404 branch below, which says the link opens nothing — which is
+ * true of both and distinguishes neither.
  *
  * `INVITE_CONSUMED` maps to `not_redeemable` rather than to a fourth branch:
  * the domain uses one refusal for consumed and revoked because both mean the

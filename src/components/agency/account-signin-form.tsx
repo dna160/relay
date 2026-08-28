@@ -79,7 +79,24 @@ export function AccountSignInForm({
         onSubmit={async (e) => {
           e.preventDefault();
           if (!emailReady) return;
-          const r = await requestCode.run('Code sent', { email: email.trim() });
+          /*
+           * `callbackUrl` goes with the request, not only into the next step's
+           * closure. The route puts it into the emailed link, which is what
+           * makes the *other* device work: somebody who started an invitation
+           * on a laptop and opens the mail on their phone lands back on the
+           * invitation rather than on `/onboarding` — the screen that offers to
+           * create a second agency, shown to a person whose whole reason for
+           * having no organisation is that they are one press from joining one.
+           *
+           * Unvalidated here by design. `safeCallback()` runs on the route,
+           * once, before the value reaches an email; a second check in the
+           * browser on a browser-supplied value would be a second
+           * implementation of an open-redirect guard proving nothing.
+           */
+          const r = await requestCode.run('Code sent', {
+            email: email.trim(),
+            callbackUrl,
+          });
           if (r.ok) setStep('code');
         }}
       >

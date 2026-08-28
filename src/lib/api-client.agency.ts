@@ -523,8 +523,25 @@ export const agencyApi = {
    * The surface must not undo that. There is no copy anywhere in this flow that
    * says whether an address is known to Relay, because the honest sentence — we
    * sent it if it exists — is also the safe one.
+   *
+   * ## `callbackUrl` is not a convenience, it is the invitee's whole journey
+   *
+   * The destination travels **in the emailed link**, not only in the tab that
+   * asked for the code, and that is the difference between an invited colleague
+   * landing back on their invitation and landing on `/onboarding` — the screen
+   * that offers to create a *second* agency, in front of somebody who has no
+   * organisation precisely because they are one press away from being given
+   * one. The tab that made the request already had the destination; the phone
+   * the mail was opened on did not, until this field.
+   *
+   * Sent unvalidated on purpose. `safeCallback()` in `@/lib/links` is the one
+   * definition, it runs on the route before the value reaches the email, and it
+   * reduces anything that is not a single-leading-slash path to the default. A
+   * second validation here would be a second implementation of an open-redirect
+   * guard, which is the duplication that module was just collapsed to remove —
+   * and a browser-side check on a browser-supplied value proves nothing anyway.
    */
-  requestSigninCode(body: { email: string }, ctx?: RequestContext) {
+  requestSigninCode(body: { email: string; callbackUrl?: string }, ctx?: RequestContext) {
     return request<{ sent: boolean; expiresInMinutes: number }>('/api/auth/signin/request', {
       method: 'POST',
       body,

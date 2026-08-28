@@ -71,11 +71,17 @@ export const DEFAULT_CALLBACK = '/onboarding';
  * is precisely the wrong door for an invitee who has no organisation and is
  * about to be given one.
  *
- * `src/app/(agency)/signin/safe-callback.ts` states the same rule for the two
- * pages that read the parameter, and its own header gives the reason this
- * belongs in one place: "a second copy is a second place for the `//` case to
- * be forgotten". That module should become a re-export of this one — it is the
- * front-end's file, so this is a note rather than an edit.
+ * `src/app/(agency)/signin/safe-callback.ts` briefly stated the same rule for
+ * the two pages that read the parameter, and its own header gave the reason
+ * this belongs in one place: "a second copy is a second place for the `//` case
+ * to be forgotten". That file is gone and `/signin` and `/signin/confirm`
+ * import this one — deleted rather than left as a re-export, because a
+ * pass-through module removes the second implementation and keeps a second
+ * name.
+ *
+ * **This is the only definition. There must not be a second one**, in a page,
+ * in a route, or in a test helper. An open-redirect guard that exists twice is
+ * one patch away from existing in two versions.
  */
 export function safeCallback(raw: string | null | undefined): string {
   if (!raw || !raw.startsWith('/')) return DEFAULT_CALLBACK;
