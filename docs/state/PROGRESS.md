@@ -21,7 +21,7 @@
 | 8 | Hardening & deploy | ✅ deploy + rollback executed; staging live on GitHub source |
 | — | *v1.1 platform layer below — specified, not started* | |
 | 9 | Identity and tenancy migration | 🟡 built — awaiting the shadow window |
-| 10 | Auth and invites | ⬜ not started |
+| 10 | Auth and invites | ✅ complete — INV-12 proven live, not asserted |
 | 11 | Multi-org navigation and teams | ⬜ not started |
 | 12 | Document ingestion | 🔴 blocked on D4, D5 |
 | 13 | Deployment and retention hardening | 🟡 staging topology complete; production + custom domain outstanding |

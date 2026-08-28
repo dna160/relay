@@ -48,6 +48,7 @@ import { agencyApi, type AssignableMember } from '@/lib/api-client.agency';
 import { useAction } from '@/lib/hooks/use-action';
 import { Button, Select } from '@/components/primitives';
 import { cn, mono, muted } from '@/components/style-tokens';
+import { personLabel } from './vocabulary';
 
 /** The null case. First in the list, and a real option — see below. */
 const UNASSIGNED = '';
@@ -132,7 +133,11 @@ export function AssigneePicker({
   /* ------------------------------------------------------------- read-only */
 
   if (readOnly) {
-    return <span className="text-14 text-ink">{assignee?.name ?? 'Unassigned'}</span>;
+    return (
+      <span className="text-14 text-ink">
+        {assignee ? personLabel(assignee) : 'Unassigned'}
+      </span>
+    );
   }
 
   /* --------------------------------------------------------------- loading */
@@ -145,7 +150,7 @@ export function AssigneePicker({
      */
     return (
       <span className="text-14 text-ink" aria-busy="true">
-        {assignee?.name ?? 'Unassigned'}
+        {assignee ? personLabel(assignee) : 'Unassigned'}
       </span>
     );
   }
@@ -225,8 +230,19 @@ export function AssigneePicker({
   );
 }
 
-/** A person's name, falling back to the address when they have not set one. */
+/**
+ * A candidate's name, falling back to the address when they have not set one.
+ *
+ * Distinct from `personLabel` by one case and it matters: this one is also used
+ * inside a *sentence* — "Assigned to …" — where `A teammate` reads wrong and
+ * `them` reads right. `personLabel` is for a label standing on its own. Both
+ * refuse to render an id, which names nobody.
+ *
+ * A newly invited colleague has a null `name` by construction, so this fallback
+ * is the normal case for exactly the people this picker exists to make
+ * assignable, not an edge.
+ */
 function personName(m: AssignableMember | undefined): string {
   if (!m) return 'them';
-  return m.name ?? m.email;
+  return personLabel(m);
 }

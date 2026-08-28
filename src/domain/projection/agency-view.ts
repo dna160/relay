@@ -36,6 +36,25 @@ export interface AgencyVersionRow {
 export interface AssigneeRow {
   id: string;
   name: string | null;
+  /**
+   * The fallback when there is no name, and Phase 10 is what made it load-bearing.
+   *
+   * Before invitations existed, every `users` row was created by somebody
+   * onboarding an agency, and a null name was a rarity. An invited colleague has
+   * a null name *by construction* — they were invited by address, and there is
+   * no surface on which they have yet told us anything else — so `name ?? ''`
+   * rendered every newly invited person as a blank chip on the card they had
+   * just been assigned. A picker that offers a name and a board that shows none
+   * is the same defect the assignee work set out to fix, one step later.
+   *
+   * Agency-side only. `ClientCard` has no `assignee` field at all — its absence
+   * is structural, not conditional (INV-1) — so an address here can never reach
+   * a client response.
+   *
+   * Optional so that a caller with only ids and names still compiles; the
+   * fallback then degrades to the empty string it produced before.
+   */
+  email?: string | null;
 }
 
 export interface AgencyBoardInput {
@@ -45,6 +64,11 @@ export interface AgencyBoardInput {
   transitions: readonly TransitionRow[];
   assignees: readonly AssigneeRow[];
   now: Date;
+}
+
+/** A name, or the address, or nothing — never an id, which names nobody. */
+function assigneeLabel(assignee: AssigneeRow): string {
+  return assignee.name ?? assignee.email ?? '';
 }
 
 function toAgencyVersion(v: AgencyVersionRow): AgencyVersion {
@@ -88,7 +112,7 @@ export function toAgencyCard(
       .filter((v) => v.cardId === card.id)
       .sort((a, b) => b.versionNo - a.versionNo)
       .map(toAgencyVersion),
-    assignee: assignee ? { id: assignee.id, name: assignee.name ?? '' } : null,
+    assignee: assignee ? { id: assignee.id, name: assigneeLabel(assignee) } : null,
     internalNotes: card.internalNotes,
     effortEstimate: card.effortEstimate,
     possession,

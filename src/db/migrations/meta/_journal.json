@@ -57,6 +57,13 @@
       "when": 1787762749450,
       "tag": "0007_board_removal",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1787883546882,
+      "tag": "0008_auth_invites",
+      "breakpoints": true
     }
   ]
 }

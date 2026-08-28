@@ -3,7 +3,7 @@
  * re-exported from this file does not exist as far as migrations are concerned.
  *
  * Layered so the import graph stays acyclic:
- *   tenancy -> engagements -> board -> assets -> retention -> access
+ *   tenancy -> engagements -> board -> assets -> retention -> access -> invites
  */
 
 export * from './enums';
@@ -13,3 +13,4 @@ export * from './board';
 export * from './assets';
 export * from './retention';
 export * from './access';
+export * from './invites';

@@ -13,8 +13,8 @@
  * radius.
  */
 
-import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
-import { and, count, eq, lt } from 'drizzle-orm';
+import { createHash, createHmac, randomInt, timingSafeEqual } from 'node:crypto';
+import { and, eq } from 'drizzle-orm';
 import NextAuth, { type NextAuthConfig } from 'next-auth';
 import Resend from 'next-auth/providers/resend';
 import { DrizzleAdapter } from '@auth/drizzle-adapter';
@@ -31,6 +31,10 @@ import {
   clientCodeIdentifier,
   clientThrottleIdentifier,
 } from '@/domain/engagement/client-token-identity';
+import {
+  clearThrottle,
+  recordAndCount as sharedRecordAndCount,
+} from '@/domain/auth/throttle';
 import type { AgencyRole, Session } from '@/lib/types';
 
 /* ------------------------------------------------------------------ agency */
@@ -377,35 +381,14 @@ export const CLIENT_REQUEST_MAX = 5;
 export const CLIENT_THROTTLE_WINDOW_MINUTES = CLIENT_CODE_TTL_MINUTES;
 
 /**
- * Records one occurrence and returns how many are live in the window,
- * this one included. Expired rows for the identifier are swept on the way past
- * so the table does not accumulate.
+ * The counting itself lives in `src/domain/auth/throttle.ts` now — Phase 10
+ * needed the same mechanism for the account sign-in code, and two limiters that
+ * can be tuned apart is one more than anybody checks. Nothing about how it
+ * counts changed; it takes an executor and a window instead of reaching for
+ * `db` and a module constant.
  */
 async function recordAndCount(identifier: string, now: Date): Promise<number> {
-  const expires = new Date(now.getTime() + CLIENT_THROTTLE_WINDOW_MINUTES * 60 * 1000);
-
-  await db
-    .delete(authVerificationTokens)
-    .where(
-      and(
-        eq(authVerificationTokens.identifier, identifier),
-        lt(authVerificationTokens.expires, now),
-      ),
-    );
-
-  // The token column is the unique half of the key, so each occurrence needs a
-  // value of its own. It is never read back — only counted.
-  await db.insert(authVerificationTokens).values({
-    identifier,
-    token: randomBytes(16).toString('base64url'),
-    expires,
-  });
-
-  const rows = await db
-    .select({ n: count() })
-    .from(authVerificationTokens)
-    .where(eq(authVerificationTokens.identifier, identifier));
-  return rows[0]?.n ?? 0;
+  return sharedRecordAndCount(db, identifier, CLIENT_THROTTLE_WINDOW_MINUTES, now);
 }
 
 /**
@@ -428,9 +411,7 @@ export async function chargeVerifyAttempt(
  * asking for a code they never receive.
  */
 export async function clearVerifyAttempts(engagementId: string, email: string): Promise<void> {
-  await db
-    .delete(authVerificationTokens)
-    .where(eq(authVerificationTokens.identifier, clientThrottleIdentifier('verify', engagementId, email)));
+  await clearThrottle(db, clientThrottleIdentifier('verify', engagementId, email));
 }
 
 /**
@@ -495,5 +476,42 @@ export async function getSession(now = new Date()): Promise<Session | null> {
     userId: user.id,
     orgId: user.orgId,
     role: user.role as AgencyRole,
+  };
+}
+
+/* ------------------------------------------- the account session cookie */
+
+/**
+ * Auth.js v5's own cookie naming rule, restated so that Phase 10's confirm
+ * route sets the cookie the library will then look for.
+ *
+ * The library derives `useSecureCookies` from the protocol of `AUTH_URL`, and
+ * prefixes the cookie name with `__Secure-` when it is on. Getting this wrong is
+ * a silent authentication failure — the row exists, the cookie exists, and
+ * `auth()` never finds it — so the rule lives here rather than being copied into
+ * a route.
+ *
+ * `src/app/api/test/session/route.ts` sets *both* names because it cannot run in
+ * production and a developer behind an https proxy should not have to care. A
+ * real sign-in sets exactly one: writing a non-secure duplicate of a production
+ * session cookie would hand the session to the first cleartext request that ever
+ * escaped.
+ */
+export function accountSessionCookie(): { name: string; secure: boolean } {
+  const url = process.env.AUTH_URL;
+  const secure = url ? url.startsWith('https://') : process.env.NODE_ENV === 'production';
+  return {
+    name: secure ? '__Secure-authjs.session-token' : 'authjs.session-token',
+    secure,
+  };
+}
+
+export function accountCookieOptions(expires: Date, secure: boolean) {
+  return {
+    httpOnly: true,
+    sameSite: 'lax' as const,
+    secure,
+    path: '/',
+    expires,
   };
 }

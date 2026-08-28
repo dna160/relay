@@ -181,6 +181,18 @@ export async function resetToFixtures(db: Database, now: Date): Promise<SeedResu
         email: u.email,
         name: u.name,
         role: u.role,
+        /**
+         * Phase 10. A seeded agency member is one whose address the fixture
+         * takes as already proved — they are standing in for somebody who
+         * followed a magic link, which is what stamps this column in the real
+         * flow. Without it `requireVerifiedAccount()` refuses every seeded user,
+         * and the invite-redemption e2e path is unreachable from a seed.
+         *
+         * It is set here rather than in `tests/fixtures/orgs.ts` because the
+         * fixture describes v1's `users` shape and this is the seeder's own
+         * knowledge of what a signed-in person looks like.
+         */
+        emailVerified: new Date(u.createdAt),
         createdAt: new Date(u.createdAt),
         lastSeenAt: u.lastSeenAt === null ? null : new Date(u.lastSeenAt),
       })),

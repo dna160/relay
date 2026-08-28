@@ -25,6 +25,22 @@ export type { CardState, Possession };
  */
 export type { AccessResult, AccessVia, OrgRole, ProjectRole };
 
+/**
+ * Invitations (ADR-027, INV-12). Re-exported rather than redeclared so the
+ * contract lives in one place — the front-end was importing these straight
+ * from the domain, which works and leaves the seam in two.
+ */
+export type {
+  InvitePreview,
+  InviteRedemption,
+  InviteState,
+  InviteTargetKind,
+  RefusalReason,
+  PendingInvite,
+} from '@/domain/auth/invite';
+export type { InvitableOrgRole } from '@/domain/access/roles';
+export type { OrgMember } from '@/domain/access/org-team';
+
 /* ------------------------------------------------------------------ session */
 
 /**
@@ -339,6 +355,20 @@ export const ERROR_CODES = {
    * could never succeed.
    */
   STORAGE_UNREACHABLE: 503,
+  /**
+   * The invited address and the verified one are different people.
+   *
+   * Its own code because this is the refusal a person is most likely to meet
+   * and least able to diagnose: they clicked a real link, signed in as
+   * themselves, and were refused. Collapsed into a generic 400 it reads as
+   * "something is broken"; named, the interface can say whose address the
+   * invitation was for and offer to request another. Note the invite is **not**
+   * consumed by this refusal — burning it would turn a forwarded email into a
+   * denial of service against the intended recipient.
+   */
+  INVITE_ADDRESS_MISMATCH: 409,
+  INVITE_EXPIRED: 410,
+  INVITE_CONSUMED: 409,
   VALIDATION_FAILED: 400,
   UNAUTHENTICATED: 401,
   /**

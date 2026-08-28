@@ -55,6 +55,7 @@ import { Badge, Plate, type PlateRow } from '@/components/primitives';
 import { chip, cn, crossfade, mono, muted } from '@/components/style-tokens';
 import { PossessionEdge, PossessionLabel } from './possession-bar';
 import { StateChip } from './state-chip';
+import { personLabel } from './vocabulary';
 
 export interface CardTileProps {
   card: AgencyCard;
@@ -207,8 +208,19 @@ export function CardTile({ card, href, controls, dragging }: CardTileProps) {
           *person*, and they are different axes.
         */}
         {card.assignee ? (
-          <span className="min-w-0 truncate font-sans text-12 text-muted" title={card.assignee.name}>
-            {card.assignee.name}
+          /*
+            `personLabel`, not `card.assignee.name` directly. The projection
+            already falls back from a null name to the address, and the value
+            that arrives here is the empty string when it had neither — which is
+            precisely the state of a colleague who was invited by address and
+            has not yet set a name. Rendering it raw put a blank gap on the
+            first card a new member was ever assigned. See `vocabulary.ts`.
+          */
+          <span
+            className="min-w-0 truncate font-sans text-12 text-muted"
+            title={personLabel(card.assignee)}
+          >
+            {personLabel(card.assignee)}
           </span>
         ) : (
           <Badge tone="neutral">UNASSIGNED</Badge>

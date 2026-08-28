@@ -99,7 +99,10 @@ export async function loadAgencyBoard(
     assigneeIds.length === 0
       ? []
       : await exec
-          .select({ id: users.id, name: users.name })
+          // `email` is the fallback for an invited colleague who has not set a
+          // name — see `AssigneeRow`. Agency reads only; the client projection
+          // has no `assignee` field to put it in.
+          .select({ id: users.id, name: users.name, email: users.email })
           .from(users)
           .where(inArray(users.id, assigneeIds));
 

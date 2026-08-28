@@ -57,6 +57,7 @@ import {
   clientContacts,
   comments,
   engagements,
+  invites,
   lanes,
   purgeCertificates,
   purgeManifest,
@@ -711,6 +712,22 @@ async function destroyContent(tx: Executor, engagementId: string): Promise<void>
       .delete(authVerificationTokens)
       .where(like(authVerificationTokens.identifier, `${prefix}%`));
   }
+
+  /**
+   * Phase 10. Every invitation that names *this project*.
+   *
+   * An unredeemed project invite is a live key to the workspace the certificate
+   * says was destroyed, and the row carries the invited person's email address —
+   * which `client_contacts` was destroyed a few lines above for holding. Org
+   * invites are not touched: they name the organization, which outlives its
+   * projects, and are cascaded by the organization's own deletion.
+   *
+   * `target_kind = 'project'` is a value in this table's own CHECK, not a role,
+   * so no invariant scan objects to it appearing here.
+   */
+  await tx
+    .delete(invites)
+    .where(and(eq(invites.targetKind, 'project'), eq(invites.targetId, engagementId)));
 
   /**
    * The audit log goes with the engagement **except for retention actions**

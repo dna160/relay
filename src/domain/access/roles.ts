@@ -102,3 +102,68 @@ export function isProjectRole(value: unknown): value is ProjectRole {
 export function isOrgRole(value: unknown): value is OrgRole {
   return typeof value === 'string' && (ORG_ROLE_ORDER as readonly string[]).includes(value);
 }
+
+/* ------------------------------------------------------------ Phase 10 */
+
+/**
+ * The org roles an invite may offer.
+ *
+ * `owner` is absent, and its absence is the decision. Under ADR-022's D3 an
+ * `owner` and an `admin` derive exactly the same project access, so offering
+ * `owner` would buy nothing today and would hand out the one role Phase 11
+ * intends to hang "the last owner cannot be removed" on. Ownership is a
+ * property of having created the organization or of having had it transferred,
+ * and a transfer is a different operation from an invitation.
+ */
+export const INVITABLE_ORG_ROLES = ['admin', 'member'] as const;
+export type InvitableOrgRole = (typeof INVITABLE_ORG_ROLES)[number];
+
+/**
+ * Whether an org role may invite other people into that organization.
+ *
+ * A `switch` rather than a set literal, so a fourth org role is a compile error
+ * here instead of a silent grant.
+ */
+export function canInviteToOrg(role: OrgRole): boolean {
+  switch (role) {
+    case 'owner':
+    case 'admin':
+      return true;
+    case 'member':
+      return false;
+  }
+}
+
+/**
+ * v1 `users.role` → v1.1 org role, for one person on a request path.
+ *
+ * The backfill has its own `orgRoleFor()` which additionally promotes an org's
+ * *first* admin to `owner`. That distinction can only be made by a pass that
+ * can see every user in an org at once, so it stays in the bulk script; this
+ * one maps what a single row can tell you and never promotes to `owner`.
+ */
+export function orgRoleForLegacyAgencyRole(legacyRole: string): OrgRole {
+  return legacyRole === 'admin' ? 'admin' : 'member';
+}
+
+/**
+ * The inverse, for the shadow window: v1.1 org role → the `users.role` a
+ * newly-joined member must be given so that the **legacy** path sees them.
+ *
+ * This is not cosmetic bookkeeping. During Phase 9's shadow window every
+ * permission surface still answers from the v1 tables, and the assignee picker
+ * reads `listAssignableUsers()` — every `users` row whose `org_id` matches the
+ * project's. A person who joins an organization with only graph rows written is
+ * invisible to the product they just joined, and shows up in the shadow ledger
+ * as `assignable_set_differs` on every request, which is a coverage gap wearing
+ * a resolver bug's clothes. See `joinOrganization()`.
+ */
+export function legacyAgencyRoleForOrgRole(role: OrgRole): 'admin' | 'member' {
+  switch (role) {
+    case 'owner':
+    case 'admin':
+      return 'admin';
+    case 'member':
+      return 'member';
+  }
+}

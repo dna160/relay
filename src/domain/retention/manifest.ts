@@ -108,6 +108,17 @@ export const TABLE_DISPOSITION: Readonly<Record<string, TableDisposition>> = {
    * magic-link rows in the same table do not.
    */
   auth_verification_tokens: 'partial',
+  /**
+   * Phase 10. An invitation is scoped to whatever it names: an org invite
+   * outlives every project in the org, and a project invite must not outlive the
+   * project it offers access to — it is an unredeemed key to a workspace the
+   * certificate says was destroyed, and it carries the invited person's address.
+   *
+   * `partial` rather than `content` because the two kinds have to be told apart
+   * by `target_kind`, which is a predicate rather than a scope. `destroyContent`
+   * in the purge worker holds the predicate.
+   */
+  invites: 'partial',
 
   /* Not engagement-scoped; a purge has no business here. */
   auth_accounts: 'unscoped',
@@ -126,6 +137,15 @@ export const TABLE_DISPOSITION: Readonly<Record<string, TableDisposition>> = {
   teams: 'unscoped',
   team_members: 'unscoped',
   auth_sessions: 'unscoped',
+  /**
+   * Phase 10. A sign-in token proves control of an *address*; it names no
+   * engagement and never can — there is no column on it that could. DELIVERY-PLAN
+   * §IV's phrase is "`invites`, and `signin_tokens` scoped to the project", and
+   * for this table the qualifier selects nothing, which is the honest reading
+   * rather than an omission. It expires in fifteen minutes and is swept by the
+   * next issuance for the same address.
+   */
+  signin_tokens: 'unscoped',
   organizations: 'unscoped',
   templates: 'unscoped',
   users: 'unscoped',

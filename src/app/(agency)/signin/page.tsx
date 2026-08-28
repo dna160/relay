@@ -1,52 +1,54 @@
 /**
  * `/signin` — the agency's front door.
  *
- * This route is named by `authConfig.pages.signIn` and, until now, did not
- * exist. A signed-out agency member therefore had no way into the product at
- * all: every agency route answers 401, Auth.js sends them here, and here was a
- * 404. That was raised as a challenge from the onboarding screen in round 2 and
- * upheld; this page is the answer, and `onboarding/page.tsx`'s sentence is now
- * a link rather than an apology.
+ * Named by `authConfig.pages.signIn`, and now the entry point of the account
+ * token flow (ADR-027) rather than of Auth.js's own email provider. The visible
+ * change is that the primary control is a six-digit code and not a link: that
+ * is PHASE-10's wording — "the six-digit field is primary and focused on load
+ * … the emailed link is secondary and lands on a page with a single confirm
+ * button" — and both halves are one decision. A person already looking at this
+ * tab wants to type six digits; a person who opened the mail on their phone
+ * wants the link. `/signin/confirm` is that link's landing, and it consumes
+ * nothing until pressed.
  *
- * Email link only (ADR-005 for the client, the same principle for the agency:
- * ARCHITECTURE's stack table has an email provider and no credentials
- * provider). **There is no password surface in this product and this page does
- * not add one** — no password field, no "create an account", no "forgot
- * password", because there is nothing to forget.
+ * **There is no password surface in this product and this page does not add
+ * one** — no password field, no "create an account", no "forgot password",
+ * because there is nothing to forget. Signing in is also signing up: the
+ * account is created when the address is *proved*, which is why nothing here
+ * says whether an address is known to us. `POST /api/auth/signin/request`
+ * answers identically for a known address, an unknown one, and one over its
+ * rate limit, and copy that were more specific than the route would hand an
+ * anonymous caller an account-enumeration oracle the route was careful not to.
  *
  * The three states this screen has to tell apart are the same three
- * `/onboarding` sorts out, and for the same reason (ADR-013): the Auth.js
- * adapter writes the user row before `users.org_id` exists, so "signed in" and
- * "has an agency" are different facts. Someone who already has both should
- * never be shown a sign-in form — a form whose only outcome is where they
- * already are is an insult and a dead end.
+ * `/onboarding` sorts out, and for the same reason (ADR-013): the adapter
+ * writes the user row before `users.org_id` exists, so "signed in" and "has an
+ * agency" are different facts. Someone who already has both should never be
+ * shown a sign-in form — a form whose only outcome is where they already are is
+ * an insult and a dead end.
  */
 
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import { getSession, pendingOnboarding } from '@/lib/auth';
 import { cn, display, muted } from '@/components/style-tokens';
-import { SignInForm } from '@/components/agency/signin-form';
-import { requestSignInLink } from './actions';
+import { AccountSignInForm } from '@/components/agency/account-signin-form';
+import { safeCallback } from './safe-callback';
 
 export const metadata: Metadata = { title: 'Sign in · Relay' };
 
 /**
- * `authConfig.pages.error` now points here (ADR-017), so this page is where an
- * expired or already-used link lands — the most common failure of a magic-link
- * flow, and the moment a person most needs a "send me another" button rather
- * than the unstyled Auth.js page they used to get.
- *
- * The raw code is never rendered. `Configuration` means a server-side mistake
- * and its details are ours, not the reader's; anything unrecognised gets the
- * generic sentence rather than nothing at all, because a bounce that produces
- * an apparently blank form is indistinguishable from a form that silently did
- * nothing.
+ * `authConfig.pages.error` points here (ADR-017), so this page is still where a
+ * bounced Auth.js callback lands. The raw code is never rendered:
+ * `Configuration` means a server-side mistake and its details are ours, not the
+ * reader's; anything unrecognised gets the generic sentence rather than
+ * nothing, because a bounce that produces an apparently blank form is
+ * indistinguishable from a form that silently did nothing.
  */
-const GENERIC_ERROR = 'That sign-in attempt did not complete. Ask for a new link below.';
+const GENERIC_ERROR = 'That sign-in attempt did not complete. Ask for a new code below.';
 
 const CALLBACK_ERRORS: Record<string, string> = {
-  Verification: 'That link has already been used, or it expired. Ask for a new one below.',
+  Verification: 'That link has already been used, or it expired. Ask for a new code below.',
   AccessDenied: 'That address cannot sign in to Relay.',
   EmailSignInError: 'We could not send that email. Try again in a moment.',
   MissingCSRF: 'That request could not be verified. Try again from this page.',
@@ -56,7 +58,7 @@ const CALLBACK_ERRORS: Record<string, string> = {
 export default async function SignInPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string; callbackUrl?: string }>;
+  searchParams: Promise<{ error?: string; callbackUrl?: string; email?: string }>;
 }) {
   const [session, pending, query] = await Promise.all([
     getSession(),
@@ -64,16 +66,23 @@ export default async function SignInPage({
     searchParams,
   ]);
 
-  if (session?.kind === 'agency') redirect('/portfolio');
+  const callbackUrl = safeCallback(query.callbackUrl);
+
+  if (session?.kind === 'agency') redirect(callbackUrl);
   /**
    * Signed in with Auth.js and not yet in any org (ADR-013). `getSession()`
    * returns null for this person — correct, since a null org must only ever
    * deny — and only-null is indistinguishable from signed-out, which is what
    * would send them back here to sign in again and arrive in the same place.
-   * `pendingOnboarding()` is the one question that tells the two apart
-   * (ADR-017), and `/onboarding` is the only screen that can move them on.
+   * `pendingOnboarding()` is the one question that tells the two apart.
+   *
+   * It honours `callbackUrl` rather than always sending them to `/onboarding`,
+   * and that is the invitation case: a colleague who has just proved their
+   * address has no organisation *by construction* — the invitation is what
+   * gives them one — so pushing them at the screen that creates a second agency
+   * would be exactly the wrong door.
    */
-  if (pending) redirect('/onboarding');
+  if (pending) redirect(callbackUrl);
 
   const callbackError = query.error ? (CALLBACK_ERRORS[query.error] ?? GENERIC_ERROR) : undefined;
 
@@ -83,7 +92,7 @@ export default async function SignInPage({
         <h1 className={cn(display, 'text-28 text-ink')}>Sign in to Relay</h1>
         <p className={cn('max-w-prose text-14', muted)}>
           One contract, one workspace, one link. Put in the email your agency uses and we send you
-          a link that opens it.
+          a code that opens it.
         </p>
       </div>
 
@@ -93,7 +102,13 @@ export default async function SignInPage({
         </p>
       )}
 
-      <SignInForm action={requestSignInLink} callbackUrl={query.callbackUrl} />
+      <AccountSignInForm callbackUrl={callbackUrl} initialEmail={query.email ?? ''} />
+
+      <p className={cn('max-w-prose text-12', muted)}>
+        Relay never asks for a password. If you do not have an agency yet, the code still works —
+        it takes you to the one screen that sets one up. If a colleague invited you, sign in with
+        the address they sent it to and their invitation will be waiting.
+      </p>
     </div>
   );
 }

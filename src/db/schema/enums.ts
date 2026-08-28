@@ -53,3 +53,13 @@ export const PROJECT_ROLES = ['lead', 'contributor', 'reviewer'] as const;
  * orgless project, so there is no nullable `org_id` branch in any query.
  */
 export const ORG_KINDS = ['personal', 'team'] as const;
+
+/**
+ * Phase 10 (ADR-021 §5). What an invite is an offer of membership *in*.
+ *
+ * `invites.target_id` is polymorphic across these two and therefore carries no
+ * foreign key; `invites.org_id` is the referential anchor. Two values rather
+ * than one because the table shape in DELIVERY-PLAN §IV has both, and a column
+ * with exactly one legal value is a column that lies about what it constrains.
+ */
+export const INVITE_TARGET_KINDS = ['org', 'project'] as const;

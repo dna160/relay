@@ -114,6 +114,30 @@ export const AGENCY_ROUTE_PATTERNS = [
   /\/api\/events/,
   /\/api\/reference-files/,
   /\/api\/onboarding/,
+  /**
+   * Phase 10's team surface. `/team` reads the organisation's roster and sends
+   * teammate invites, and both are agency-only in the strongest sense — the
+   * roster is a list of the agency's own people and the invite grants access to
+   * every workspace the organisation owns. A client contact finding either
+   * string in their bundle has been handed the map to a surface that exists to
+   * decide who may read their private lanes.
+   *
+   * `/api/invites/:token` is deliberately **not** on this list and must not be
+   * added. It is the one route in the product reachable by somebody in neither
+   * audience — a person holding an emailed link, who is not an agency member
+   * and not a reviewer — so it is not agency-only, and a pattern claiming it
+   * was would make this audit fail on a bundle that is behaving correctly.
+   * `src/lib/api-client.invite.ts` is a third leaf for the same reason.
+   */
+  /\/api\/orgs/,
+  /**
+   * The account identity routes. `/api/auth/client/request` and
+   * `/api/auth/client/verify` are the *reviewer's* way in and are deliberately
+   * not matched by this: `/api/auth/signin` is not a substring of either, which
+   * is what keeps the two distinguishable. Same discipline as `/api/comments`
+   * against `/api/client/comments`.
+   */
+  /\/api\/auth\/signin/,
   /\/api\/attention/,
   /"\/portfolio"/,
   /"\/templates"/,
@@ -153,6 +177,28 @@ export const AGENCY_MARKERS = [
  * audit is not reading the client bundle and no conclusion may be drawn.
  */
 export const POSITIVE_PROBE = ['Request changes', 'Approve'];
+
+/**
+ * The same idea for the *invitation* surface, which is swept separately below.
+ *
+ * `/invite/[token]` is downloaded by somebody in **neither** audience — not an
+ * agency member (that is what the invitation would make them) and not a
+ * reviewer on anything. It is therefore a third bundle, and the argument that
+ * makes the client sweep worth running applies to it word for word: a stranger
+ * holding an emailed link should not be able to read the agency's route map or
+ * its backstage vocabulary out of their own JavaScript.
+ *
+ * This is not hypothetical. The first run of the invite sweep found
+ * `"/portfolio"` in that chunk — `router.push('/portfolio')` after a successful
+ * redemption, which is the correct destination and was the wrong place to say
+ * it. Redemption became a server action and the string left the bundle.
+ *
+ * The two strings below are the anonymous call to action and the mismatch
+ * remedy. Both are in that chunk whatever happens to the copy around them, and
+ * if neither is found the sweep is not reading the invitation bundle and no
+ * conclusion may be drawn.
+ */
+export const INVITE_PROBE = ['Confirm my email', 'Sign out and use the invited address'];
 
 function fail(message) {
   console.error(`\n${message}`);
@@ -278,6 +324,21 @@ if (IS_ENTRY_POINT) {
     }
   }
 
+  /* ------------------------------------------------- the invitation surface */
+
+  /**
+   * A third sweep, in a context with **no cookies at all**.
+   *
+   * The invitation page is the one surface outside both trees, and it is opened
+   * by a person who has proved nothing. Reusing the client's context would put
+   * a reviewer session on it and measure a page nobody will ever see in that
+   * state; a fresh context is the stranger, which is the whole audience.
+   *
+   * A failure here is reported through the same `fail()` as everything else, so
+   * the job's exit code covers all three claims rather than the first two.
+   */
+  const inviteHits = await sweepInvite();
+
   if (hits.length > 0) {
     fail(
       `AGENCY CODE IN THE CLIENT BUNDLE — ${hits.length} hit(s) above.\n` +
@@ -285,7 +346,103 @@ if (IS_ENTRY_POINT) {
         'reading backstage vocabulary out of their own bundle is a confidentiality problem\n' +
         'before it is a bundle-size one.',
     );
-  } else if (probeHits.length > 0) {
-    console.log('\nOK — the client bundle carries no agency route code, and the audit was reading.');
+  } else if (probeHits.length > 0 && inviteHits === 0) {
+    console.log(
+      '\nOK — neither the client bundle nor the invitation bundle carries agency route code,\n' +
+        'and the audit was reading both.',
+    );
   }
+}
+
+/**
+ * Opens `/invite/<token>` with no session and asks the same questions of what
+ * came down the wire. Returns the number of agency hits.
+ *
+ * The token is minted out of band by `tests/invite-session.ts`, the way the
+ * client session is: `/api/test/*` does not mount in production, and that gate
+ * is not something to weaken for a measurement.
+ *
+ * A second route is visited with a deliberately invalid token, because the two
+ * render different components — the preview and the ask on one, the dead-link
+ * notice on the other — and a sweep that saw only one of them would be reading
+ * half the surface.
+ */
+async function sweepInvite() {
+  const minted = spawnSync(process.execPath, ['--import', 'tsx', 'tests/invite-session.ts'], {
+    encoding: 'utf8',
+    env: process.env,
+  });
+  if (minted.status !== 0) {
+    throw new Error(`invite-session failed: ${minted.stderr.slice(-500)}`);
+  }
+  const line = minted.stdout.trim().split('\n').filter(Boolean).pop();
+  if (!line) throw new Error('invite-session printed nothing');
+  const { token } = JSON.parse(line);
+
+  const browser = await chromium.launch();
+  // No cookies, no storage. This is the person holding the emailed link.
+  const context = await browser.newContext({ viewport: { width: 412, height: 915 } });
+  const page = await context.newPage();
+
+  const scripts = new Set();
+  page.on('response', (r) => {
+    const u = r.url();
+    if (/\.js(\?|$)/.test(u)) scripts.add(u);
+  });
+
+  for (const route of [`/invite/${token}`, '/invite/not-a-real-token']) {
+    await page.goto(BASE + route, { waitUntil: 'networkidle' });
+  }
+
+  const bodies = [];
+  let bytes = 0;
+  for (const url of scripts) {
+    const body = await (await context.request.get(url)).text();
+    bytes += body.length;
+    bodies.push({ file: url.split('/').pop(), body });
+  }
+  await browser.close();
+
+  console.log('\ninvitation bundle purity — the surface outside the workspace');
+  console.log(`  downloaded ${bodies.length} scripts, ${(bytes / 1024).toFixed(0)} kB, no cookies`);
+
+  const probe = bodies.flatMap(({ file, body }) =>
+    INVITE_PROBE.filter((p) => body.includes(p)).map((p) => `${file}: ${JSON.stringify(p)}`),
+  );
+  console.log(`  positive probe: ${probe.length} hit(s)`);
+  for (const hit of probe.slice(0, 4)) console.log(`    ${hit}`);
+  if (probe.length === 0) {
+    fail(
+      'INCONCLUSIVE — the invitation probe found nothing, so the sweep is not reading that\n' +
+        'bundle. A clean result here means "I read nothing", not "there is no leak".',
+    );
+    return 0;
+  }
+
+  const found = detect(bodies, { markers: AGENCY_MARKERS, routes: AGENCY_ROUTE_PATTERNS });
+  console.log(`  agency hits: ${found.length}`);
+  for (const hit of found) console.log(`    ${hit}`);
+
+  if (negativeControl) {
+    const planted = detect(bodies, { markers: INVITE_PROBE, routes: [] });
+    console.log(`  negative control: ${planted.length} planted hit(s)`);
+    if (planted.length === 0) {
+      fail(
+        'NEGATIVE CONTROL FAILED on the invitation bundle — strings known to be in the\n' +
+          'downloaded bytes were not found. Its clean result is not evidence of anything.',
+      );
+    }
+  }
+
+  if (found.length > 0) {
+    fail(
+      `AGENCY CODE IN THE INVITATION BUNDLE — ${found.length} hit(s) above.\n` +
+        'This page is served to somebody in neither audience: not an agency member, and not a\n' +
+        'reviewer on anything. Handing them the agency route map is the same confidentiality\n' +
+        'problem PHASE-4 EXIT names, one surface further out. The destination after a\n' +
+        'redemption belongs in a server action, not in a chunk the browser downloads.',
+    );
+  }
+
+  return found.length;
 }

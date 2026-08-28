@@ -9,6 +9,7 @@
  * |---|---|
  * | `src/app/(agency)/**`, `src/components/agency/**` | `@/lib/api-client.agency` |
  * | `src/app/(client)/**`, `src/components/client/**` | `@/lib/api-client.client` |
+ * | `src/app/invite/**`, `src/components/invite/**` | `@/lib/api-client.invite` |
  * | anything surface-agnostic (`useAction`, an `ErrorPanel`'s prop type) | `@/lib/api-client.core` |
  *
  * The reason is a bundle, not a filing system. A barrel that re-exports both
@@ -26,3 +27,4 @@
 export * from './api-client.core';
 export * from './api-client.agency';
 export * from './api-client.client';
+export * from './api-client.invite';

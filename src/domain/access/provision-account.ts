@@ -38,11 +38,19 @@
  * to, is not rewritten by somebody signing in again.
  */
 
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, isNotNull, isNull } from 'drizzle-orm';
 import { uuidv7 } from 'uuidv7';
-import { accounts, identities, organizations, orgMemberships } from '@/db/schema';
+import { accounts, identities, organizations, orgMemberships, users } from '@/db/schema';
 import type { Executor } from '@/db/types';
-import type { OrgRole } from './roles';
+import type { VerifiedAddress } from '../auth/signin';
+import { orgRoleForLegacyAgencyRole, type OrgRole } from './roles';
+
+/**
+ * The provider string for an email-code identity. v1 signed in with an Auth.js
+ * magic link and v1.1 with a six-digit code; both prove the same thing about
+ * the same address, so both are one provider row rather than two.
+ */
+export const EMAIL_PROVIDER = 'email';
 
 /**
  * The slug a personal organization gets.
@@ -112,7 +120,7 @@ export async function provisionAccountForUser(
     .values({
       id: uuidv7(),
       accountId,
-      provider: 'email',
+      provider: EMAIL_PROVIDER,
       providerSubject: input.email,
       email: input.email,
       emailVerified: null,
@@ -179,4 +187,178 @@ async function ensurePersonalOrg(
     .where(and(eq(accounts.id, accountId), isNull(accounts.personalOrgId)));
 
   return orgId;
+}
+
+/* --------------------------------------------------------------- Phase 10 */
+
+/**
+ * A proven address, turned into the rows a session and a membership need.
+ *
+ * ## The signature is the enforcement
+ *
+ * It takes a `VerifiedAddress`, and the only thing in this codebase that
+ * produces one is `consumeSignin()`. There is no overload taking a bare string,
+ * so a caller holding an address it merely read off a request body — or out of
+ * an invite — has nothing to pass. ADR-021 §3's linking rule ("a provider login
+ * auto-links to an existing account only when the provider asserts a verified
+ * address; an unverified one creates a pending link that requires a
+ * confirmation") is that same property stated for a provider that does not
+ * exist yet: when Google arrives it will not be able to reach this function
+ * with an unverified assertion, because it will not be able to construct the
+ * argument.
+ *
+ * ## Why it writes a `users` row
+ *
+ * Because during Phase 9's shadow window the v1 tables are still the ones that
+ * answer. `getSession()` builds an agency session from `users`, and
+ * `listAssignableUsers()` reads `users.org_id`. An account with no legacy row is
+ * a person the running product cannot see. Phase 11's rename window is where
+ * that stops being true; until then, both halves are written together or the
+ * two systems describe different populations.
+ */
+export interface EnsuredAccount {
+  readonly accountId: string;
+  readonly legacyUserId: string;
+  readonly personalOrgId: string;
+  /** True when this sign-in created the person rather than finding them. */
+  readonly created: boolean;
+  /** The v1 org they belong to, or null when they have not joined one. */
+  readonly legacyOrgId: string | null;
+}
+
+export async function ensureAccountForVerifiedEmail(
+  exec: Executor,
+  verified: VerifiedAddress,
+  name: string | null,
+  now: Date,
+): Promise<EnsuredAccount> {
+  const found = (
+    await exec
+      .select({
+        id: users.id,
+        orgId: users.orgId,
+        name: users.name,
+        role: users.role,
+        emailVerified: users.emailVerified,
+      })
+      .from(users)
+      .where(eq(users.email, verified.email))
+      .limit(1)
+  )[0];
+
+  let legacyUserId: string;
+  let legacyOrgId: string | null;
+  let legacyRole: string;
+  let created = false;
+
+  if (found) {
+    legacyUserId = found.id;
+    legacyOrgId = found.orgId;
+    legacyRole = found.role;
+    // Auth.js stamps this on its own verification; ours has to stamp it too, or
+    // a person who only ever used the code flow reads as never having proved
+    // their address.
+    if (found.emailVerified === null) {
+      await exec
+        .update(users)
+        .set({ emailVerified: verified.verifiedAt })
+        .where(and(eq(users.id, found.id), isNull(users.emailVerified)));
+    }
+  } else {
+    /**
+     * `onConflictDoNothing` on the unique email, then re-read. Two concurrent
+     * confirmations of the same fresh address — a double-submitted form, a
+     * retried request — would otherwise race to insert and one would 500.
+     */
+    const inserted = await exec
+      .insert(users)
+      .values({
+        email: verified.email,
+        name,
+        emailVerified: verified.verifiedAt,
+        createdAt: now,
+      })
+      .onConflictDoNothing()
+      .returning({ id: users.id });
+
+    const row =
+      inserted[0] ??
+      (
+        await exec
+          .select({ id: users.id, orgId: users.orgId, role: users.role })
+          .from(users)
+          .where(eq(users.email, verified.email))
+          .limit(1)
+      )[0];
+    if (!row) throw new Error('ensureAccountForVerifiedEmail: no users row after insert');
+
+    legacyUserId = row.id;
+    legacyOrgId = null;
+    legacyRole = 'member';
+    created = inserted.length > 0;
+  }
+
+  const provisioned = await provisionAccountForUser(
+    exec,
+    {
+      legacyUserId,
+      email: verified.email,
+      name: name ?? found?.name ?? null,
+      /**
+       * An existing v1 user who already belongs to an agency gets the matching
+       * org membership if the backfill never gave them one. Never an upgrade:
+       * `provisionAccountForUser` is `ON CONFLICT DO NOTHING` throughout, so a
+       * role somebody was deliberately downgraded to is not rewritten by them
+       * signing in again.
+       */
+      orgId: legacyOrgId,
+      orgRole: legacyOrgId ? orgRoleForLegacyAgencyRole(legacyRole) : null,
+    },
+    now,
+  );
+
+  /**
+   * The verification itself, recorded on the identity rather than only on the
+   * session. `provisionAccountForUser` deliberately writes `email_verified:
+   * null` — it is not the thing that verified anything — and this is the thing
+   * that did.
+   */
+  await exec
+    .update(identities)
+    .set({ emailVerified: verified.verifiedAt })
+    .where(
+      and(
+        eq(identities.accountId, provisioned.accountId),
+        eq(identities.provider, EMAIL_PROVIDER),
+        eq(identities.email, verified.email),
+      ),
+    );
+
+  return {
+    accountId: provisioned.accountId,
+    legacyUserId,
+    personalOrgId: provisioned.personalOrgId,
+    created: created || provisioned.created,
+    legacyOrgId,
+  };
+}
+
+/**
+ * Every address this account has actually proved control of.
+ *
+ * `redeemInvite()`'s address match reads from here and not from
+ * `accounts.primary_email`, because a primary email is a display field that
+ * nothing verified: it is copied from whatever created the account. An
+ * `identities` row with a non-null `email_verified` is the only record in this
+ * schema that means "somebody proved this".
+ */
+export async function verifiedEmailsForAccount(
+  exec: Executor,
+  accountId: string,
+): Promise<string[]> {
+  const rows = await exec
+    .select({ email: identities.email })
+    .from(identities)
+    .where(and(eq(identities.accountId, accountId), isNotNull(identities.emailVerified)));
+  return rows.map((r) => r.email);
 }

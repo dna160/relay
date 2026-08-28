@@ -23,6 +23,17 @@ export default function AgencyLayout({ children }: { children: ReactNode }) {
           <Link href="/templates" className={cn(eyebrow, 'hover:text-ink')}>
             Templates
           </Link>
+          {/*
+            Team is org-level and belongs here rather than inside a workspace.
+            A teammate is a member of the organisation and outlives any one
+            engagement; a client contact is invited on the engagement itself,
+            under Client access on its settings page. Putting the two invites at
+            different levels of the navigation is the first of the four things
+            that keep them from being confused — see `(agency)/team/page.tsx`.
+          */}
+          <Link href="/team" className={cn(eyebrow, 'hover:text-ink')}>
+            Team
+          </Link>
         </nav>
       </header>
       <main className="mx-auto max-w-6xl px-4 py-6">{children}</main>

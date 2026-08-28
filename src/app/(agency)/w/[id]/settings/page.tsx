@@ -16,6 +16,7 @@
  * column somebody has to go looking for.
  */
 
+import Link from 'next/link';
 import { agencyApi } from '@/lib/api-client.agency';
 import { formatDate, formatPurgeCountdown, formatPurgeDate, purgeDateISO, plural } from '@/lib/format';
 import { chip, cn, eyebrow, mono, muted, surface } from '@/components/style-tokens';
@@ -86,6 +87,23 @@ export default async function SettingsPage({ params }: { params: Promise<{ id: s
           <p className={cn('text-12', muted)}>
             Relay doesn&rsquo;t list this engagement&rsquo;s contacts here yet. Each invite is
             confirmed above as it sends.
+          </p>
+          {/*
+            The other half of the pair, said at the screen where the wrong one
+            is reachable. A person on this page who means to add a colleague has
+            a control in front of them that would instead hand a workspace link
+            to an outsider — and by the time that is visible, the link has been
+            sent. One sentence, and it names the difference rather than the
+            destination: "somewhere else" is not an argument, "they would get
+            every workspace" is.
+          */}
+          <p className={cn('text-12', muted)}>
+            Adding a colleague is a different thing and it is not done here — a teammate joins the
+            organisation and can open every workspace it owns.{' '}
+            <Link href="/team" className="text-ink underline">
+              Invite a teammate on the Team page
+            </Link>
+            .
           </p>
           <ClientLink url={clientLink} />
         </div>

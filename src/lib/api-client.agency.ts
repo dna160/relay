@@ -22,7 +22,10 @@ import type {
   CardVisibilityOverride,
   EngagementStatus,
   EngagementSummary,
+  InvitableOrgRole,
   LaneVisibility,
+  OrgMember,
+  PendingInvite,
   Plan,
   Possession,
   TemplateDefinition,
@@ -285,6 +288,78 @@ export interface AgencyComment {
   createdAt: string;
 }
 
+/* --------------------------------------------------------------- the team */
+
+/**
+ * The team read's shapes come from `src/lib/types.ts` and are re-exported here,
+ * never restated. `OrgMember` and `PendingInvite` are produced by
+ * `listOrgMembers()` and `listPendingInvites()`; a second declaration in this
+ * file is exactly the defect the `TemplateSummary` note above records.
+ *
+ * `PendingInvite` carries an invite **id** and no token — it cannot carry one,
+ * because only the token's sha256 is stored. That is the storage choice made
+ * for this reason rather than a happy accident: an invite token is a bearer
+ * credential for one address, and a roster that printed it would let anybody
+ * who can read the page redeem it, which is the single thing INV-12 spends a
+ * verification step preventing.
+ *
+ * `OrgMember.name` is null for somebody who was invited by address and has not
+ * yet told us anything else, which is *every* newly invited colleague. Surfaces
+ * fall back to the address; they never render an id, which names nobody.
+ */
+export type { OrgMember, PendingInvite, InvitableOrgRole } from '@/lib/types';
+
+/**
+ * `POST /api/orgs/:id/invites` — what issuing one reports back.
+ *
+ * The route returns three display fields and the link. There is no invite id in
+ * it and nothing that could be turned into a second request, which is the same
+ * discipline `InvitePreview` follows on the other side of the wire.
+ *
+ * `inviteUrl` **contains the raw token**, which is a bearer credential for one
+ * address. It is served to the one person who has by definition just created it
+ * — the route says so — and it exists because mail delivery is the least
+ * reliable part of this flow and an agency should not be stuck when a message
+ * is quarantined. It belongs at the control that produced it and nowhere else:
+ * not stored, not listed, and not shown again on a later render, because a
+ * roster that reprinted invite links would let anybody who can read that page
+ * redeem them.
+ */
+export interface IssuedOrgInvite {
+  invite: { email: string; role: InvitableOrgRole; expiresAt: string };
+  inviteUrl: string;
+}
+
+/**
+ * `GET /api/orgs/:id/team` — the organisation, its people, and its outstanding
+ * invitations.
+ *
+ * One read rather than three because the page is one answer: a roster whose
+ * pending invitations arrived in a second request renders, for a moment, an
+ * organisation that appears not to have invited anybody — and "did that invite
+ * send?" is the exact question this surface exists to answer.
+ *
+ * **`viewerCanInvite` is a capability and not a role, and that is INV-11 rather
+ * than a style preference.** The obvious field here was `viewerRole: OrgRole`,
+ * with the page drawing the invite form when it is not `'member'` — which is a
+ * permission decision made from a role literal in a React component, and
+ * therefore a second place that knows how the roles rank and can disagree with
+ * the resolver. `tests/invariants/inv-11-*` fails it, correctly. The route
+ * resolves once and reports what this reader may do; the surface renders what
+ * it is told and knows nothing about ordering.
+ *
+ * It stays rendering-only either way (DELIVERY-PLAN §III): it decides whether
+ * the form is drawn, and the route decides whether an invitation is accepted. A
+ * member who reaches the form by other means gets a refusal from the server
+ * rather than a surprise.
+ */
+export interface OrgTeam {
+  organization: { id: string; name: string; slug: string; plan: string };
+  viewerCanInvite: boolean;
+  members: OrgMember[];
+  invites: PendingInvite[];
+}
+
 /* --------------------------------------------------- endpoints not yet built */
 
 /**
@@ -436,6 +511,117 @@ export const agencyApi = {
     );
   },
 
+  /**
+   * POST /api/auth/signin/request — an address, and out goes a six-digit code.
+   *
+   * **Always 200, whatever the address.** On this product email sign-in is also
+   * sign-up: the account is created when the address is *proved*, at
+   * `/confirm`, not when a code is asked for — so the route does identical work
+   * for a known and an unknown address and there is no branch for a timing
+   * measurement to find. Being over the rate limit answers identically too.
+   *
+   * The surface must not undo that. There is no copy anywhere in this flow that
+   * says whether an address is known to Relay, because the honest sentence — we
+   * sent it if it exists — is also the safe one.
+   */
+  requestSigninCode(body: { email: string }, ctx?: RequestContext) {
+    return request<{ sent: boolean; expiresInMinutes: number }>('/api/auth/signin/request', {
+      method: 'POST',
+      body,
+      ctx,
+    });
+  },
+
+  /**
+   * POST /api/auth/signin/confirm — six digits in, a session cookie out.
+   *
+   * **POST, and only POST**, and that is the whole mail-scanner defence rather
+   * than half of it. Outlook Safe Links and Proofpoint fetch every URL in an
+   * inbound message before a human sees it; the emailed link points at the
+   * *page* `/signin/confirm`, which renders a button and consumes nothing. Only
+   * this call spends the code, and a prescanner does not issue it.
+   *
+   * The page that calls this must therefore never call it on load — not in an
+   * effect, not on mount, not "because the code was already in the query
+   * string". `src/app/(agency)/signin/confirm/page.tsx` says the same thing at
+   * greater length, because it is the file where somebody would be tempted.
+   *
+   * `needsOnboarding` is true for an address that proved itself and belongs to
+   * no organisation — a first-ever sign-in, and *every* invited colleague
+   * before they redeem. It decides where the caller goes next and nothing else.
+   */
+  confirmSigninCode(body: { email: string; code: string }, ctx?: RequestContext) {
+    return request<{ needsOnboarding: boolean }>('/api/auth/signin/confirm', {
+      method: 'POST',
+      body,
+      ctx,
+    });
+  },
+
+  /**
+   * GET /api/orgs/:id/team — who is in the organisation, and who has been asked.
+   *
+   * The id is the caller's own `session.orgId`, which is what makes this read's
+   * 404 legible: a caller cannot fail to be visible to an organisation they
+   * hold a session for, so a 404 here means the route is not on this build —
+   * not that the team was hidden. `/team` says exactly that rather than
+   * rendering the generic not-found panel, which on this screen would read as
+   * "your colleagues are gone".
+   */
+  team(orgId: string, ctx?: RequestContext) {
+    return request<OrgTeam>(`/api/orgs/${encodeURIComponent(orgId)}/team`, { ctx });
+  },
+
+  /**
+   * POST /api/orgs/:id/invites — invite a teammate into the organisation.
+   *
+   * **Not to be confused with `invite()` below, which adds a client contact to
+   * one engagement.** They differ in every way that matters: this one creates
+   * an account holder with a membership across the organisation, that one
+   * creates a reviewer scoped to a single workspace and to no other (INV-6).
+   * The two live in different places in the interface for the same reason they
+   * are two methods here, and the naming is deliberate — `inviteTeammate` and
+   * `invite` would be one letter apart at a call site, so the engagement one
+   * keeps the name it has had since Phase 1 and this one is spelled out.
+   *
+   * `role` is an `OrgRole`. `owner` is absent from the surface's choices on
+   * purpose: transferring ownership is not an invitation, and an invite that
+   * could mint a second owner is a privilege escalation wearing a form.
+   */
+  inviteTeammate(
+    orgId: string,
+    body: { email: string; role: InvitableOrgRole },
+    ctx?: RequestContext,
+  ) {
+    return request<IssuedOrgInvite>(`/api/orgs/${encodeURIComponent(orgId)}/invites`, {
+      method: 'POST',
+      body,
+      ctx,
+    });
+  },
+
+  /**
+   * DELETE /api/orgs/:id/invites/:inviteId — withdraw an unredeemed invitation.
+   *
+   * The undo for the expensive mistake on the team screen. An invitation sent
+   * to the wrong address is live until it expires, and "wait a week" is not a
+   * remedy when the wrong address belongs to the client whose private lanes it
+   * would open.
+   *
+   * Withdrawing never touches a *consumed* invitation, which is the domain's
+   * rule rather than this caller's: an invitation that has already been
+   * accepted is a membership now, and removing somebody is a different act with
+   * a different confirmation. The invite screen renders `revoked` in its own
+   * words rather than as "expired", so a person who is turned away knows
+   * somebody withdrew it and a replacement may not be coming.
+   */
+  revokeTeammateInvite(orgId: string, inviteId: string, ctx?: RequestContext) {
+    return request<{ revoked: { id: string } }>(
+      `/api/orgs/${encodeURIComponent(orgId)}/invites/${encodeURIComponent(inviteId)}`,
+      { method: 'DELETE', ctx },
+    ).then((r) => pick(r, (p) => p.revoked));
+  },
+
   /** POST /api/onboarding/org — the agency's first step; no org exists yet. */
   onboardOrg(body: { name: string; slug: string }, ctx?: RequestContext) {
     return request<{ organization: OnboardedOrganization }>('/api/onboarding/org', {
@@ -570,7 +756,15 @@ export const agencyApi = {
     }).then((r) => pick(r, (p) => p.file));
   },
 
-  /** POST /api/engagements/:id/invite */
+  /**
+   * POST /api/engagements/:id/invite — add a **client contact** to one
+   * engagement and send them the link.
+   *
+   * The reviewer half of the pair. This creates no account and no password;
+   * the contact is scoped to this engagement and to no other (INV-6), and
+   * their verified address is what an approval is recorded against. See
+   * `inviteTeammate` above for the other one, and do not reach for it here.
+   */
   invite(id: string, body: { email: string; name?: string }, ctx?: RequestContext) {
     return request<{ contact: ClientContact }>(
       `/api/engagements/${encodeURIComponent(id)}/invite`,

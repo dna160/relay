@@ -86,6 +86,60 @@ export async function sendClientCode(input: {
   });
 }
 
+export async function sendSigninCode(input: {
+  to: string;
+  code: string;
+  expiresInMinutes: number;
+  /** The secondary affordance. A page with a confirm button, never a consumer. */
+  linkUrl: string;
+}): Promise<void> {
+  captureAccountCode(input.to, input.code);
+  await sendMail({
+    to: input.to,
+    subject: `Your Relay sign-in code: ${input.code}`,
+    text: [
+      `Your sign-in code is ${input.code}.`,
+      `It expires in ${String(input.expiresInMinutes)} minutes and can be used once.`,
+      '',
+      `Or open this page and press the button: ${input.linkUrl}`,
+      '',
+      'If you did not ask for this, you can ignore this message. Nothing has changed.',
+    ].join('\n'),
+  });
+}
+
+/**
+ * The organization invitation.
+ *
+ * It says, in the body, that the link does not sign anybody in — because that is
+ * the surprising part of the flow (ADR-021 §5) and a person who forwards it to a
+ * colleague should know before they do that the colleague cannot use it.
+ */
+export async function sendOrgInvite(input: {
+  to: string;
+  orgName: string;
+  invitedBy: string;
+  role: string;
+  linkUrl: string;
+  expiresInDays: number;
+}): Promise<void> {
+  await sendMail({
+    to: input.to,
+    subject: `${input.invitedBy} invited you to ${input.orgName} on Relay`,
+    text: [
+      `${input.invitedBy} has invited you to join ${input.orgName} on Relay as ${input.role}.`,
+      '',
+      `Accept it here: ${input.linkUrl}`,
+      '',
+      'Opening that link does not sign you in. You will be asked to confirm this',
+      `email address — ${input.to} — before anything is added to your account, and`,
+      'the invitation can only be accepted by that address.',
+      '',
+      `It expires in ${String(input.expiresInDays)} days.`,
+    ].join('\n'),
+  });
+}
+
 /* ------------------------------------------------------- the e2e mail capture */
 
 /**
@@ -137,4 +191,26 @@ function captureClientCode(engagementId: string, email: string, code: string): v
 export function lastClientCode(engagementId: string, email: string): string | null {
   if (!captureEnabled()) return null;
   return globalThis.__relayCodeCapture?.get(captureKey(engagementId, email))?.code ?? null;
+}
+
+/**
+ * The same capture for the account sign-in code (Phase 10).
+ *
+ * Keyed under the literal `account` where an engagement id would go, which is
+ * not a UUID and therefore cannot collide with a client capture. Gated on the
+ * identical two conditions — never in production, and only with
+ * `E2E_SEED_TOKEN` set.
+ */
+const ACCOUNT_SCOPE = 'account';
+
+function captureAccountCode(email: string, code: string): void {
+  if (!captureEnabled()) return;
+  globalThis.__relayCodeCapture ??= new Map<string, CapturedCode>();
+  globalThis.__relayCodeCapture.set(captureKey(ACCOUNT_SCOPE, email), { code, issuedAt: Date.now() });
+}
+
+/** The most recent sign-in code issued for this address, if any. */
+export function lastAccountCode(email: string): string | null {
+  if (!captureEnabled()) return null;
+  return globalThis.__relayCodeCapture?.get(captureKey(ACCOUNT_SCOPE, email))?.code ?? null;
 }

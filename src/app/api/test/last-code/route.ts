@@ -18,7 +18,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { readEngagementToken } from '@/lib/auth';
-import { lastClientCode } from '@/lib/email';
+import { lastAccountCode, lastClientCode } from '@/lib/email';
 import { toErrorResponse } from '@/lib/errors';
 import { notVisible, validationFailed } from '@/domain/errors';
 import { requireTestGate } from '../_gate';
@@ -30,10 +30,27 @@ const schema = z.object({
   email: z.string().email(),
 });
 
+/**
+ * Phase 10. The account sign-in code has no engagement, so `engagementToken` is
+ * absent and the address alone identifies the capture. A separate schema rather
+ * than a nullable field on the one above, so that a client-code request that
+ * simply forgot its token cannot silently become an account-code request.
+ */
+const accountSchema = z.object({ email: z.string().email() });
+
 export async function GET(request: Request): Promise<NextResponse> {
   try {
     requireTestGate(request);
     const { searchParams } = new URL(request.url);
+
+    if (!searchParams.get('engagementToken')) {
+      const account = accountSchema.safeParse({ email: searchParams.get('email') ?? undefined });
+      if (!account.success) throw validationFailed('email is required', account.error.flatten());
+      const accountCode = lastAccountCode(account.data.email);
+      if (accountCode === null) throw notVisible('No code has been issued for that address');
+      return NextResponse.json({ code: accountCode });
+    }
+
     const parsed = schema.safeParse({
       engagementToken: searchParams.get('engagementToken') ?? undefined,
       email: searchParams.get('email') ?? undefined,
