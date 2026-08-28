@@ -16,6 +16,11 @@
  * person who genuinely pressed the button five times does not need telling off.
  * That is the same shape `POST /api/auth/client/request` already has.
  *
+ * ## The destination goes in the link
+ *
+ * `callbackUrl` is optional, validated by `safeCallback()`, and appended to the
+ * emailed link so the mail is as useful as the tab. See below.
+ *
  * ## There is no GET here
  *
  * Deliberately, and it is half of the mail-scanner property. The other half is
@@ -29,11 +34,27 @@ import { db } from '@/db/client';
 import { issueSignin } from '@/domain/auth/signin';
 import { sendSigninCode } from '@/lib/email';
 import { toErrorResponse } from '@/lib/errors';
+import { DEFAULT_CALLBACK, safeCallback } from '@/lib/links';
 import { requestOrigin } from '../../../_guards';
 
 export const dynamic = 'force-dynamic';
 
-const schema = z.object({ email: z.string().email().max(320) }).strict();
+const schema = z
+  .object({
+    email: z.string().email().max(320),
+    /**
+     * Where to land after the code is confirmed. Optional, and **not trusted**:
+     * `safeCallback()` reduces anything that is not a single-leading-slash path
+     * to the default, so a caller cannot turn this into an open redirect and
+     * cannot turn the emailed link into one either.
+     *
+     * Bounded before validation as well as after. The value is interpolated
+     * into an email, and an unbounded string in an email body is a payload
+     * regardless of whether the redirect itself is safe.
+     */
+    callbackUrl: z.string().max(512).optional(),
+  })
+  .strict();
 
 export async function POST(request: Request): Promise<NextResponse> {
   try {
@@ -49,7 +70,24 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     if (issued.code) {
       const base = process.env.AUTH_URL ?? 'http://localhost:3000';
-      const linkUrl = `${base}/signin/confirm?email=${encodeURIComponent(email)}&code=${issued.code}`;
+      /**
+       * The destination travels **in the emailed link**, not only in the tab
+       * that asked for the code.
+       *
+       * The in-tab path already worked: `/signin/confirm` reads `callbackUrl`
+       * from its own query string and the invitation flow rides through it. The
+       * emailed link is the path that did not — and it is the one a person
+       * takes when they start on a laptop and open the mail on their phone.
+       * Landing them on `/onboarding` is the wrong door specifically for an
+       * invitee, who has no organisation and is about to be handed one.
+       *
+       * Omitted from the URL when it is the default, so the common link stays
+       * short and the parameter's presence means something.
+       */
+      const callback = safeCallback(body.callbackUrl);
+      const query = new URLSearchParams({ email, code: issued.code });
+      if (callback !== DEFAULT_CALLBACK) query.set('callbackUrl', callback);
+      const linkUrl = `${base}/signin/confirm?${query.toString()}`;
       await sendSigninCode({
         to: email,
         code: issued.code,

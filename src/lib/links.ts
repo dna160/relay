@@ -39,3 +39,46 @@ export function clientExportUrl(engagementId: string): string {
 export function agencyWorkspaceUrl(engagementId: string): string {
   return `${appUrl()}/w/${engagementId}/settings`;
 }
+
+/* --------------------------------------------------- where a sign-in may land */
+
+/**
+ * The default destination for a sign-in that names none.
+ *
+ * `/onboarding` and not `/portfolio`, because a first-ever sign-in has proved
+ * an address and belongs to no organisation yet (ADR-013). `/onboarding` tells
+ * the three states apart and forwards to `/portfolio` when there is nothing
+ * left to do, so it is correct for the first sign-in and the thousandth.
+ */
+export const DEFAULT_CALLBACK = '/onboarding';
+
+/**
+ * Where a sign-in is allowed to land, validated rather than trusted.
+ *
+ * `callbackUrl` arrives through a browser and is an open-redirect parameter, so
+ * the rule is a single leading slash and nothing else. `//evil.example` is
+ * protocol-relative and would leave the origin; `/\evil` is treated as
+ * protocol-relative by some browsers; anything carrying a scheme is not ours. A
+ * value that fails is not an error worth a message — it is discarded and the
+ * default is used.
+ *
+ * ## Why it lives here
+ *
+ * Because the *email* needs it too, and the email is built server-side.
+ * `POST /api/auth/signin/request` puts the destination into the emailed link so
+ * that somebody who started an invitation in one tab and opens the mail on
+ * their phone lands back on the invitation rather than on `/onboarding` — which
+ * is precisely the wrong door for an invitee who has no organisation and is
+ * about to be given one.
+ *
+ * `src/app/(agency)/signin/safe-callback.ts` states the same rule for the two
+ * pages that read the parameter, and its own header gives the reason this
+ * belongs in one place: "a second copy is a second place for the `//` case to
+ * be forgotten". That module should become a re-export of this one — it is the
+ * front-end's file, so this is a note rather than an edit.
+ */
+export function safeCallback(raw: string | null | undefined): string {
+  if (!raw || !raw.startsWith('/')) return DEFAULT_CALLBACK;
+  if (raw.startsWith('//') || raw.startsWith('/\\')) return DEFAULT_CALLBACK;
+  return raw;
+}

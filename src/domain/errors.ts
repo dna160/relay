@@ -57,3 +57,32 @@ export function engagementPurged(message = 'This engagement has been purged'): D
 export function isDomainError(error: unknown): error is DomainError {
   return error instanceof DomainError;
 }
+
+/**
+ * Phase 10. The three refusals `POST /api/invites/:token/redeem` must be able
+ * to tell apart, each with its own code.
+ *
+ * They were one `VALIDATION_FAILED` carrying `details: { reason }` for exactly
+ * as long as `ERROR_CODES` lacked the entries. That worked and it left the
+ * discriminator in two places — a `details` field and a status code — which is
+ * two places to disagree. The code is now the discriminator; `details.reason`
+ * is still sent, because it is the one thing that survives a proxy rewriting a
+ * status and because a log line reading `reason: address_mismatch` is worth
+ * more than one reading `409`.
+ *
+ * `INVITE_ADDRESS_MISMATCH` is the refusal a person is most likely to meet and
+ * least able to diagnose: they clicked a real link, signed in as themselves,
+ * and were refused. It does **not** consume the invitation.
+ */
+export function inviteAddressMismatch(message: string, details?: unknown): DomainError {
+  return new DomainError('INVITE_ADDRESS_MISMATCH', message, details);
+}
+
+export function inviteExpired(message: string, details?: unknown): DomainError {
+  return new DomainError('INVITE_EXPIRED', message, details);
+}
+
+/** Already redeemed, or withdrawn. Both mean "this one is spent". */
+export function inviteConsumed(message: string, details?: unknown): DomainError {
+  return new DomainError('INVITE_CONSUMED', message, details);
+}

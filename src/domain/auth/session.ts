@@ -22,7 +22,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { and, eq, lt } from 'drizzle-orm';
-import { authSessions } from '@/db/schema';
+import { authSessions, users } from '@/db/schema';
 import type { Executor } from '@/db/types';
 import type { VerifiedAddress } from './signin';
 
@@ -72,6 +72,30 @@ export async function establishAccountSession(
   const sessionToken = randomBytes(32).toString('hex');
   const expires = new Date(now.getTime() + ACCOUNT_SESSION_TTL_DAYS * 86_400_000);
   await exec.insert(authSessions).values({ sessionToken, userId: legacyUserId, expires });
+
+  /**
+   * `users.last_seen_at` has existed since Phase 1 and nothing has ever written
+   * it. The column read as "has this person ever actually used Relay", and the
+   * honest answer it gave was *no* — for everybody, including whoever was
+   * reading the page. The team roster found it by trying to use it and shipped
+   * the join date instead, which was right: a field nothing maintains is worse
+   * than a field that is absent, because it is confidently wrong.
+   *
+   * Here rather than in `getSession()`, which runs on every authenticated
+   * request: a write on a read path is a side effect in the wrong place, and
+   * the question the roster asks is "did they ever get in", not "were they here
+   * a minute ago". Establishing a session is exactly that event.
+   *
+   * ## What this does not cover
+   *
+   * Auth.js's own magic-link callback creates its session through the adapter
+   * and does not pass through here, so a person who signs in by that route is
+   * not stamped. It is the fallback path since ADR-027 made the code flow
+   * primary, and closing it means either an Auth.js `events.signIn` callback or
+   * the lazy stamp in `getSession()` that this comment argues against. Named so
+   * the gap is a decision rather than an omission.
+   */
+  await exec.update(users).set({ lastSeenAt: now }).where(eq(users.id, legacyUserId));
 
   return { sessionToken, expires };
 }
